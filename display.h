@@ -10,6 +10,12 @@ namespace display {
 constexpr int WIDTH = 320;
 constexpr int HEIGHT = 240;
 
+// The panel is natively 240x320 portrait; we swap axes for landscape. FLIP_180 picks which long
+// edge is "up" (the touch layer follows it).
+constexpr bool FLIP_180 = false;
+
+constexpr uint8_t BACKLIGHT_PCT = 80;  // normal brightness
+
 void begin();
 void loop();
 void setBacklight(uint8_t percent);

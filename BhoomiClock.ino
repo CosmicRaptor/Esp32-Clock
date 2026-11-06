@@ -5,6 +5,7 @@
 // - NTP time, shown in local time
 // - Photos and sounds uploaded to the microSD card from the same page
 // - Cloud admin portal (portal/): message, photo and alarms, polled over HTTPS as protobuf
+// - Alarms ring from /sounds on the card (or a built-in beep) until you touch the screen
 //
 // Build & flash: ./build.sh flash
 
@@ -15,7 +16,9 @@
 #include "display.h"
 #include "portal_client.h"
 #include "settings.h"
+#include "sound.h"
 #include "storage.h"
+#include "touch.h"
 #include "ui.h"
 #include "web.h"
 #include "wifi_setup.h"
@@ -46,15 +49,36 @@ void setup() {
   settings::begin();
   display::begin();
   ui::begin(AP_NAME);
+  touch::begin();  // LVGL pointer device; the alarm is stopped by touch
   display::loop();  // draw "waking up" before the (slow) initial Wi-Fi scan
 
   storage::begin();
   wifisetup::begin(AP_NAME, onWifi);
   web::begin();  // after Wi-Fi: opening a socket before the TCP/IP stack is up crashes
+  sound::begin();  // alarm sounds: the decoder task + the built-in beep (internal flash)
   portal::begin();  // own task; idles until Wi-Fi is online (and, for https, NTP has synced)
 }
 
+// Serial monitor shortcuts for trying the alarm without waiting for the clock: `ring` or `ring <file>`.
+static void serialCommands() {
+  static String line;
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c != '\n' && c != '\r') {
+      if (line.length() < 100) line += c;
+      continue;
+    }
+    line.trim();
+    if (line == "ring" || line.startsWith("ring ")) {
+      app::Lock lock;
+      ui::testAlarm(line.length() > 5 ? line.c_str() + 5 : "");
+    }
+    line = "";
+  }
+}
+
 void loop() {
+  serialCommands();
   {
     app::Lock lock;  // the web task takes this too; see app_lock.h
     wifisetup::loop();

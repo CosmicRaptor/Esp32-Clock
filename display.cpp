@@ -18,10 +18,6 @@ constexpr int PIN_DC = 41;
 constexpr int PIN_RST = 39;
 constexpr int PIN_BL = 5;
 
-// The panel is natively 240x320 portrait. We swap axes for landscape; FLIP_180 picks which
-// long edge is "up".
-constexpr bool FLIP_180 = false;
-
 constexpr int LCD_HZ = 40 * 1000 * 1000;
 constexpr int BUF_LINES = 40;
 
@@ -102,7 +98,7 @@ void loop() {
   lv_timer_handler();
   if (!lit) {  // first frame is out: now turn the light on (no flash of garbage at boot)
     lit = true;
-    setBacklight(80);
+    setBacklight(BACKLIGHT_PCT);
   }
 }
 

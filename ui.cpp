@@ -10,6 +10,7 @@
 #include "display.h"
 #include "portal_client.h"
 #include "settings.h"
+#include "sound.h"
 #include "web.h"
 
 extern "C" const uint8_t montserrat_medium_ttf[];
@@ -375,6 +376,89 @@ void updateNote() {
   show(noteCard, want);
 }
 
+// ---------- alarm: full-screen overlay + sound until touched ----------
+constexpr uint32_t RING_MAX_MS = 5 * 60 * 1000;  // nobody came: stop by itself after 5 minutes
+constexpr uint8_t BOOT_PIN = 0;                  // BOOT button: stops the alarm too, if touch isn't working
+const lv_color_t ACCENT_LIGHT = lv_color_hex(0xF0A0AE);
+
+lv_obj_t *alarmView, *alarmTime, *alarmText;
+bool ringing = false;
+uint32_t ringSince = 0;
+bool ringFlash = false;
+
+void stopRing(const char *why) {
+  if (!ringing) return;
+  ringing = false;
+  sound::stop();
+  show(alarmView, false);
+  display::setBacklight(display::BACKLIGHT_PCT);
+  Serial.printf("[alarm] stopped (%s)\n", why);
+}
+
+void startRing(unsigned hour, unsigned minute, const char *text, const char *soundFile) {
+  if (ringing) return;  // already going off; the first one wins
+  ringing = true;
+  ringSince = millis();
+  ringFlash = false;
+  lv_label_set_text_fmt(alarmTime, "%02u:%02u", hour, minute);
+  lv_label_set_text(alarmText, text[0] ? text : "Wake up!");
+  lv_obj_set_style_bg_color(alarmView, ACCENT, 0);
+  show(alarmView, true);
+  lv_obj_move_foreground(alarmView);
+  display::setBacklight(100);
+  sound::play(soundFile);
+  Serial.printf("[alarm] RING %02u:%02u \"%s\" sound=%s\n", hour, minute, text, soundFile[0] ? soundFile : "(beep)");
+}
+
+void buildAlarm() {
+  // On the top layer: above every face and the message card, and never hidden by showView().
+  alarmView = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(alarmView);
+  lv_obj_set_size(alarmView, lv_pct(100), lv_pct(100));
+  lv_obj_set_style_bg_color(alarmView, ACCENT, 0);
+  lv_obj_set_style_bg_opa(alarmView, LV_OPA_COVER, 0);
+  lv_obj_remove_flag(alarmView, LV_OBJ_FLAG_SCROLLABLE);
+  // The whole screen is the button: a touch anywhere stops the alarm (nothing under it is clickable).
+  lv_obj_add_event_cb(alarmView, [](lv_event_t *) { stopRing("touched"); }, LV_EVENT_PRESSED, nullptr);
+
+  lv_obj_t *col = fullColumn(alarmView);
+  lv_obj_remove_flag(col, LV_OBJ_FLAG_CLICKABLE);  // let touches fall through to alarmView
+  lv_obj_set_style_pad_row(col, 6, 0);
+
+  lv_obj_t *bell = label(col, &lv_font_montserrat_28, lv_color_white());
+  lv_label_set_text(bell, LV_SYMBOL_BELL);
+  alarmTime = label(col, photoFont ? photoFont : &lv_font_montserrat_48, lv_color_white());
+  lv_label_set_long_mode(alarmTime, LV_LABEL_LONG_CLIP);
+  alarmText = label(col, &lv_font_montserrat_20, lv_color_white());
+
+  lv_obj_t *btn = lv_obj_create(col);
+  lv_obj_remove_style_all(btn);
+  lv_obj_remove_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_remove_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_size(btn, 200, 60);
+  lv_obj_set_style_bg_color(btn, lv_color_white(), 0);
+  lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(btn, LV_RADIUS_CIRCLE, 0);
+  lv_obj_t *bl = lv_label_create(btn);
+  lv_obj_set_style_text_font(bl, &lv_font_montserrat_28, 0);
+  lv_obj_set_style_text_color(bl, ACCENT, 0);
+  lv_label_set_text(bl, "Stop");
+  lv_obj_center(bl);
+
+  lv_obj_add_flag(alarmView, LV_OBJ_FLAG_HIDDEN);
+}
+
+void updateAlarm() {
+  if (!ringing) return;
+  if (digitalRead(BOOT_PIN) == LOW) return stopRing("BOOT button");
+  if (millis() - ringSince > RING_MAX_MS) return stopRing("timed out");
+  bool flash = ((millis() - ringSince) / 700) & 1;  // gentle pulse so it's noticed from across the room
+  if (flash != ringFlash) {
+    ringFlash = flash;
+    lv_obj_set_style_bg_color(alarmView, flash ? ACCENT_LIGHT : ACCENT, 0);
+  }
+}
+
 bool alarmMatches(const portal::Alarm &a, const struct tm &t) {
   if (a.hour != (uint32_t)t.tm_hour || a.minute != (uint32_t)t.tm_min) return false;
   if (a.days) return a.days & (1u << t.tm_wday);
@@ -386,17 +470,15 @@ void checkAlarms() {
   static time_t lastMinute = 0;
   if (!timeValid() || !portal::haveState()) return;
   time_t now = time(nullptr);
-  if (now / 60 == lastMinute) return;
+  if (now / 60 == lastMinute) return;  // alarms are checked once per minute, so one can't fire twice
   lastMinute = now / 60;
   struct tm t;
   localtime_r(&now, &t);
   const portal::State &s = portal::state();
   for (pb_size_t i = 0; i < s.alarms_count; i++) {
     if (!alarmMatches(s.alarms[i], t)) continue;
-    // TODO(alarm): play /sounds/<sound> (or the built-in beep) and show the label.
-    Serial.printf("[alarm] RING %s %02u:%02u \"%s\" sound=%s\n", s.alarms[i].id, (unsigned)s.alarms[i].hour,
-                  (unsigned)s.alarms[i].minute, s.alarms[i].label,
-                  s.alarms[i].sound[0] ? s.alarms[i].sound : "(beep)");
+    startRing(s.alarms[i].hour, s.alarms[i].minute, s.alarms[i].label, s.alarms[i].sound);
+    break;
   }
 }
 
@@ -436,8 +518,16 @@ void begin(const char *apName) {
   buildMsg();
   buildClock();
   buildPhoto();
-  buildNote();  // last, so it floats above everything
+  buildNote();
+  buildAlarm();  // last, so it floats above everything
   showMsg(true, "Waking up...", "");
+}
+
+void testAlarm(const char *soundFile) {
+  time_t now = time(nullptr);
+  struct tm t;
+  localtime_r(&now, &t);
+  startRing(t.tm_hour, t.tm_min, "Test alarm", soundFile ? soundFile : "");
 }
 
 void showWifi(const wifisetup::Status &s) {
@@ -484,6 +574,7 @@ void loop() {
     applyPortal();
   }
   checkAlarms();
+  updateAlarm();
   if (onlineAt && millis() - onlineAt > SPLASH_MS) {
     onlineAt = 0;
     if (phase == Phase::Online) showView(View::Clock);
