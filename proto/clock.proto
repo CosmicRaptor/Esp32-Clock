@@ -10,12 +10,15 @@ syntax = "proto3";
 package bhoomi.clock.v1;
 
 // GET /api/device/state  (Content-Type: application/x-protobuf)
-// Sent whenever the ETag (= version) changes; otherwise the clock gets an empty 304.
+// Polled every ~10 s. Sent whenever the ETag changes (the portal version, or a new song); otherwise the clock
+// gets an empty 304.
 message DeviceState {
   uint32 version = 1;            // bumped on every change in the portal
   Note note = 2;                 // unset: no message to show
   Photo photo = 3;               // unset: no photo
   repeated Alarm alarms = 4;     // enabled alarms only, sorted by time
+  NowPlaying nowplaying = 5;     // what the two people are playing on Spotify; always set. It changes on its own
+                                 // (not with `version`), but it is part of the ETag, so a new song is a new 200.
 }
 
 // The message shown on the clock face.
@@ -51,4 +54,24 @@ message Date {
 // Fills the sound picker in the portal's alarm editor.
 message SoundList {
   repeated string names = 1;     // file names only, no folder
+}
+
+// What each of the two people is listening to on Spotify, for the little strip on the clock face.
+// Rides along in DeviceState. Text is already ASCII-only (accents stripped, other scripts become '?')
+// because the clock's fonts only cover Latin.
+message NowPlaying {
+  Listener left = 1;             // the first person's side of the strip (unset: side not shown)
+  Listener right = 2;            // the second person's side
+}
+
+message Listener {
+  enum Status {
+    OFF = 0;                     // not connected to Spotify, or nothing to show
+    PLAYING = 1;
+    PAUSED = 2;                  // the clock dims it, and hides it after a few minutes
+  }
+  Status status = 1;
+  string title = 2;              // up to 60 characters
+  string artist = 3;             // up to 60 characters
+  string art_id = 4;             // 40 hex chars; GET /api/device/art/<art_id> is a 64x64 baseline JPEG. Empty: no cover
 }

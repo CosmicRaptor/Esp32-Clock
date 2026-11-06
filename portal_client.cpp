@@ -27,10 +27,12 @@
 namespace portal {
 namespace {
 
-constexpr uint32_t POLL_MS = 60 * 1000;         // normal cadence
-constexpr uint32_t BACKOFF_MIN_MS = 10 * 1000;  // after a failed poll: 10 s, doubling up to POLL_MS
-constexpr uint32_t PHOTO_RETRY_MS = 10 * 1000;  // photo pending (404 while KV propagates, or a bad download)
-constexpr int PHOTO_RETRIES_FAST = 6;           // then fall back to the normal cadence
+constexpr uint32_t POLL_MS = 10 * 1000;         // the one heartbeat: state + now playing. Mostly a bare 304
+constexpr uint32_t BACKOFF_MIN_MS = 10 * 1000;  // after a failed poll: 10 s, doubling up to FAIL_MAX_MS
+constexpr uint32_t FAIL_MAX_MS = 60 * 1000;
+constexpr int PHOTO_TRIES_FAST = 6;             // photo pending (404 while KV propagates, or a bad download): every poll...
+constexpr uint32_t PHOTO_SLOW_MS = 60 * 1000;   // ...then once a minute
+constexpr uint32_t NP_STALE_MS = 2 * 60 * 1000; // no answer from the portal for this long: the strip is hidden, not stale
 constexpr int32_t CONNECT_TIMEOUT_MS = 12000;   // weak Wi-Fi (~-90 dBm): TLS handshake is slow
 constexpr uint16_t IO_TIMEOUT_MS = 15000;
 constexpr size_t MAX_PHOTO_BYTES = 256 * 1024;  // a 320x240 JPEG is ~10-40 KB; refuse anything silly
@@ -41,11 +43,17 @@ bool have = false;
 uint8_t *photoBuf = nullptr;
 size_t photoLen = 0;
 char photoIdStr[13] = "";
-uint32_t rev = 0;
+uint32_t rev = 0;       // the portal's own things changed (note, photo, alarms)
+uint32_t okAt = 0;      // millis() of the last answer from the portal (200 or 304); 0 = none yet
+uint32_t npRev = 0;     // what is playing, or a cover, changed
+uint8_t *coverBuf[2] = {nullptr, nullptr};  // 64x64 JPEGs for the left / right side of the strip
+size_t coverLen[2] = {0, 0};
+char coverIdStr[2][41] = {"", ""};
 
 // ---- task-private ----
 String etag;
 bool gotTimeWarn = false;
+bool quiet = false;  // don't log routine polls (the 10 s heartbeat would drown the serial monitor)
 
 bool https() { return strncmp(PORTAL_URL, "https://", 8) == 0; }
 
@@ -65,7 +73,8 @@ String urlEncode(const char *s) {
 
 bool timeValid() { return time(nullptr) > 1700000000; }  // TLS needs a sane clock to check certificates
 
-// An HTTPClient plus the right kind of socket. One per poll cycle.
+// An HTTPClient plus the right kind of socket. The task keeps one for good: a TLS handshake over weak
+// Wi-Fi takes seconds, and we poll every 10 s.
 struct Conn {
   WiFiClient plain;
   WiFiClientSecure secure;
@@ -84,7 +93,30 @@ struct Conn {
     if (ok) http.addHeader("Authorization", String("Bearer ") + PORTAL_DEVICE_TOKEN);
     return ok;
   }
-  void close() { http.end(); }
+  // After an answer that was read to the end: keep the socket for the next request (if the server allows).
+  void finish() { http.end(); }
+  // After anything else (error answers, half-read bodies): throw the socket away too, so stray bytes
+  // can't be mistaken for the start of the next answer.
+  void close() {
+    http.end();
+    secure.stop();
+    plain.stop();
+  }
+  // GET with an optional If-None-Match. On a connection error (typically a kept-alive socket the
+  // server closed meanwhile) it drops the socket and tries once more on a fresh one.
+  int get(const String &path, const String &ifNoneMatch = "", bool wantEtag = false) {
+    static const char *keys[] = {"ETag"};
+    int code = -1;
+    for (int attempt = 0; attempt < 2; attempt++) {
+      if (!open(path)) return -1;
+      if (ifNoneMatch.length()) http.addHeader("If-None-Match", ifNoneMatch);
+      if (wantEtag) http.collectHeaders(keys, 1);
+      code = http.GET();
+      if (code >= 0) break;
+      close();
+    }
+    return code;
+  }
 };
 
 // Collects a response body into a fixed buffer; flags overflow instead of writing past the end.
@@ -122,6 +154,10 @@ bool validId(const char *id) {
   for (size_t i = 0; i < n; i++)
     if (!isxdigit((unsigned char)id[i])) return false;
   return true;
+}
+
+const char *statusName(int s) {
+  return s == bhoomi_clock_v1_Listener_Status_PLAYING ? "playing" : s == bhoomi_clock_v1_Listener_Status_PAUSED ? "paused" : "off";
 }
 
 // ---------- saved copy, so a power cut doesn't lose anything ----------
@@ -209,6 +245,8 @@ void loadSaved() {
     return;
   }
   memcpy(&cur, next, sizeof(State));
+  cur.has_nowplaying = false;  // whatever was playing at the last save is old news
+  memset(&cur.nowplaying, 0, sizeof cur.nowplaying);
   have = true;
   Serial.printf("[portal] restored saved state v%u (%u bytes): note=%s, photo=%s, %u alarm(s)\n", (unsigned)cur.version,
                 (unsigned)len, cur.has_note ? "yes" : "none", cur.has_photo ? cur.photo.id : "none",
@@ -245,6 +283,18 @@ void loadSaved() {
 
 // ---------- state ----------
 
+void logState(const State &st, const String &tag, size_t bytes) {
+  Serial.printf("[portal] state: 200 v%u etag=%s, %u bytes; note=%s%s%s; photo=%s; %u alarm(s)\n", (unsigned)st.version,
+                tag.c_str(), (unsigned)bytes, st.has_note ? "\"" : "none", st.has_note ? st.note.text : "",
+                st.has_note ? "\"" : "", st.has_photo ? st.photo.id : "none", (unsigned)st.alarms_count);
+  for (pb_size_t i = 0; i < st.alarms_count; i++) {
+    const Alarm &a = st.alarms[i];
+    Serial.printf("[portal]   alarm %s %02u:%02u days=0x%02X", a.id, (unsigned)a.hour, (unsigned)a.minute, (unsigned)a.days);
+    if (a.has_date) Serial.printf(" on %04u-%02u-%02u", (unsigned)a.date.year, (unsigned)a.date.month, (unsigned)a.date.day);
+    Serial.printf(" \"%s\" sound=%s\n", a.label, a.sound[0] ? a.sound : "(beep)");
+  }
+}
+
 enum class Poll { Changed, Unchanged, Failed };
 
 Poll fetchState(Conn &c) {
@@ -253,20 +303,25 @@ Poll fetchState(Conn &c) {
     app::Lock lock;
     if (const tz::Zone *z = settings::timezone()) q += "&tz=" + urlEncode(z->id);
   }
-  if (!c.open(q)) return Poll::Failed;
-  if (etag.length()) c.http.addHeader("If-None-Match", etag);
-  static const char *keys[] = {"ETag"};
-  c.http.collectHeaders(keys, 1);
-
-  int code = c.http.GET();
+  int code = c.get(q, etag, true);
   if (code == HTTP_CODE_NOT_MODIFIED) {
-    c.close();
-    Serial.printf("[portal] state: 304 not modified (%s)\n", etag.c_str());
+    c.finish();
+    {
+      app::Lock lock;
+      okAt = millis() | 1;
+    }
+    if (!quiet) Serial.printf("[portal] state: 304 not modified (%s)\n", etag.c_str());
     return Poll::Unchanged;
   }
   if (code != HTTP_CODE_OK) {
     Serial.printf("[portal] state: HTTP %d%s\n", code, code < 0 ? (" " + c.http.errorToString(code)).c_str() : "");
     if (code == 401 || code == 403) Serial.println("[portal] the device token was rejected; check portal_config.h");
+    if (code < 0 && https()) {  // say why a TLS connection failed (certificate, memory, ...)
+      char why[100] = "";
+      c.secure.lastError(why, sizeof why);
+      Serial.printf("[portal] TLS: %s (free heap %u, largest block %u)\n", why[0] ? why : "no error recorded",
+                    (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+    }
     c.close();
     return Poll::Failed;
   }
@@ -284,7 +339,8 @@ Poll fetchState(Conn &c) {
   BufSink sink(body, cap);
   int got = c.http.writeToStream(&sink);
   String newTag = c.http.header("ETag");
-  c.close();
+  if (got >= 0 && !sink.overflow) c.finish();
+  else c.close();
 
   Poll result = Poll::Failed;
   if (got < 0 || sink.overflow) {
@@ -296,25 +352,24 @@ Poll fetchState(Conn &c) {
       Serial.printf("[portal] state: decode failed: %s\n", PB_GET_ERROR(&in));
     } else {
       etag = newTag;
-      saveState(body, sink.len);
+      // A 200 is either the portal's own things changing (version), or a new song. Only the former
+      // is worth a flash write and a redraw of the note/photo; the latter just moves the strip.
+      bool portalChanged = !have || next->version != cur.version;
+      bool playingChanged = !have || memcmp(&next->nowplaying, &cur.nowplaying, sizeof next->nowplaying) != 0;
+      if (portalChanged) saveState(body, sink.len);
       {
         app::Lock lock;
         memcpy(&cur, next, sizeof(State));
         have = true;
-        bump();
+        okAt = millis() | 1;
+        if (portalChanged) bump();
+        if (playingChanged) npRev++;
       }
-      Serial.printf("[portal] state: 200 v%u etag=%s, %u bytes; note=%s%s%s; photo=%s; %u alarm(s)\n",
-                    (unsigned)next->version, newTag.c_str(), (unsigned)sink.len,
-                    next->has_note ? "\"" : "none", next->has_note ? next->note.text : "",
-                    next->has_note ? "\"" : "", next->has_photo ? next->photo.id : "none",
-                    (unsigned)next->alarms_count);
-      for (pb_size_t i = 0; i < next->alarms_count; i++) {
-        const Alarm &a = next->alarms[i];
-        Serial.printf("[portal]   alarm %s %02u:%02u days=0x%02X", a.id, (unsigned)a.hour, (unsigned)a.minute,
-                      (unsigned)a.days);
-        if (a.has_date) Serial.printf(" on %04u-%02u-%02u", (unsigned)a.date.year, (unsigned)a.date.month, (unsigned)a.date.day);
-        Serial.printf(" \"%s\" sound=%s\n", a.label, a.sound[0] ? a.sound : "(beep)");
-      }
+      const auto &np = next->nowplaying;
+      if (playingChanged)
+        Serial.printf("[portal] now playing: L=%s \"%s\" - %s | R=%s \"%s\" - %s\n", statusName(np.left.status), np.left.title,
+                      np.left.artist, statusName(np.right.status), np.right.title, np.right.artist);
+      if (portalChanged) logState(*next, newTag, sink.len);
       result = Poll::Changed;
     }
   }
@@ -360,13 +415,10 @@ Photo syncPhoto(Conn &c) {
     Serial.printf("[portal] photo: out of memory for %u bytes\n", (unsigned)size);
     return Photo::Failed;
   }
-  if (!c.open(String("/api/device/image/") + id)) {
-    free(buf);
-    return Photo::Failed;
-  }
   uint32_t t0 = millis();
-  int code = c.http.GET();
+  int code = c.get(String("/api/device/image/") + id);
   Photo result = Photo::Failed;
+  bool clean = false;  // the answer was read to the end, so the socket can be kept
   if (code == HTTP_CODE_NOT_FOUND) {
     Serial.printf("[portal] photo %s: 404 (not propagated yet), will retry\n", id);
     result = Photo::NotYet;
@@ -394,9 +446,11 @@ Photo syncPhoto(Conn &c) {
                     (unsigned)(millis() - t0));
       savePhoto(photoBuf, size, id);  // outside the lock: SD writes can take a while
       result = Photo::Ok;
+      clean = true;
     }
   }
-  c.close();
+  if (clean) c.finish();
+  else c.close();
   free(buf);
   return result;
 }
@@ -470,7 +524,8 @@ void syncSounds(Conn &c) {
   } else if (c.open("/api/device/sounds")) {
     c.http.addHeader("Content-Type", "application/x-protobuf");
     int code = c.http.PUT(body, out.bytes_written);
-    c.close();
+    if (code == HTTP_CODE_NO_CONTENT) c.finish();  // no body to read
+    else c.close();
     if (code == HTTP_CODE_NO_CONTENT || code == HTTP_CODE_OK) {
       Serial.printf("[portal] sounds: sent %u name(s), %u bytes -> %d\n", (unsigned)list->names_count,
                     (unsigned)out.bytes_written, code);
@@ -483,6 +538,75 @@ void syncSounds(Conn &c) {
   }
   free(list);
   free(body);
+}
+
+// ---------- covers for the now-playing strip ----------
+// The song titles arrive inside the state; the cover is fetched like the photo: the state carries an
+// art_id, a different id means a new JPEG to download. 64x64, about 3 KB.
+
+constexpr uint32_t COVER_RETRY_MS = 15 * 1000;
+constexpr size_t MAX_COVER_BYTES = 24 * 1024;
+constexpr size_t ART_ID_LEN = 40;
+
+uint32_t coverTriedAt[2] = {0, 0};  // task-private
+
+bool validArtId(const char *id) {
+  if (strlen(id) != ART_ID_LEN) return false;
+  for (size_t i = 0; i < ART_ID_LEN; i++)
+    if (!isxdigit((unsigned char)id[i])) return false;
+  return true;
+}
+
+// Makes each side's downloaded cover match the art_id in the latest state.
+void syncCovers(Conn &c) {
+  for (int side = 0; side < 2; side++) {
+    char want[ART_ID_LEN + 1] = "";
+    {
+      app::Lock lock;
+      const Listener &l = side ? cur.nowplaying.right : cur.nowplaying.left;
+      if (l.status != bhoomi_clock_v1_Listener_Status_OFF && validArtId(l.art_id)) strlcpy(want, l.art_id, sizeof want);
+      if (!want[0]) {  // nothing to show on this side any more (or a song without a cover)
+        if (coverBuf[side]) {
+          free(coverBuf[side]);
+          coverBuf[side] = nullptr;
+          coverLen[side] = 0;
+          coverIdStr[side][0] = 0;
+          npRev++;
+        }
+        continue;
+      }
+      if (strcmp(coverIdStr[side], want) == 0) continue;  // already have it
+    }
+    if (coverTriedAt[side] && millis() - coverTriedAt[side] < COVER_RETRY_MS) continue;
+    coverTriedAt[side] = millis() | 1;
+
+    uint8_t *buf = bigAlloc(MAX_COVER_BYTES);
+    if (!buf) continue;
+    int code = c.get(String("/api/device/art/") + want);
+    bool ok = false;
+    if (code == HTTP_CODE_OK) {
+      BufSink sink(buf, MAX_COVER_BYTES);
+      int got = c.http.writeToStream(&sink);
+      if (got >= 0 && !sink.overflow && sink.len > 4 && buf[0] == 0xFF && buf[1] == 0xD8) {
+        c.finish();
+        app::Lock lock;
+        free(coverBuf[side]);
+        coverBuf[side] = buf;
+        coverLen[side] = sink.len;
+        strlcpy(coverIdStr[side], want, sizeof coverIdStr[side]);
+        npRev++;
+        buf = nullptr;  // owned by the state now
+        ok = true;
+        coverTriedAt[side] = 0;
+        Serial.printf("[portal] cover %.8s: %u bytes (side %d)\n", want, (unsigned)sink.len, side);
+      }
+    }
+    if (!ok) {
+      Serial.printf("[portal] cover %.8s: failed (HTTP %d), will retry\n", want, code);
+      c.close();
+    }
+    free(buf);
+  }
 }
 
 // ---------- the task ----------
@@ -505,35 +629,46 @@ void task(void *) {
   uint32_t nextAt = 0;  // millis() deadline; 0 = as soon as we're ready
   uint32_t backoff = BACKOFF_MIN_MS;
   int photoTries = 0;
+  uint32_t photoRetryAt = 0;  // 0 = whenever the state says there's a new photo
+  uint32_t lastLog = 0;
+  Conn c;  // kept for good: the socket stays open between polls
   for (;;) {
     vTaskDelay(pdMS_TO_TICKS(500));
     if (!ready()) continue;
     if (nextAt && (int32_t)(millis() - nextAt) < 0) {
       // Between polls, still pick up a changed /sounds folder promptly.
-      if (soundsDue()) {
-        Conn c;
-        syncSounds(c);
-      }
+      if (soundsDue()) syncSounds(c);
       continue;
     }
 
-    Serial.printf("[portal] poll (rssi %d, heap %u, psram %u)\n", WiFi.RSSI(), (unsigned)ESP.getFreeHeap(),
-                  (unsigned)ESP.getFreePsram());
-    Conn c;
+    quiet = lastLog && millis() - lastLog < 60 * 1000;  // log the routine poll once a minute, not every 10 s
+    if (!quiet) {
+      lastLog = millis() | 1;
+      Serial.printf("[portal] poll (rssi %d, heap %u, min heap %u, psram %u)\n", WiFi.RSSI(), (unsigned)ESP.getFreeHeap(),
+                    (unsigned)ESP.getMinFreeHeap(), (unsigned)ESP.getFreePsram());
+    }
     Poll p = fetchState(c);
     reachable = p != Poll::Failed;
     uint32_t wait = POLL_MS;
     if (p == Poll::Failed) {
+      c.close();
       wait = backoff;
-      backoff = std::min<uint32_t>(backoff * 2, POLL_MS);
+      backoff = std::min<uint32_t>(backoff * 2, FAIL_MAX_MS);
     } else {
       backoff = BACKOFF_MIN_MS;
-      Photo ph = syncPhoto(c);
-      if (ph == Photo::Ok) photoTries = 0;
-      else if (++photoTries <= PHOTO_RETRIES_FAST) wait = PHOTO_RETRY_MS;
+      if (!photoRetryAt || (int32_t)(millis() - photoRetryAt) >= 0) {
+        Photo ph = syncPhoto(c);
+        if (ph == Photo::Ok) {
+          photoTries = 0;
+          photoRetryAt = 0;
+        } else {  // retry on every poll for a while, then once a minute
+          photoRetryAt = ++photoTries <= PHOTO_TRIES_FAST ? 0 : (millis() + PHOTO_SLOW_MS) | 1;
+        }
+      }
+      syncCovers(c);
       syncSounds(c);
     }
-    nextAt = (millis() + wait) | 1;
+    nextAt = (millis() + wait) | 1;  // after the work above: on a weak signal it can take seconds
   }
 }
 
@@ -549,6 +684,16 @@ const uint8_t *photo(size_t *size) {
 }
 const char *photoId() { return photoIdStr; }
 uint32_t revision() { return rev; }
+
+bool nowPlayingFresh() { return have && okAt && millis() - okAt < NP_STALE_MS; }
+const NowPlaying &nowPlaying() { return cur.nowplaying; }
+const uint8_t *cover(int side, size_t *size) {
+  side = side ? 1 : 0;
+  if (size) *size = coverLen[side];
+  return coverBuf[side];
+}
+const char *coverId(int side) { return coverIdStr[side ? 1 : 0]; }
+uint32_t nowPlayingRevision() { return npRev; }
 
 void begin() {
   loadSaved();  // before anything else, so the face has content even if the portal is unreachable

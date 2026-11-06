@@ -1,3 +1,7 @@
 # Copy to .dev.vars for `npm run dev`. Use different, long values in production.
 ADMIN_PASSWORD=change-me
 DEVICE_TOKEN=dev-device-token
+# Spotify (see "Spotify" in README.md). Locally the redirect URI is http://127.0.0.1:8787/api/spotify/callback,
+# so open the admin page at http://127.0.0.1:8787 (Spotify doesn't accept "localhost").
+SPOTIFY_CLIENT_ID=
+SPOTIFY_CLIENT_SECRET=

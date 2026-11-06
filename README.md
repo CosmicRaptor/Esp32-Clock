@@ -10,6 +10,7 @@ Wi-Fi/NTP desk clock for the **Waveshare ESP32-S3-Touch-LCD-2.8** (ST7789 240×3
 - [x] NTP sync, local time shown in landscape (the stand: USB-C on the right)
 - [x] Photos & sounds on the microSD card. Drag and drop them on the settings page. Photos are resized in the browser to fit 320×240 (JPEG, EXIF rotation applied), and sounds upload as-is.
 - [x] Alarms from the portal: full-screen alarm with the label, the chosen sound from `/sounds` (or a built-in beep) on repeat, and a touch anywhere stops it. No snooze yet.
+- [x] Spotify now playing: a small strip on the clock face, your song on the left and hers on the right (64×64 cover, title, artist). Both accounts are connected in the portal; the clock never sees Spotify.
 - [ ] Clock face design polish
 
 ## Build & flash
@@ -37,6 +38,10 @@ If uploads fail with "No serial data received", close the Arduino IDE Serial Mon
 - **Alarms:** set them in the portal. At the alarm time the screen turns pink and pulses, and the sound repeats until you touch the screen (or press **BOOT**). It stops by itself after 5 minutes. The sound is the file picked in the portal from `/sounds` (mp3, m4a, aac, flac, ogg/opus, wav). No pick, no card, a missing file, or a file that won't decode all fall back to the built-in beep (kept in the internal flash, so it works without a card). Try it without waiting: type `ring` (or `ring <file name>`) in the serial monitor at 115200 baud.
 - **Screen upside down?** Set `FLIP_180` in `display.cpp`.
 
+## Known issue: HTTPS doesn't work yet
+
+TLS can't allocate its buffers: the serial log says `TLS: SSL - Memory allocation failed (free heap 47460, largest block 31732)`. mbedTLS in this core keeps two fixed 16 KB buffers (plus handshake state) in internal RAM and needs about 33 KB in one piece. So the clock only talks to a plain `http://` portal for now (for example `npm run dev` on the LAN). A deployed `https://…workers.dev` portal needs this solved first.
+
 ## Pins (from Waveshare's demo code)
 
 | What | GPIO |
@@ -57,7 +62,7 @@ If uploads fail with "No serial data received", close the Arduino IDE Serial Mon
 | `web.*` | HTTP server (own task) and mDNS (`bhoomi-clock.local`); file list/upload/download/delete |
 | `page_html.h` | the single page: Wi-Fi + time zone (setup) or time zone + photos & sounds (settings) |
 | `storage.*` | microSD mount (never formats), folder and file-name rules |
-| `portal_client.*` | cloud portal client (own task): polls the state over HTTPS/protobuf with ETag, downloads the photo, PUTs the `/sounds` list. Keeps a copy of the last state in internal flash (`/state.pb`, FFat) and the photo on the SD card (`/portal/photo.jpg`), restored at boot |
+| `portal_client.*` | cloud portal client (own task): polls the state every 10 s over one kept-alive connection (protobuf, ETag; it carries what's playing), downloads the photo and the 64×64 covers, PUTs the `/sounds` list. Keeps a copy of the last state in internal flash (`/state.pb`, FFat) and the photo on the SD card (`/portal/photo.jpg`), restored at boot |
 | `clock.pb.*` | generated nanopb code (`proto/generate.sh`) |
 | `app_lock.h` | the lock shared by the main loop and the web task |
 | `timezones.*` | curated IANA → POSIX TZ table |
@@ -67,6 +72,6 @@ If uploads fail with "No serial data received", close the Arduino IDE Serial Mon
 | `touch.*` | CST328 / CST3530 touch chip (auto-detected) registered as an LVGL pointer device |
 | `ui.*` | LVGL screens: setup (QR), status, clock, alarm overlay |
 | `font_montserrat_ttf.c` | Montserrat Medium (OFL), rendered by LVGL Tiny TTF for the big digits |
-| `lv_conf.h` | LVGL config |
+| `lv_conf.h` | LVGL config. LVGL's memory pool lives in PSRAM: with the C heap, each new big clock digit (a ~4 KB glyph bitmap) used up internal RAM until Wi-Fi starved |
 | `proto/` | `clock.proto`: the clock ↔ portal protobuf schema, plus the generated nanopb code (`proto/generate.sh`) |
 | `portal/` | admin portal (Cloudflare Worker, Python) for the photo, message and alarms; see `portal/README.md` |

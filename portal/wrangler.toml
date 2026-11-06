@@ -19,3 +19,13 @@ binding = "CLOCK"
 #   ADMIN_PASSWORD  password for the admin page
 #   DEVICE_TOKEN    the clock's bearer token (also goes in the firmware)
 # Locally they come from .dev.vars; in production: `npx wrangler secret put ADMIN_PASSWORD`.
+
+# Shown on the admin page's Spotify card (left of the clock = ME_NAME, right = HER_NAME).
+[vars]
+ME_NAME = "Aryan"
+HER_NAME = "Bhoomi"
+
+# Spotify (Secrets, not in this file; locally in .dev.vars):
+#   SPOTIFY_CLIENT_ID      from https://developer.spotify.com/dashboard
+#   SPOTIFY_CLIENT_SECRET  same place
+#   SPOTIFY_REDIRECT_URI   optional; defaults to <this site>/api/spotify/callback. Register that exact URL in the dashboard.

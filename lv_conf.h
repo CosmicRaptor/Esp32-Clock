@@ -7,8 +7,13 @@
 
 #define LV_COLOR_DEPTH 16
 
-// Use the C library heap (lets big allocations land in PSRAM automatically).
-#define LV_USE_STDLIB_MALLOC LV_STDLIB_CLIB
+// LVGL's own allocator, with its pool in PSRAM. (The C library heap puts every allocation of 4 KB or
+// less in the scarce internal RAM, and the big clock digits are cached as ~4 KB glyph bitmaps: each
+// new digit seen at a minute rollover used up internal RAM until Wi-Fi and the web server starved.)
+#define LV_USE_STDLIB_MALLOC LV_STDLIB_BUILTIN
+#define LV_MEM_SIZE (384 * 1024U)
+#define LV_MEM_POOL_INCLUDE <esp_heap_caps.h>
+#define LV_MEM_POOL_ALLOC(size) heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
 #define LV_USE_STDLIB_STRING LV_STDLIB_CLIB
 #define LV_USE_STDLIB_SPRINTF LV_STDLIB_CLIB
 

@@ -24,4 +24,12 @@ PB_BIND(bhoomi_clock_v1_Date, bhoomi_clock_v1_Date, AUTO)
 PB_BIND(bhoomi_clock_v1_SoundList, bhoomi_clock_v1_SoundList, 4)
 
 
+PB_BIND(bhoomi_clock_v1_NowPlaying, bhoomi_clock_v1_NowPlaying, 2)
+
+
+PB_BIND(bhoomi_clock_v1_Listener, bhoomi_clock_v1_Listener, AUTO)
+
+
+
+
 

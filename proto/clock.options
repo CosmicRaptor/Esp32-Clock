@@ -8,3 +8,6 @@ bhoomi.clock.v1.Alarm.label        max_size:161
 bhoomi.clock.v1.Alarm.sound        max_size:65
 bhoomi.clock.v1.DeviceState.alarms max_count:20
 bhoomi.clock.v1.SoundList.names    max_count:100 max_size:65
+bhoomi.clock.v1.Listener.title     max_size:61
+bhoomi.clock.v1.Listener.artist    max_size:61
+bhoomi.clock.v1.Listener.art_id    max_size:41

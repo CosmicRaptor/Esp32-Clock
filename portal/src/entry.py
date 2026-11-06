@@ -14,6 +14,12 @@ runs, so everything here is the JSON API:
     POST   /api/alarms           {alarm}  -> creates
     PUT    /api/alarms/<id>      {alarm}  -> replaces
     DELETE /api/alarms/<id>
+    GET    /api/spotify          -> {"configured": bool, "sides": [{side, name, connected, playing}]}
+    GET    /api/spotify/login?side=me|her    302 to Spotify's consent page
+    DELETE /api/spotify/<side>   disconnect that person
+
+  Spotify sends the browser back to (no cookie: it's a cross-site redirect, so a signed `state` vouches):
+    GET    /api/spotify/callback?code=...&state=...   302 to /?spotify=ok (or denied / failed / bad_state)
 
   Clock (Authorization: Bearer <DEVICE_TOKEN>), protobuf messages from proto/clock.proto:
     GET    /api/device/state?tz=Asia/Kolkata&fw=0.4.0&rssi=-71
@@ -21,30 +27,49 @@ runs, so everything here is the JSON API:
               Add &format=json to read it with curl while debugging.
     GET    /api/device/image/<id>
     PUT    /api/device/sounds    body: SoundList
+    GET    /api/device/art/<id>     64x64 baseline JPEG cover, proxied from Spotify's CDN (id = Listener.art_id)
+
+  /api/device/state is the clock's one heartbeat, polled every ~10 s. Besides the portal's own state it carries
+  `nowplaying` (asked from Spotify on each call), and its ETag covers both, so a new song is a new 200.
 
 Storage is one KV namespace (binding CLOCK):
     "state"       the JSON document described in model.py
     "device"      what the clock last reported (seen, tz, fw, rssi, sounds)
     "img:<id>"    the current photo, base64
+    "spotify"     per side ("me"/"her"): refresh token + cached access token (see spotify.py); never sent to any client
 """
 
 import asyncio
 import base64
+import hashlib
 import json
 import time
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from google.protobuf import json_format
-from workers import Response, WorkerEntrypoint
+from workers import Response, WorkerEntrypoint, fetch
 
 import auth
 import model
+import spotify
 import wire
 from model import Invalid
 
 STATE_KEY = "state"
 DEVICE_KEY = "device"
+SPOTIFY_KEY = "spotify"
 SEEN_WRITE_EVERY = 600  # s; KV's free tier allows 1,000 writes/day, so don't write on every poll
+
+# The last good Spotify answer per side, kept in this isolate's memory. Used when Spotify rate-limits
+# or hiccups, so the strip on the clock doesn't blink off. Never written anywhere.
+_last_listening: dict = {}
+
+# What this isolate last saw of the clock's check-in, so the 10 s polls don't each cost a KV read.
+_checkin: dict = {"at": 0}
+
+
+class Upstream(Exception):
+    """Spotify (or its CDN) couldn't be reached or answered with something unusable."""
 
 
 class HttpError(Exception):
@@ -104,6 +129,8 @@ class Default(WorkerEntrypoint):
         try:
             if path.startswith("/api/device/"):
                 return await self.device_api(request, path, url)
+            if path == "/api/spotify/callback" and request.method == "GET":
+                return await self.spotify_callback(url)  # before the cookie check: see auth.make_oauth_state
             if path.startswith("/api/"):
                 return await self.admin_api(request, path, url)
             raise HttpError(404, "Not found.")
@@ -192,6 +219,29 @@ class Default(WorkerEntrypoint):
             state["alarms"] = model.sort_alarms(rest)
             return json_response({"state": await self.save_state(state)})
 
+        if path == "/api/spotify" and method == "GET":
+            return json_response(await self.spotify_overview())
+
+        if path == "/api/spotify/login" and method == "GET":
+            q = {k: v[0] for k, v in parse_qs(url.query).items()}
+            side = q.get("side")
+            if side not in spotify.SIDES:
+                raise Invalid("Which side is this for?")
+            client_id = self.secret("SPOTIFY_CLIENT_ID")
+            if not client_id or not self.secret("SPOTIFY_CLIENT_SECRET"):
+                raise HttpError(503, "SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET aren't set on the server yet.")
+            state = auth.make_oauth_state(password, side, model.new_id())
+            target = spotify.authorize_url(client_id, self.redirect_uri(url), state, self.accounts_url())
+            return Response(None, status=302, headers={"location": target, "cache-control": "no-store"})
+
+        if path.startswith("/api/spotify/") and method == "DELETE":
+            side = path.removeprefix("/api/spotify/")
+            if side not in spotify.SIDES:
+                raise HttpError(404, "Not found.")
+            await self.store_tokens(side, None)
+            _last_listening.pop(side, None)
+            return json_response(await self.spotify_overview())
+
         raise HttpError(404, "Not found.")
 
     async def image(self, image_id: str):
@@ -216,11 +266,12 @@ class Default(WorkerEntrypoint):
         if path == "/api/device/state" and method == "GET":
             q = {k: v[0] for k, v in parse_qs(url.query).items()}
             await self.note_check_in(q)
-            state = await self.load_state()
-            etag = f'"{state["version"]}"'
+            state, listening = await asyncio.gather(self.load_state(), self.listening_both())
+            msg = wire.device_state(state, listening)
+            # the ETag moves with the portal's version AND with what is playing
+            etag = '"' + str(state["version"]) + "-" + hashlib.sha1(msg.nowplaying.SerializeToString()).hexdigest()[:8] + '"'
             if request.headers.get("if-none-match") == etag:
                 return Response(None, status=304, headers={"etag": etag, "cache-control": "no-store"})
-            msg = wire.device_state(state)
             if q.get("format") == "json":  # for humans with curl
                 return json_response(json_format.MessageToDict(msg), headers={"etag": etag})
             return Response(msg.SerializeToString(), headers={
@@ -228,6 +279,20 @@ class Default(WorkerEntrypoint):
 
         if path.startswith("/api/device/image/") and method == "GET":
             return await self.image(path.removeprefix("/api/device/image/"))
+
+        if path == "/api/device/nowplaying" and method == "GET":
+            left, right = await asyncio.gather(*(self.listening(side) for side in spotify.SIDES))
+            body = wire.now_playing(left, right).SerializeToString()
+            etag = '"' + hashlib.sha1(body).hexdigest()[:12] + '"'
+            if request.headers.get("if-none-match") == etag:
+                return Response(None, status=304, headers={"etag": etag, "cache-control": "no-store"})
+            if url.query and "format=json" in url.query:  # for humans with curl
+                return json_response(json_format.MessageToDict(wire.pb.NowPlaying.FromString(body)),
+                                     headers={"etag": etag})
+            return Response(body, headers={"content-type": wire.CONTENT_TYPE, "etag": etag, "cache-control": "no-store"})
+
+        if path.startswith("/api/device/art/") and method == "GET":
+            return await self.cover(path.removeprefix("/api/device/art/"))
 
         if path == "/api/device/sounds" and method == "PUT":
             sounds = wire.parse_sound_list(await request.bytes())
@@ -238,17 +303,179 @@ class Default(WorkerEntrypoint):
 
         raise HttpError(404, "Not found.")
 
+    # ---------- Spotify ----------
+
+    def accounts_url(self) -> str:
+        return self.secret("SPOTIFY_ACCOUNTS_URL") or spotify.ACCOUNTS_URL  # overridable to test against a fake
+
+    def api_url(self) -> str:
+        return self.secret("SPOTIFY_API_URL") or spotify.API_URL
+
+    def redirect_uri(self, url) -> str:
+        # Must match, character for character, a Redirect URI registered in the Spotify dashboard.
+        return self.secret("SPOTIFY_REDIRECT_URI") or f"{url.scheme}://{url.netloc}/api/spotify/callback"
+
+    def side_name(self, side: str) -> str:
+        return self.secret("ME_NAME" if side == "me" else "HER_NAME") or ("Me" if side == "me" else "Her")
+
+    async def upstream(self, *args, **kwargs):
+        """fetch() that turns every network failure into Upstream."""
+        try:
+            return await fetch(*args, **kwargs)
+        except Exception as e:  # pyodide raises OSError / JsException depending on the failure
+            raise Upstream(type(e).__name__) from None
+
+    async def store_tokens(self, side: str, rec: dict | None):
+        doc = await self.kv_json(SPOTIFY_KEY) or {}
+        if rec:
+            doc[side] = rec
+        else:
+            doc.pop(side, None)
+        await self.env.CLOCK.put(SPOTIFY_KEY, json.dumps(doc))
+
+    async def token_call(self, form: dict):
+        resp = await self.upstream(
+            self.accounts_url() + "/api/token", method="POST",
+            headers={"authorization": spotify.basic_auth(self.secret("SPOTIFY_CLIENT_ID"), self.secret("SPOTIFY_CLIENT_SECRET")),
+                     "content-type": "application/x-www-form-urlencoded"},
+            body=urlencode(form))
+        try:
+            data = await resp.json()
+        except Exception:
+            data = {}
+        return resp.status, data
+
+    async def refresh(self, side: str, rec: dict):
+        """A fresh token record for `side`, saved. None if Spotify says the grant is gone (the person
+        revoked access): the side is then disconnected. Raises Upstream if Spotify just isn't answering."""
+        status, data = await self.token_call({"grant_type": "refresh_token", "refresh_token": rec["refresh"]})
+        if status == 400 and isinstance(data, dict) and data.get("error") == "invalid_grant":
+            await self.store_tokens(side, None)
+            return None
+        fresh = spotify.token_record(data, time.time(), rec) if status == 200 else None
+        if not fresh:
+            raise Upstream(f"token refresh answered {status}")
+        await self.store_tokens(side, fresh)
+        return fresh
+
+    async def playing_call(self, access: str):
+        resp = await self.upstream(
+            self.api_url() + "/v1/me/player/currently-playing?additional_types=episode",
+            headers={"authorization": "Bearer " + access})
+        data = None
+        if resp.status == 200:
+            try:
+                data = await resp.json()
+            except Exception:
+                raise Upstream("unreadable answer") from None
+        return resp.status, data
+
+    async def listening(self, side: str, rec: dict | None = None) -> dict:
+        """What `side` is listening to right now, as a spotify.parse_playing() dict. Never raises."""
+        if rec is None:  # (False = "already looked: not connected")
+            rec = (await self.kv_json(SPOTIFY_KEY) or {}).get(side)
+        if not isinstance(rec, dict) or not rec.get("refresh"):
+            return dict(spotify.OFF)
+        try:
+            if not spotify.token_fresh(rec, time.time()):
+                rec = await self.refresh(side, rec)
+                if rec is None:
+                    _last_listening.pop(side, None)
+                    return dict(spotify.OFF)
+            status, data = await self.playing_call(rec["access"])
+            if status == 401:  # revoked or expired early: one fresh token, one more try
+                rec = await self.refresh(side, rec)
+                if rec is None:
+                    _last_listening.pop(side, None)
+                    return dict(spotify.OFF)
+                status, data = await self.playing_call(rec["access"])
+            if status not in (200, 204):  # 429 rate limit, 5xx, ...: keep what we showed
+                raise Upstream(f"currently-playing answered {status}")
+        except Upstream:
+            return _last_listening.get(side) or dict(spotify.OFF)
+        result = spotify.parse_playing(status, data)
+        _last_listening[side] = result
+        return result
+
+    async def listening_both(self) -> tuple:
+        """(left, right) listening dicts. One KV read; no Spotify calls at all when nobody is connected."""
+        tokens = await self.kv_json(SPOTIFY_KEY) or {}
+        left, right = await asyncio.gather(*(self.listening(side, tokens.get(side) or False) for side in spotify.SIDES))
+        return left, right
+
+    async def spotify_overview(self) -> dict:
+        tokens = await self.kv_json(SPOTIFY_KEY) or {}
+        configured = bool(self.secret("SPOTIFY_CLIENT_ID") and self.secret("SPOTIFY_CLIENT_SECRET"))
+        now = await asyncio.gather(*(self.listening(s, tokens.get(s)) for s in spotify.SIDES))
+        tokens = await self.kv_json(SPOTIFY_KEY) or {}  # re-read: a revoked grant gets dropped on the way
+        sides = []
+        for side, listening in zip(spotify.SIDES, now):
+            connected = bool(tokens.get(side))
+            playing = None
+            if connected and listening["status"] != "off":
+                playing = {k: listening[k] for k in ("status", "title", "artist")}
+            sides.append({"side": side, "name": self.side_name(side), "connected": connected, "playing": playing})
+        return {"configured": configured, "sides": sides}
+
+    async def spotify_callback(self, url):
+        """Spotify sends the browser here after the consent page. Always ends in a redirect to the admin page."""
+        q = {k: v[0] for k, v in parse_qs(url.query).items()}
+
+        def back(result: str):
+            return Response(None, status=302, headers={"location": f"/?spotify={result}", "cache-control": "no-store"})
+
+        side = auth.check_oauth_state(self.secret("ADMIN_PASSWORD"), q.get("state"))
+        if side not in spotify.SIDES:
+            return back("bad_state")
+        if q.get("error") or not q.get("code"):
+            return back("denied")
+        try:
+            status, data = await self.token_call({"grant_type": "authorization_code", "code": q["code"],
+                                                  "redirect_uri": self.redirect_uri(url)})
+        except Upstream:
+            return back("failed")
+        rec = spotify.token_record(data, time.time()) if status == 200 else None
+        if not rec:
+            return back("failed")
+        await self.store_tokens(side, rec)
+        _last_listening.pop(side, None)
+        return back("ok")
+
+    async def cover(self, art_id: str):
+        """GET /api/device/art/<id>: the 64x64 cover from Spotify's CDN. The id is checked to be 40 hex
+        chars first, so this can only ever fetch images from the CDN, never an arbitrary address."""
+        if not spotify.valid_art_id(art_id):
+            raise HttpError(404, "No such cover.")
+        base = self.secret("SPOTIFY_ART_URL") or "https://i.scdn.co"
+        try:
+            resp = await self.upstream(f"{base}/image/{art_id}")
+            if resp.status != 200:
+                raise HttpError(404, "No such cover.")
+            data = bytes(await resp.bytes())
+            _, _, progressive = model.jpeg_info(data)  # raises Invalid: not a JPEG
+        except (Upstream, Invalid):
+            raise HttpError(502, "Couldn't get that cover.") from None
+        if progressive or len(data) > 20_000:  # the clock's decoder is baseline-only, and its buffer small
+            raise HttpError(502, "That cover isn't something the clock can show.")
+        return jpeg_response(data)
+
     async def note_check_in(self, q: dict):
-        """Remember when the clock last polled. Written at most every SEEN_WRITE_EVERY seconds."""
+        """Remember when the clock last polled. Written at most every SEEN_WRITE_EVERY seconds, and (the clock
+        polls every ~10 s) without even reading KV in between, going by this isolate's own memory."""
         now = int(time.time())
-        device = await self.kv_json(DEVICE_KEY) or {}
         update = {k: q[k][:64] for k in ("tz", "fw") if q.get(k)}
         try:
             update["rssi"] = int(q["rssi"])
         except (KeyError, ValueError):
             pass
+        known = _checkin
+        if (now - known["at"] < SEEN_WRITE_EVERY
+                and all(known.get(k) == update[k] for k in ("tz", "fw") if k in update)):
+            return
+        device = await self.kv_json(DEVICE_KEY) or {}
         changed = any(device.get(k) != update[k] for k in ("tz", "fw") if k in update)
         if changed or now - int(device.get("seen", 0)) >= SEEN_WRITE_EVERY:
             device.update(update)
             device["seen"] = now
             await self.env.CLOCK.put(DEVICE_KEY, json.dumps(device))
+        known.update({k: update[k] for k in ("tz", "fw") if k in update}, at=int(device.get("seen", now)))

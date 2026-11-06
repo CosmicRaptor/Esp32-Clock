@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0b\x63lock.proto\x12\x0f\x62hoomi.clock.v1\"\x92\x01\n\x0b\x44\x65viceState\x12\x0f\n\x07version\x18\x01 \x01(\r\x12#\n\x04note\x18\x02 \x01(\x0b\x32\x15.bhoomi.clock.v1.Note\x12%\n\x05photo\x18\x03 \x01(\x0b\x32\x16.bhoomi.clock.v1.Photo\x12&\n\x06\x61larms\x18\x04 \x03(\x0b\x32\x16.bhoomi.clock.v1.Alarm\"%\n\x04Note\x12\x0c\n\x04text\x18\x01 \x01(\t\x12\x0f\n\x07sent_at\x18\x02 \x01(\x03\"2\n\x05Photo\x12\n\n\x02id\x18\x01 \x01(\t\x12\x0f\n\x07sent_at\x18\x02 \x01(\x03\x12\x0c\n\x04size\x18\x03 \x01(\r\"\x82\x01\n\x05\x41larm\x12\n\n\x02id\x18\x01 \x01(\t\x12\x0c\n\x04hour\x18\x02 \x01(\r\x12\x0e\n\x06minute\x18\x03 \x01(\r\x12\x0c\n\x04\x64\x61ys\x18\x04 \x01(\r\x12#\n\x04\x64\x61te\x18\x05 \x01(\x0b\x32\x15.bhoomi.clock.v1.Date\x12\r\n\x05label\x18\x06 \x01(\t\x12\r\n\x05sound\x18\x07 \x01(\t\"0\n\x04\x44\x61te\x12\x0c\n\x04year\x18\x01 \x01(\r\x12\r\n\x05month\x18\x02 \x01(\r\x12\x0b\n\x03\x64\x61y\x18\x03 \x01(\r\"\x1a\n\tSoundList\x12\r\n\x05names\x18\x01 \x03(\tb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0b\x63lock.proto\x12\x0f\x62hoomi.clock.v1\"\xc3\x01\n\x0b\x44\x65viceState\x12\x0f\n\x07version\x18\x01 \x01(\r\x12#\n\x04note\x18\x02 \x01(\x0b\x32\x15.bhoomi.clock.v1.Note\x12%\n\x05photo\x18\x03 \x01(\x0b\x32\x16.bhoomi.clock.v1.Photo\x12&\n\x06\x61larms\x18\x04 \x03(\x0b\x32\x16.bhoomi.clock.v1.Alarm\x12/\n\nnowplaying\x18\x05 \x01(\x0b\x32\x1b.bhoomi.clock.v1.NowPlaying\"%\n\x04Note\x12\x0c\n\x04text\x18\x01 \x01(\t\x12\x0f\n\x07sent_at\x18\x02 \x01(\x03\"2\n\x05Photo\x12\n\n\x02id\x18\x01 \x01(\t\x12\x0f\n\x07sent_at\x18\x02 \x01(\x03\x12\x0c\n\x04size\x18\x03 \x01(\r\"\x82\x01\n\x05\x41larm\x12\n\n\x02id\x18\x01 \x01(\t\x12\x0c\n\x04hour\x18\x02 \x01(\r\x12\x0e\n\x06minute\x18\x03 \x01(\r\x12\x0c\n\x04\x64\x61ys\x18\x04 \x01(\r\x12#\n\x04\x64\x61te\x18\x05 \x01(\x0b\x32\x15.bhoomi.clock.v1.Date\x12\r\n\x05label\x18\x06 \x01(\t\x12\r\n\x05sound\x18\x07 \x01(\t\"0\n\x04\x44\x61te\x12\x0c\n\x04year\x18\x01 \x01(\r\x12\r\n\x05month\x18\x02 \x01(\r\x12\x0b\n\x03\x64\x61y\x18\x03 \x01(\r\"\x1a\n\tSoundList\x12\r\n\x05names\x18\x01 \x03(\t\"_\n\nNowPlaying\x12\'\n\x04left\x18\x01 \x01(\x0b\x32\x19.bhoomi.clock.v1.Listener\x12(\n\x05right\x18\x02 \x01(\x0b\x32\x19.bhoomi.clock.v1.Listener\"\x97\x01\n\x08Listener\x12\x30\n\x06status\x18\x01 \x01(\x0e\x32 .bhoomi.clock.v1.Listener.Status\x12\r\n\x05title\x18\x02 \x01(\t\x12\x0e\n\x06\x61rtist\x18\x03 \x01(\t\x12\x0e\n\x06\x61rt_id\x18\x04 \x01(\t\"*\n\x06Status\x12\x07\n\x03OFF\x10\x00\x12\x0b\n\x07PLAYING\x10\x01\x12\n\n\x06PAUSED\x10\x02\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -32,15 +32,21 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'clock_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_DEVICESTATE']._serialized_start=33
-  _globals['_DEVICESTATE']._serialized_end=179
-  _globals['_NOTE']._serialized_start=181
-  _globals['_NOTE']._serialized_end=218
-  _globals['_PHOTO']._serialized_start=220
-  _globals['_PHOTO']._serialized_end=270
-  _globals['_ALARM']._serialized_start=273
-  _globals['_ALARM']._serialized_end=403
-  _globals['_DATE']._serialized_start=405
-  _globals['_DATE']._serialized_end=453
-  _globals['_SOUNDLIST']._serialized_start=455
-  _globals['_SOUNDLIST']._serialized_end=481
+  _globals['_DEVICESTATE']._serialized_end=228
+  _globals['_NOTE']._serialized_start=230
+  _globals['_NOTE']._serialized_end=267
+  _globals['_PHOTO']._serialized_start=269
+  _globals['_PHOTO']._serialized_end=319
+  _globals['_ALARM']._serialized_start=322
+  _globals['_ALARM']._serialized_end=452
+  _globals['_DATE']._serialized_start=454
+  _globals['_DATE']._serialized_end=502
+  _globals['_SOUNDLIST']._serialized_start=504
+  _globals['_SOUNDLIST']._serialized_end=530
+  _globals['_NOWPLAYING']._serialized_start=532
+  _globals['_NOWPLAYING']._serialized_end=627
+  _globals['_LISTENER']._serialized_start=630
+  _globals['_LISTENER']._serialized_end=781
+  _globals['_LISTENER_STATUS']._serialized_start=739
+  _globals['_LISTENER_STATUS']._serialized_end=781
 # @@protoc_insertion_point(module_scope)

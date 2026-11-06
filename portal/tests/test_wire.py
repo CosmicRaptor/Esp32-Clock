@@ -60,6 +60,22 @@ class DeviceStateTests(unittest.TestCase):
         self.assertLessEqual(len(msg.SerializeToString()), 6216)  # bhoomi_clock_v1_DeviceState_size
 
 
+class NowPlayingInStateTests(unittest.TestCase):
+    def test_always_present_and_off_without_spotify(self):
+        msg = pb.DeviceState.FromString(wire.device_state(model.empty_state()).SerializeToString())
+        self.assertTrue(msg.HasField("nowplaying"))
+        self.assertEqual((msg.nowplaying.left.status, msg.nowplaying.right.status), (pb.Listener.OFF, pb.Listener.OFF))
+
+    def test_carries_both_sides_next_to_the_portal_state(self):
+        left = {"status": "playing", "title": "T", "artist": "A", "art": "a" * 40}
+        right = {"status": "paused", "title": "U", "artist": "B", "art": ""}
+        s = model.empty_state()
+        s["message"] = {"text": "hi", "at": 1}
+        msg = pb.DeviceState.FromString(wire.device_state(s, (left, right)).SerializeToString())
+        self.assertEqual(msg.note.text, "hi")
+        self.assertEqual((msg.nowplaying.left.title, msg.nowplaying.right.status), ("T", pb.Listener.PAUSED))
+
+
 class SoundListTests(unittest.TestCase):
     def test_parse(self):
         body = pb.SoundList(names=["chime.mp3", "Birdsong.wav"]).SerializeToString()

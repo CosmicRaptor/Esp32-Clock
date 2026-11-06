@@ -10,6 +10,7 @@ from google.protobuf.message import DecodeError
 
 import clock_pb2 as pb
 import model
+import spotify
 from model import Invalid
 
 CONTENT_TYPE = "application/x-protobuf"
@@ -22,8 +23,10 @@ def days_mask(days: list) -> int:
     return mask
 
 
-def device_state(state: dict) -> pb.DeviceState:
+def device_state(state: dict, listening: tuple | None = None) -> pb.DeviceState:
+    """`listening`: the (left, right) "listening" dicts from spotify.py; None = nobody connected."""
     out = pb.DeviceState(version=state["version"])
+    out.nowplaying.CopyFrom(now_playing(*(listening or (spotify.OFF, spotify.OFF))))
     if state.get("message"):
         out.note.text = state["message"]["text"]
         out.note.sent_at = state["message"]["at"]
@@ -40,6 +43,20 @@ def device_state(state: dict) -> pb.DeviceState:
         if not a["days"]:
             d = datetime.date.fromisoformat(a["date"])
             alarm.date.year, alarm.date.month, alarm.date.day = d.year, d.month, d.day
+    return out
+
+
+_STATUS = {"playing": pb.Listener.PLAYING, "paused": pb.Listener.PAUSED}
+
+
+def now_playing(left: dict, right: dict) -> pb.NowPlaying:
+    """Two "listening" dicts (see spotify.py) -> the clock's NowPlaying message."""
+    out = pb.NowPlaying()
+    for field, listening in ((out.left, left), (out.right, right)):
+        field.SetInParent()  # both sides are always present, even when "off"
+        field.status = _STATUS.get(listening["status"], pb.Listener.OFF)
+        if field.status != pb.Listener.OFF:
+            field.title, field.artist, field.art_id = listening["title"], listening["artist"], listening["art"]
     return out
 
 

@@ -271,6 +271,7 @@ uint32_t seenPortalRev = 0;
 enum class View { Setup, Msg, Clock, Photo };
 View current = View::Msg;
 bool inClock() { return current == View::Clock || current == View::Photo; }
+bool npVisible = false;  // the now-playing strip is on screen (see below)
 void showView(View v);
 
 // The decoded photo: 320x240 RGB565 in PSRAM, wrapped for LVGL. Two slots so the new picture is
@@ -371,9 +372,219 @@ void applyPortal() {
 
 // The card is up for the first 20 s of each minute, so the photo isn't covered all day.
 void updateNote() {
+  // over the photo the strip sits at the top, so the card goes below it while both are up
+  static int noteY = -1;
+  int y = current == View::Photo && npVisible ? 62 : 12;
+  if (y != noteY) {  // only when it moves: re-aligning invalidates the area every time
+    noteY = y;
+    lv_obj_align(noteCard, LV_ALIGN_TOP_MID, 0, y);
+  }
   bool want = noteShown[0] && inClock() && (millis() - noteShownAt) % 60000 < 20000;
   if (want == !lv_obj_has_flag(noteCard, LV_OBJ_FLAG_HIDDEN)) return;
   show(noteCard, want);
+}
+
+// ---------- now playing: a tiny strip, your song on the left and hers on the right ----------
+// One strip that lives on whichever face is showing: between the time and the footer on the plain
+// clock, a dark pill at the top over the photo. A side with nothing playing is left out (the other
+// stays where it is); with neither playing the strip is hidden and the face is just the clock.
+constexpr int NP_ART = 38;                       // cover thumbnail, px (the JPEG is 64x64, scaled down)
+constexpr int NP_GAP = 6;
+constexpr int NP_H = 46;
+constexpr uint32_t NP_PAUSED_HIDE_MS = 5 * 60 * 1000;  // a song paused this long is no longer "what you're playing"
+const lv_color_t NP_TITLE_PHOTO = lv_color_white();
+const lv_color_t NP_ARTIST_PHOTO = lv_color_hex(0xFFB3C0);
+
+struct NpSide {
+  lv_obj_t *half, *artBox, *artImg, *note, *col, *title, *artist;
+  lv_image_dsc_t dsc;
+  uint8_t *px = nullptr;        // decoded cover: 64x64 RGB565 in PSRAM
+  char coverId[41] = "";        // id of the cover decoded into px ("" = none)
+  char titleShown[61] = "";
+  char artistShown[61] = "";
+  uint32_t pausedSince = 0;
+};
+NpSide np[2];
+lv_obj_t *npStrip;
+uint32_t seenNpRev = 0;
+
+void buildStrip() {
+  npStrip = lv_obj_create(clockView);
+  lv_obj_remove_style_all(npStrip);
+  lv_obj_set_size(npStrip, 296, NP_H);
+  lv_obj_remove_flag(npStrip, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_radius(npStrip, 12, 0);
+  for (int i = 0; i < 2; i++) {
+    NpSide &n = np[i];
+    n.half = lv_obj_create(npStrip);
+    lv_obj_remove_style_all(n.half);
+    lv_obj_remove_flag(n.half, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(n.half, lv_pct(50), lv_pct(100));
+    lv_obj_align(n.half, i ? LV_ALIGN_TOP_RIGHT : LV_ALIGN_TOP_LEFT, 0, 0);
+    // the right side is the left one mirrored: cover on the outside, text on the inside, right-aligned
+    lv_obj_set_flex_flow(n.half, i ? LV_FLEX_FLOW_ROW_REVERSE : LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(n.half, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(n.half, NP_GAP, 0);
+
+    n.artBox = lv_obj_create(n.half);
+    lv_obj_remove_style_all(n.artBox);
+    lv_obj_remove_flag(n.artBox, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(n.artBox, NP_ART, NP_ART);
+    lv_obj_set_style_radius(n.artBox, 7, 0);
+    lv_obj_set_style_clip_corner(n.artBox, true, 0);
+    lv_obj_set_style_bg_color(n.artBox, ACCENT, 0);  // shows while the cover is on its way, or when a song has none
+    lv_obj_set_style_bg_opa(n.artBox, LV_OPA_COVER, 0);
+    n.note = lv_label_create(n.artBox);
+    lv_obj_set_style_text_font(n.note, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(n.note, lv_color_white(), 0);
+    lv_label_set_text(n.note, LV_SYMBOL_AUDIO);
+    lv_obj_center(n.note);
+    n.artImg = lv_image_create(n.artBox);
+    lv_obj_set_size(n.artImg, NP_ART, NP_ART);
+    lv_image_set_inner_align(n.artImg, LV_IMAGE_ALIGN_STRETCH);  // 64x64 -> 38x38
+    lv_obj_align(n.artImg, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_add_flag(n.artImg, LV_OBJ_FLAG_HIDDEN);
+
+    n.col = box(n.half, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_size(n.col, 100, LV_SIZE_CONTENT);
+    lv_text_align_t al = i ? LV_TEXT_ALIGN_RIGHT : LV_TEXT_ALIGN_LEFT;
+    n.title = label(n.col, &lv_font_montserrat_14, INK, al);
+    n.artist = label(n.col, &lv_font_montserrat_14, MUTE, al);
+    // a long title scrolls round instead of being cut off
+    lv_label_set_long_mode(n.title, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_label_set_long_mode(n.artist, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_obj_add_flag(n.half, LV_OBJ_FLAG_HIDDEN);
+  }
+  lv_obj_add_flag(npStrip, LV_OBJ_FLAG_HIDDEN);
+}
+
+// Moves the strip to the face that is showing and restyles it for it.
+void placeStrip() {
+  bool onPhoto = current == View::Photo;
+  lv_obj_t *parent = onPhoto ? photoView : clockView;
+  if (lv_obj_get_parent(npStrip) != parent) lv_obj_set_parent(npStrip, parent);
+  int w, padH;
+  if (onPhoto) {
+    w = 304;
+    padH = 6;
+    lv_obj_set_style_bg_color(npStrip, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(npStrip, LV_OPA_60, 0);
+    lv_obj_align(npStrip, LV_ALIGN_TOP_MID, 0, 8);
+  } else {
+    w = 296;
+    padH = 0;
+    lv_obj_set_style_bg_opa(npStrip, LV_OPA_TRANSP, 0);
+    lv_obj_move_to_index(npStrip, 2);  // date, time, [strip], footer
+  }
+  lv_obj_set_size(npStrip, w, NP_H);
+  lv_obj_set_style_pad_hor(npStrip, padH, 0);
+  int colW = (w - 2 * padH) / 2 - NP_ART - NP_GAP;
+  for (NpSide &n : np) {
+    lv_obj_set_width(n.col, colW);
+    lv_obj_set_style_text_color(n.title, onPhoto ? NP_TITLE_PHOTO : INK, 0);
+    lv_obj_set_style_text_color(n.artist, onPhoto ? NP_ARTIST_PHOTO : MUTE, 0);
+  }
+}
+
+// Decodes a side's 64x64 cover into its own PSRAM buffer. Called with app::Lock held.
+bool decodeCover(NpSide &n, const uint8_t *jpg, size_t len, const char *id) {
+  esp_jpeg_image_cfg_t cfg = {};
+  cfg.indata = (uint8_t *)jpg;
+  cfg.indata_size = len;
+  cfg.out_format = JPEG_IMAGE_FORMAT_RGB565;
+  cfg.out_scale = JPEG_IMAGE_SCALE_0;
+  esp_jpeg_image_output_t info = {};
+  if (esp_jpeg_get_image_info(&cfg, &info) != ESP_OK || !info.width || !info.height || info.output_len > 64 * 1024) {
+    Serial.printf("[ui] cover %.8s: not a decodable JPEG\n", id);
+    return false;
+  }
+  uint8_t *px = (uint8_t *)heap_caps_malloc(info.output_len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!px) return false;
+  cfg.outbuf = px;
+  cfg.outbuf_size = info.output_len;
+  if (esp_jpeg_decode(&cfg, &info) != ESP_OK) {
+    Serial.printf("[ui] cover %.8s: decode failed\n", id);
+    free(px);
+    return false;
+  }
+  memset(&n.dsc, 0, sizeof n.dsc);
+  n.dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+  n.dsc.header.cf = LV_COLOR_FORMAT_RGB565;
+  n.dsc.header.w = info.width;
+  n.dsc.header.h = info.height;
+  n.dsc.header.stride = info.width * 2;
+  n.dsc.data_size = info.output_len;
+  n.dsc.data = px;
+  lv_image_set_src(n.artImg, &n.dsc);
+  free(n.px);
+  n.px = px;
+  return true;
+}
+
+// New answer or cover from the portal: update the texts and covers (visibility is updateNowPlaying()'s job).
+void applyNowPlaying() {
+  const portal::NowPlaying &now = portal::nowPlaying();
+  for (int i = 0; i < 2; i++) {
+    NpSide &n = np[i];
+    const portal::Listener &l = i ? now.right : now.left;
+    if (strcmp(n.titleShown, l.title) != 0) {
+      strlcpy(n.titleShown, l.title, sizeof n.titleShown);
+      lv_label_set_text(n.title, n.titleShown);
+    }
+    if (strcmp(n.artistShown, l.artist) != 0) {
+      strlcpy(n.artistShown, l.artist, sizeof n.artistShown);
+      lv_label_set_text(n.artist, n.artistShown);
+    }
+    size_t len = 0;
+    const uint8_t *jpg = portal::cover(i, &len);
+    const char *id = portal::coverId(i);
+    if (!jpg || !len) {  // no cover (yet): the pink note stays
+      if (n.coverId[0]) {
+        lv_image_set_src(n.artImg, nullptr);
+        free(n.px);
+        n.px = nullptr;
+        n.coverId[0] = 0;
+        lv_obj_add_flag(n.artImg, LV_OBJ_FLAG_HIDDEN);
+      }
+    } else if (strcmp(n.coverId, id) != 0) {
+      if (decodeCover(n, jpg, len, id)) {
+        strlcpy(n.coverId, id, sizeof n.coverId);
+        lv_obj_remove_flag(n.artImg, LV_OBJ_FLAG_HIDDEN);
+      }
+    }
+  }
+}
+
+// Shows or hides each side and the strip itself. Cheap; runs with the clock's 250 ms tick.
+void updateNowPlaying() {
+  bool fresh = portal::nowPlayingFresh();  // not heard from the portal in a while: better nothing than stale
+  const portal::NowPlaying &now = portal::nowPlaying();
+  bool any = false;
+  for (int i = 0; i < 2; i++) {
+    NpSide &n = np[i];
+    int st = fresh ? (int)(i ? now.right.status : now.left.status) : bhoomi_clock_v1_Listener_Status_OFF;
+    if (st == bhoomi_clock_v1_Listener_Status_PAUSED) {
+      if (!n.pausedSince) n.pausedSince = millis() | 1;
+      if (millis() - n.pausedSince > NP_PAUSED_HIDE_MS) st = bhoomi_clock_v1_Listener_Status_OFF;
+    } else {
+      n.pausedSince = 0;
+    }
+    bool on = st != bhoomi_clock_v1_Listener_Status_OFF;
+    any = any || on;
+    if (on == !lv_obj_has_flag(n.half, LV_OBJ_FLAG_HIDDEN) &&
+        (st == bhoomi_clock_v1_Listener_Status_PAUSED) == (lv_obj_get_style_opa(n.half, 0) < LV_OPA_COVER))
+      continue;
+    show(n.half, on);
+    lv_obj_set_style_opa(n.half, st == bhoomi_clock_v1_Listener_Status_PAUSED ? LV_OPA_50 : LV_OPA_COVER, 0);
+    Serial.printf("[ui] now playing %s side: %s\n", i ? "right" : "left",
+                  !on ? "hidden" : st == bhoomi_clock_v1_Listener_Status_PAUSED ? "paused (dimmed)" : "playing");
+  }
+  bool want = any && inClock();
+  if (want != npVisible) {
+    npVisible = want;
+    show(npStrip, want);
+    Serial.printf("[ui] now playing strip %s\n", want ? "shown" : "hidden");
+  }
 }
 
 // ---------- alarm: full-screen overlay + sound until touched ----------
@@ -490,9 +701,11 @@ void showView(View v) {
   show(clockView, v == View::Clock);
   show(photoView, v == View::Photo);
   if (inClock()) {
+    placeStrip();
     updateFooter();
     updateClock();
   }
+  updateNowPlaying();
   updateNote();
 }
 
@@ -518,6 +731,7 @@ void begin(const char *apName) {
   buildMsg();
   buildClock();
   buildPhoto();
+  buildStrip();
   buildNote();
   buildAlarm();  // last, so it floats above everything
   showMsg(true, "Waking up...", "");
@@ -573,6 +787,11 @@ void loop() {
     seenPortalRev = portal::revision();
     applyPortal();
   }
+  if (portal::nowPlayingRevision() != seenNpRev) {
+    seenNpRev = portal::nowPlayingRevision();
+    applyNowPlaying();
+    updateNowPlaying();
+  }
   checkAlarms();
   updateAlarm();
   if (onlineAt && millis() - onlineAt > SPLASH_MS) {
@@ -582,6 +801,7 @@ void loop() {
   if (inClock() && millis() - last >= 250) {
     last = millis();
     updateClock();
+    updateNowPlaying();
     updateNote();
   }
 }

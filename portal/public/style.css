@@ -164,6 +164,17 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, .btn:focus-vi
 .presets { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; }
 .chip-link { background: none; border: 0; padding: 4px 0; font: inherit; font-size: 14px; color: var(--accent); cursor: pointer; }
 
+/* ---------- music ---------- */
+.sides { list-style: none; margin: 6px 0 0; padding: 0; }
+.sides li { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+.sides li:first-child { border-top: 0; }
+.s-main { flex: 1; min-width: 0; }
+.s-name { font-weight: 600; }
+.s-name small { font-weight: 400; color: var(--mute); font-size: 13px; margin-left: 6px; }
+.s-sub { color: var(--mute); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.s-sub.live { color: var(--ok); }
+.sides .btn { flex: none; }
+
 /* ---------- toast ---------- */
 .toast {
   position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom)); transform: translate(-50%, 20px);

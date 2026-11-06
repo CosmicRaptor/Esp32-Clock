@@ -9,6 +9,13 @@
 #error Regenerate this file with the current version of nanopb generator.
 #endif
 
+/* Enum definitions */
+typedef enum _bhoomi_clock_v1_Listener_Status {
+    bhoomi_clock_v1_Listener_Status_OFF = 0, /* not connected to Spotify, or nothing to show */
+    bhoomi_clock_v1_Listener_Status_PLAYING = 1,
+    bhoomi_clock_v1_Listener_Status_PAUSED = 2 /* the clock dims it, and hides it after a few minutes */
+} bhoomi_clock_v1_Listener_Status;
+
 /* Struct definitions */
 /* The message shown on the clock face. */
 typedef struct _bhoomi_clock_v1_Note {
@@ -40,6 +47,30 @@ typedef struct _bhoomi_clock_v1_Alarm {
     char sound[65]; /* file name in /sounds on the card; empty = built-in beep */
 } bhoomi_clock_v1_Alarm;
 
+/* PUT /api/device/sounds  (body: SoundList) — at boot and whenever /sounds on the card changes.
+ Fills the sound picker in the portal's alarm editor. */
+typedef struct _bhoomi_clock_v1_SoundList {
+    pb_size_t names_count;
+    char names[100][65]; /* file names only, no folder */
+} bhoomi_clock_v1_SoundList;
+
+typedef struct _bhoomi_clock_v1_Listener {
+    bhoomi_clock_v1_Listener_Status status;
+    char title[61]; /* up to 60 characters */
+    char artist[61]; /* up to 60 characters */
+    char art_id[41]; /* 40 hex chars; GET /api/device/art/<art_id> is a 64x64 baseline JPEG. Empty: no cover */
+} bhoomi_clock_v1_Listener;
+
+/* What each of the two people is listening to on Spotify, for the little strip on the clock face.
+ Rides along in DeviceState. Text is already ASCII-only (accents stripped, other scripts become '?')
+ because the clock's fonts only cover Latin. */
+typedef struct _bhoomi_clock_v1_NowPlaying {
+    bool has_left;
+    bhoomi_clock_v1_Listener left; /* the first person's side of the strip (unset: side not shown) */
+    bool has_right;
+    bhoomi_clock_v1_Listener right; /* the second person's side */
+} bhoomi_clock_v1_NowPlaying;
+
 /* GET /api/device/state  (Content-Type: application/x-protobuf)
  Sent whenever the ETag (= version) changes; otherwise the clock gets an empty 304. */
 typedef struct _bhoomi_clock_v1_DeviceState {
@@ -50,33 +81,47 @@ typedef struct _bhoomi_clock_v1_DeviceState {
     bhoomi_clock_v1_Photo photo; /* unset: no photo */
     pb_size_t alarms_count;
     bhoomi_clock_v1_Alarm alarms[20]; /* enabled alarms only, sorted by time */
+    bool has_nowplaying;
+    bhoomi_clock_v1_NowPlaying nowplaying; /* what the two people are playing on Spotify; always set. It changes on its own */
 } bhoomi_clock_v1_DeviceState;
-
-/* PUT /api/device/sounds  (body: SoundList) — at boot and whenever /sounds on the card changes.
- Fills the sound picker in the portal's alarm editor. */
-typedef struct _bhoomi_clock_v1_SoundList {
-    pb_size_t names_count;
-    char names[100][65]; /* file names only, no folder */
-} bhoomi_clock_v1_SoundList;
 
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+/* Helper constants for enums */
+#define _bhoomi_clock_v1_Listener_Status_MIN bhoomi_clock_v1_Listener_Status_OFF
+#define _bhoomi_clock_v1_Listener_Status_MAX bhoomi_clock_v1_Listener_Status_PAUSED
+#define _bhoomi_clock_v1_Listener_Status_ARRAYSIZE ((bhoomi_clock_v1_Listener_Status)(bhoomi_clock_v1_Listener_Status_PAUSED+1))
+
+
+
+
+
+
+
+
+#define bhoomi_clock_v1_Listener_status_ENUMTYPE bhoomi_clock_v1_Listener_Status
+
+
 /* Initializer values for message structs */
-#define bhoomi_clock_v1_DeviceState_init_default {0, false, bhoomi_clock_v1_Note_init_default, false, bhoomi_clock_v1_Photo_init_default, 0, {bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default}}
+#define bhoomi_clock_v1_DeviceState_init_default {0, false, bhoomi_clock_v1_Note_init_default, false, bhoomi_clock_v1_Photo_init_default, 0, {bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default}, false, bhoomi_clock_v1_NowPlaying_init_default}
 #define bhoomi_clock_v1_Note_init_default        {"", 0}
 #define bhoomi_clock_v1_Photo_init_default       {"", 0, 0}
 #define bhoomi_clock_v1_Alarm_init_default       {"", 0, 0, 0, false, bhoomi_clock_v1_Date_init_default, "", ""}
 #define bhoomi_clock_v1_Date_init_default        {0, 0, 0}
 #define bhoomi_clock_v1_SoundList_init_default   {0, {"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""}}
-#define bhoomi_clock_v1_DeviceState_init_zero    {0, false, bhoomi_clock_v1_Note_init_zero, false, bhoomi_clock_v1_Photo_init_zero, 0, {bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero}}
+#define bhoomi_clock_v1_NowPlaying_init_default  {false, bhoomi_clock_v1_Listener_init_default, false, bhoomi_clock_v1_Listener_init_default}
+#define bhoomi_clock_v1_Listener_init_default    {_bhoomi_clock_v1_Listener_Status_MIN, "", "", ""}
+#define bhoomi_clock_v1_DeviceState_init_zero    {0, false, bhoomi_clock_v1_Note_init_zero, false, bhoomi_clock_v1_Photo_init_zero, 0, {bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero}, false, bhoomi_clock_v1_NowPlaying_init_zero}
 #define bhoomi_clock_v1_Note_init_zero           {"", 0}
 #define bhoomi_clock_v1_Photo_init_zero          {"", 0, 0}
 #define bhoomi_clock_v1_Alarm_init_zero          {"", 0, 0, 0, false, bhoomi_clock_v1_Date_init_zero, "", ""}
 #define bhoomi_clock_v1_Date_init_zero           {0, 0, 0}
 #define bhoomi_clock_v1_SoundList_init_zero      {0, {"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""}}
+#define bhoomi_clock_v1_NowPlaying_init_zero     {false, bhoomi_clock_v1_Listener_init_zero, false, bhoomi_clock_v1_Listener_init_zero}
+#define bhoomi_clock_v1_Listener_init_zero       {_bhoomi_clock_v1_Listener_Status_MIN, "", "", ""}
 
 /* Field tags (for use in manual encoding/decoding) */
 #define bhoomi_clock_v1_Note_text_tag            1
@@ -94,23 +139,32 @@ extern "C" {
 #define bhoomi_clock_v1_Alarm_date_tag           5
 #define bhoomi_clock_v1_Alarm_label_tag          6
 #define bhoomi_clock_v1_Alarm_sound_tag          7
+#define bhoomi_clock_v1_SoundList_names_tag      1
+#define bhoomi_clock_v1_Listener_status_tag      1
+#define bhoomi_clock_v1_Listener_title_tag       2
+#define bhoomi_clock_v1_Listener_artist_tag      3
+#define bhoomi_clock_v1_Listener_art_id_tag      4
+#define bhoomi_clock_v1_NowPlaying_left_tag      1
+#define bhoomi_clock_v1_NowPlaying_right_tag     2
 #define bhoomi_clock_v1_DeviceState_version_tag  1
 #define bhoomi_clock_v1_DeviceState_note_tag     2
 #define bhoomi_clock_v1_DeviceState_photo_tag    3
 #define bhoomi_clock_v1_DeviceState_alarms_tag   4
-#define bhoomi_clock_v1_SoundList_names_tag      1
+#define bhoomi_clock_v1_DeviceState_nowplaying_tag 5
 
 /* Struct field encoding specification for nanopb */
 #define bhoomi_clock_v1_DeviceState_FIELDLIST(X, a) \
 X(a, STATIC,   SINGULAR, UINT32,   version,           1) \
 X(a, STATIC,   OPTIONAL, MESSAGE,  note,              2) \
 X(a, STATIC,   OPTIONAL, MESSAGE,  photo,             3) \
-X(a, STATIC,   REPEATED, MESSAGE,  alarms,            4)
+X(a, STATIC,   REPEATED, MESSAGE,  alarms,            4) \
+X(a, STATIC,   OPTIONAL, MESSAGE,  nowplaying,        5)
 #define bhoomi_clock_v1_DeviceState_CALLBACK NULL
 #define bhoomi_clock_v1_DeviceState_DEFAULT NULL
 #define bhoomi_clock_v1_DeviceState_note_MSGTYPE bhoomi_clock_v1_Note
 #define bhoomi_clock_v1_DeviceState_photo_MSGTYPE bhoomi_clock_v1_Photo
 #define bhoomi_clock_v1_DeviceState_alarms_MSGTYPE bhoomi_clock_v1_Alarm
+#define bhoomi_clock_v1_DeviceState_nowplaying_MSGTYPE bhoomi_clock_v1_NowPlaying
 
 #define bhoomi_clock_v1_Note_FIELDLIST(X, a) \
 X(a, STATIC,   SINGULAR, STRING,   text,              1) \
@@ -149,12 +203,30 @@ X(a, STATIC,   REPEATED, STRING,   names,             1)
 #define bhoomi_clock_v1_SoundList_CALLBACK NULL
 #define bhoomi_clock_v1_SoundList_DEFAULT NULL
 
+#define bhoomi_clock_v1_NowPlaying_FIELDLIST(X, a) \
+X(a, STATIC,   OPTIONAL, MESSAGE,  left,              1) \
+X(a, STATIC,   OPTIONAL, MESSAGE,  right,             2)
+#define bhoomi_clock_v1_NowPlaying_CALLBACK NULL
+#define bhoomi_clock_v1_NowPlaying_DEFAULT NULL
+#define bhoomi_clock_v1_NowPlaying_left_MSGTYPE bhoomi_clock_v1_Listener
+#define bhoomi_clock_v1_NowPlaying_right_MSGTYPE bhoomi_clock_v1_Listener
+
+#define bhoomi_clock_v1_Listener_FIELDLIST(X, a) \
+X(a, STATIC,   SINGULAR, UENUM,    status,            1) \
+X(a, STATIC,   SINGULAR, STRING,   title,             2) \
+X(a, STATIC,   SINGULAR, STRING,   artist,            3) \
+X(a, STATIC,   SINGULAR, STRING,   art_id,            4)
+#define bhoomi_clock_v1_Listener_CALLBACK NULL
+#define bhoomi_clock_v1_Listener_DEFAULT NULL
+
 extern const pb_msgdesc_t bhoomi_clock_v1_DeviceState_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_Note_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_Photo_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_Alarm_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_Date_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_SoundList_msg;
+extern const pb_msgdesc_t bhoomi_clock_v1_NowPlaying_msg;
+extern const pb_msgdesc_t bhoomi_clock_v1_Listener_msg;
 
 /* Defines for backwards compatibility with code written before nanopb-0.4.0 */
 #define bhoomi_clock_v1_DeviceState_fields &bhoomi_clock_v1_DeviceState_msg
@@ -163,13 +235,17 @@ extern const pb_msgdesc_t bhoomi_clock_v1_SoundList_msg;
 #define bhoomi_clock_v1_Alarm_fields &bhoomi_clock_v1_Alarm_msg
 #define bhoomi_clock_v1_Date_fields &bhoomi_clock_v1_Date_msg
 #define bhoomi_clock_v1_SoundList_fields &bhoomi_clock_v1_SoundList_msg
+#define bhoomi_clock_v1_NowPlaying_fields &bhoomi_clock_v1_NowPlaying_msg
+#define bhoomi_clock_v1_Listener_fields &bhoomi_clock_v1_Listener_msg
 
 /* Maximum encoded size of messages (where known) */
 #define BHOOMI_CLOCK_V1_CLOCK_PB_H_MAX_SIZE      bhoomi_clock_v1_SoundList_size
 #define bhoomi_clock_v1_Alarm_size               281
 #define bhoomi_clock_v1_Date_size                18
-#define bhoomi_clock_v1_DeviceState_size         6216
+#define bhoomi_clock_v1_DeviceState_size         6561
+#define bhoomi_clock_v1_Listener_size            168
 #define bhoomi_clock_v1_Note_size                494
+#define bhoomi_clock_v1_NowPlaying_size          342
 #define bhoomi_clock_v1_Photo_size               31
 #define bhoomi_clock_v1_SoundList_size           6600
 

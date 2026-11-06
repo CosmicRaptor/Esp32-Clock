@@ -5,8 +5,10 @@
 
 // Talks to the cloud admin portal (see portal/README.md, "Clock API"), in its own task so a slow
 // connection never stalls the screen:
-//   - polls GET /api/device/state about once a minute (ETag / If-None-Match -> bare 304)
+//   - polls GET /api/device/state every 10 s over one kept-alive connection (ETag / If-None-Match -> bare 304).
+//     The state carries the note, alarms, photo id and what the two people are playing on Spotify
 //   - downloads GET /api/device/image/<id> when photo.id changes (retried on 404 / failure)
+//   - downloads GET /api/device/art/<id>, the 64x64 covers for the now-playing strip
 //   - PUTs the /sounds file list at boot and whenever the card's files change
 // Configure it in portal_config.h (see portal_config.example.h).
 //
@@ -15,10 +17,12 @@
 // state or photo is swapped in under the same lock.
 namespace portal {
 
-constexpr const char *FW_VERSION = "0.5.0";  // sent as ?fw=
+constexpr const char *FW_VERSION = "0.6.0";  // sent as ?fw=
 
 using State = bhoomi_clock_v1_DeviceState;  // .has_note/.note.text, .has_photo/.photo, .alarms[0..alarms_count)
 using Alarm = bhoomi_clock_v1_Alarm;
+using NowPlaying = bhoomi_clock_v1_NowPlaying;  // .left / .right: what the two people are listening to
+using Listener = bhoomi_clock_v1_Listener;      // .status (OFF/PLAYING/PAUSED), .title, .artist, .art_id
 
 void begin();  // start the task; call after Wi-Fi is initialised. No-op if not configured.
 
@@ -31,5 +35,14 @@ const char *photoId();       // id of the JPEG photo() returns, "" when none
 
 // Changes whenever the note, photo bytes or alarms change; lets ui re-render only when needed.
 uint32_t revision();
+
+// ---- Spotify "now playing" (the strip on the clock face; DeviceState.nowplaying) ----
+// Same locking rule as above.
+// Side 0 is the left of the strip (the first person), side 1 the right.
+bool nowPlayingFresh();                      // the portal answered in the last 2 minutes (else: show nothing)
+const NowPlaying &nowPlaying();              // all zero (= both sides OFF) until the first poll
+const uint8_t *cover(int side, size_t *size);  // that side's 64x64 baseline JPEG, or nullptr (none / not downloaded yet)
+const char *coverId(int side);               // art_id of the JPEG cover() returns, "" when none
+uint32_t nowPlayingRevision();               // changes when the answer or a cover changes
 
 }  // namespace portal

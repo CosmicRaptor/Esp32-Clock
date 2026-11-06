@@ -125,6 +125,7 @@ async function load() {
   setState(j.state);
   $('login').hidden = true;
   $('app').hidden = false;
+  loadSpotify();
 }
 
 function setState(s) {
@@ -571,6 +572,66 @@ $('aDelete').onclick = () => busy($('aDelete'), async () => {
   setState(j.state);
   toast('Alarm deleted');
 });
+
+// ---------------------------------------------------------------- music (Spotify)
+
+// Per person: who is connected, and what they're playing right now (the server asks Spotify).
+async function loadSpotify() {
+  let j;
+  try { j = await api('/api/spotify'); } catch (e) { return; }
+  $('spSetup').hidden = j.configured;
+  const ul = $('spSides');
+  ul.textContent = '';
+  j.sides.forEach((s, i) => {
+    const li = el('li');
+    const main = el('div', 's-main');
+    const name = el('div', 's-name', s.name);
+    name.append(el('small', '', i === 0 ? 'left' : 'right'));
+    let sub, live = false;
+    if (!s.connected) sub = 'Not connected';
+    else if (!s.playing) sub = 'Connected · nothing playing';
+    else {
+      live = s.playing.status === 'playing';
+      sub = `${live ? '♪' : '⏸'} ${s.playing.title}${s.playing.artist ? ' · ' + s.playing.artist : ''}`;
+    }
+    const subEl = el('div', 's-sub' + (live ? ' live' : ''), sub);
+    main.append(name, subEl);
+    li.append(main);
+    if (j.configured) {
+      // a plain link: the server answers with a redirect to Spotify's consent page
+      const a = el('a', 'btn ghost small', s.connected ? 'Reconnect' : 'Connect');
+      a.href = `/api/spotify/login?side=${s.side}`;
+      li.append(a);
+    }
+    if (s.connected) {
+      const b = el('button', 'btn ghost small danger', 'Disconnect');
+      b.onclick = () => busy(b, async () => {
+        if (!confirm(`Disconnect ${s.name}'s Spotify from the clock?`)) return;
+        await api(`/api/spotify/${s.side}`, { method: 'DELETE' });
+        toast('Disconnected');
+        loadSpotify();
+      });
+      li.append(b);
+    }
+    ul.append(li);
+  });
+  const connected = j.sides.filter(s => s.connected).length;
+  $('spMeta').textContent = connected ? `${connected} of 2 connected` : '';
+}
+
+// Spotify's consent page sends the browser back here with ?spotify=<result>
+(function spotifyResult() {
+  const r = new URLSearchParams(location.search).get('spotify');
+  if (!r) return;
+  history.replaceState(null, '', location.pathname);
+  const msg = {
+    ok: ['Spotify connected 🎶'],
+    denied: ['Spotify said no (access wasn\'t granted).', true],
+    bad_state: ['That Spotify link expired. Please tap Connect again.', true],
+    failed: ["Couldn't finish connecting to Spotify. Try again?", true],
+  }[r];
+  if (msg) toast(...msg);
+})();
 
 // ---------------------------------------------------------------- go
 

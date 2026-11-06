@@ -1,4 +1,5 @@
 from google.protobuf.internal import containers as _containers
+from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
 from collections.abc import Iterable as _Iterable, Mapping as _Mapping
@@ -7,16 +8,18 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class DeviceState(_message.Message):
-    __slots__ = ("version", "note", "photo", "alarms")
+    __slots__ = ("version", "note", "photo", "alarms", "nowplaying")
     VERSION_FIELD_NUMBER: _ClassVar[int]
     NOTE_FIELD_NUMBER: _ClassVar[int]
     PHOTO_FIELD_NUMBER: _ClassVar[int]
     ALARMS_FIELD_NUMBER: _ClassVar[int]
+    NOWPLAYING_FIELD_NUMBER: _ClassVar[int]
     version: int
     note: Note
     photo: Photo
     alarms: _containers.RepeatedCompositeFieldContainer[Alarm]
-    def __init__(self, version: _Optional[int] = ..., note: _Optional[_Union[Note, _Mapping]] = ..., photo: _Optional[_Union[Photo, _Mapping]] = ..., alarms: _Optional[_Iterable[_Union[Alarm, _Mapping]]] = ...) -> None: ...
+    nowplaying: NowPlaying
+    def __init__(self, version: _Optional[int] = ..., note: _Optional[_Union[Note, _Mapping]] = ..., photo: _Optional[_Union[Photo, _Mapping]] = ..., alarms: _Optional[_Iterable[_Union[Alarm, _Mapping]]] = ..., nowplaying: _Optional[_Union[NowPlaying, _Mapping]] = ...) -> None: ...
 
 class Note(_message.Message):
     __slots__ = ("text", "sent_at")
@@ -69,3 +72,31 @@ class SoundList(_message.Message):
     NAMES_FIELD_NUMBER: _ClassVar[int]
     names: _containers.RepeatedScalarFieldContainer[str]
     def __init__(self, names: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class NowPlaying(_message.Message):
+    __slots__ = ("left", "right")
+    LEFT_FIELD_NUMBER: _ClassVar[int]
+    RIGHT_FIELD_NUMBER: _ClassVar[int]
+    left: Listener
+    right: Listener
+    def __init__(self, left: _Optional[_Union[Listener, _Mapping]] = ..., right: _Optional[_Union[Listener, _Mapping]] = ...) -> None: ...
+
+class Listener(_message.Message):
+    __slots__ = ("status", "title", "artist", "art_id")
+    class Status(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+        __slots__ = ()
+        OFF: _ClassVar[Listener.Status]
+        PLAYING: _ClassVar[Listener.Status]
+        PAUSED: _ClassVar[Listener.Status]
+    OFF: Listener.Status
+    PLAYING: Listener.Status
+    PAUSED: Listener.Status
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    TITLE_FIELD_NUMBER: _ClassVar[int]
+    ARTIST_FIELD_NUMBER: _ClassVar[int]
+    ART_ID_FIELD_NUMBER: _ClassVar[int]
+    status: Listener.Status
+    title: str
+    artist: str
+    art_id: str
+    def __init__(self, status: _Optional[_Union[Listener.Status, str]] = ..., title: _Optional[str] = ..., artist: _Optional[str] = ..., art_id: _Optional[str] = ...) -> None: ...
