@@ -198,3 +198,42 @@ test('twinkle: fixed position, opacity swells 0 -> 100 -> 0 over its period', ()
   near(M.particle(em, 2, 0, sizes).opacity, 100 * (0.5 - 0.5 * Math.cos(2 * Math.PI * q.swayTurn)), 1e-9);
   assert.ok(first.x >= 0 && first.x <= 310 && first.y >= 0 && first.y <= 110);
 });
+
+test('a layer\'s own size: the pose starts at that scale and multiplies with a pulse', () => {
+  assert.equal(M.layerPose(layer([], { scale: 50 }), 0, 0).scale, 50);
+  assert.equal(M.layerPose(layer([]), 0, 0).scale, 100);
+  const l = layer([{ type: 'pulse', period: 1000, phase: 0, min: 100, max: 120 }], { scale: 50 });
+  near(M.layerPose(l, 0, 500).scale, 60);
+  const p = M.layerPlacement(layer([], { x: 10, y: 10, scale: 50 }), { w: 40, h: 20 }, 0, 0);   // 40x20 at 50% about its centre
+  assert.deepEqual([p.x, p.y, p.w, p.h], [20, 15, 20, 10]);
+});
+
+const scattered = (extra = {}) => layer([{ type: 'bob', period: 2000, phase: 0, amp: 4 }],
+  { scatter: { area: { x: 20, y: 30, w: 200, h: 150 }, seed: 4242 }, ...extra });
+
+test('scatter: copy i is placed from the PRNG, with its frame inside the area', () => {
+  const l = scattered();
+  for (let c = 0; c < 12; c++) {
+    const r = M.draws(4242, c, 3);
+    const o = M.copyOrigin(l, c, 24, 22);
+    near(o.x, 20 + r[0] / 65536 * (200 - 24));
+    near(o.y, 30 + r[1] / 65536 * (150 - 22));
+    assert.ok(o.x >= 20 && o.x + 24 <= 220 && o.y >= 30 && o.y + 22 <= 180);
+  }
+  assert.notDeepEqual(M.copyOrigin(l, 0, 24, 22), M.copyOrigin(l, 1, 24, 22));
+  assert.notDeepEqual(M.copyOrigin(scattered({ scatter: { area: { x: 20, y: 30, w: 200, h: 150 }, seed: 1 } }), 0, 24, 22), M.copyOrigin(l, 0, 24, 22));
+});
+
+test('scatter: x, y and the stagger are ignored, and each copy starts at its own point of its cycle', () => {
+  const l = scattered({ x: 999, y: 999, stagger: { x: 50, y: 50, phase: 700 } });
+  const o = M.copyOrigin(l, 2, 24, 22);
+  assert.ok(o.x < 300 && o.y < 200);
+  const off = M.draws(4242, 2, 3)[2];                    // ms, from the third draw
+  near(M.layerPose(l, 2, 0).dy, 4 * Math.sin(2 * Math.PI * (off % 2000) / 2000));
+  assert.notEqual(M.layerPose(l, 0, 0).dy, M.layerPose(l, 1, 0).dy);
+});
+
+test('in a row, the origin is x, y plus copy * stagger', () => {
+  const l = layer([], { x: 10, y: 20, stagger: { x: 30, y: -5, phase: 0 } });
+  assert.deepEqual(M.copyOrigin(l, 3, 24, 22), { x: 100, y: 5 });
+});

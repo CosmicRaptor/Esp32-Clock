@@ -120,6 +120,7 @@ Everything is checked in `model.py` (`clean_face`, `face_report`), on every save
 | particle effects | 3, each 1-3 sprites (at most 48×48 px) and 1-40 particles, 60 in all |
 | sprite size | 160×160 (one frame); the icon 64×64 |
 | memory on the clock | 1.5 MB per face: the decoded background (150 KB) plus every sprite file |
+| size and scatter | a layer's own size is 10-200% (not on a sprite sheet); with scatter its copies are placed at random inside an area |
 | on screen | every sprite, **at every point of its motion and every copy**, the particle areas, and the time and date boxes must lie inside 320×240. A pulse grows about the centre; stacked motions add up |
 
 The clock redraws whatever moves, over a 40 MHz SPI link (at best ~2.5 M pixels/s, about half of that in practice, shared with audio and Wi-Fi). So a face may change at most **30,000 pixels per animation tick**, at **15 ticks a second**: 450 k px/s, about a fifth of the link (a full screen is 76,800). The meter shows the estimate as a percentage of that, and a face over 100% is refused. The estimate, per sprite copy, with `tick = 1000/15` ms, `a`×`b` the sprite's size and `step` the farthest it can move in one tick (`amp·2π/P·tick` for bob and sway, `|d|·π/P·tick` for a ping-pong path, `|d|/P·tick` for a loop path):
@@ -148,7 +149,9 @@ Every motion is a pure function of the time `t`, in milliseconds since the face 
 | `PULSE` | `s = min_pct + (max_pct − min_pct) · (0.5 − 0.5·cos(2πu))`, in percent, about the sprite's **centre** |
 | `FRAMES` | `frame = floor((t_i + F) · fps / 1000) mod frames`; draw the `w/frames`-wide cell at `x = frame·w/frames` |
 
-The drawn position is `round(x + i·stagger_x + Σdx)`, `round(y + i·stagger_y + Σdy)`. With a scale `s` (percent) the size is `round(w·s/100)` × `round(h·s/100)` and the box is re-centred: `left = round(cx − w'/2)` with `cx = x + w/2 + Σdx` (`w` = one frame's width). `round(v) = floor(v + 0.5)`. Opacity percent → LVGL opa: `round(pct · 255 / 100)`.
+**Size and scatter.** A layer's `scale_pct` (10-200, 0 = 100) is the starting scale in the `PULSE` formulas: `s = scale_pct · (pulse factor) / 100`, always about the sprite's centre. With `scatter`, copy `i` doesn't sit in a row: it draws `r1..r6` from the particles' PRNG (below) seeded with `scatter_seed` and index `i`, and then `x0 = area.x + r1/65536 · (area.w − w)`, `y0 = area.y + r2/65536 · (area.h − h)` (`w`, `h` = one frame), and its motions run at `t_i = t + r3` (ms) instead of `t + i·stagger_phase_ms`. `x`, `y` and `stagger_*` are ignored. A sprite sheet can't be resized, and can't pulse.
+
+The drawn position is `round(x0 + Σdx)`, where `x0 = x + i·stagger_x` (or the scatter `x0`), `round(y + i·stagger_y + Σdy)`. With a scale `s` (percent) the size is `round(w·s/100)` × `round(h·s/100)` and the box is re-centred: `left = round(cx − w'/2)` with `cx = x + w/2 + Σdx` (`w` = one frame's width). `round(v) = floor(v + 0.5)`. Opacity percent → LVGL opa: `round(pct · 255 / 100)`.
 
 ### Particles
 
@@ -178,6 +181,10 @@ TWINKLE:  x = x0;  y = a.y + startFrac·(a.h − sh)
 ```
 
 The PRNG, `r1..r6` and the choice of sprite are exact. The sines and cosines can use any libm; a one-pixel difference there is fine.
+
+### The Spotify strip
+
+Each face can place the "now playing" strip (the two songs; it only appears while somebody plays) or switch it off: `NowPlayingSlot` in the proto, "Now playing" on the Faces page. Without settings it has the usual look: a dark pill at the top, 304 px wide. With them: `x`, `y` (top-left), a width of 200-320 px, an optional pill colour and opacity, and the colours of the song and artist lines. The strip is 46 px high and is always on top of the face. The preview draws a stand-in for it while its row is selected.
 
 ### Time and date text
 

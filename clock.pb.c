@@ -57,6 +57,9 @@ PB_BIND(bhoomi_clock_v1_Emitter, bhoomi_clock_v1_Emitter, AUTO)
 PB_BIND(bhoomi_clock_v1_When, bhoomi_clock_v1_When, AUTO)
 
 
+PB_BIND(bhoomi_clock_v1_NowPlayingSlot, bhoomi_clock_v1_NowPlayingSlot, AUTO)
+
+
 PB_BIND(bhoomi_clock_v1_Face, bhoomi_clock_v1_Face, 2)
 
 

@@ -246,15 +246,17 @@ void freeFonts() {
 
 void updateInst(Inst &I, uint32_t t) {
   Pose p = layerPose(*I.L, I.copy, t);
-  int x = roundHalfUp(I.L->x + I.copy * I.L->stagger_x + p.dx);
-  int y = roundHalfUp(I.L->y + I.copy * I.L->stagger_y + p.dy);
+  double ox, oy;
+  copyOrigin(*I.L, I.copy, I.fw, I.fh, ox, oy);  // in a row, or scattered over an area
+  int x = roundHalfUp(ox + p.dx);
+  int y = roundHalfUp(oy + p.dy);
   if (x != I.x || y != I.y) {
     lv_obj_set_pos(I.img, x, y);
     I.x = x;
     I.y = y;
   }
   int scale = roundHalfUp(p.scale * 256 / 100);
-  scale = I.frames > 1 ? 256 : scale < 64 ? 64 : scale > 640 ? 640 : scale;  // a sheet's other frames would show: the portal refuses pulse + frames
+  scale = I.frames > 1 ? 256 : scale < 16 ? 16 : scale > 1024 ? 1024 : scale;  // a sheet's other frames would show: the portal refuses pulse and a size on a sheet
   if (scale != I.scale) {
     lv_image_set_scale(I.img, scale);
     I.scale = scale;
@@ -307,6 +309,7 @@ void begin(lv_obj_t *parent) {
 
 lv_obj_t *root() { return rootObj; }
 bool active() { return on; }
+const bhoomi_clock_v1_NowPlayingSlot *nowPlayingSlot() { return on && face.has_nowplaying ? &face.nowplaying : nullptr; }
 
 void clear() {
   if (content) {  // objects first: they point at the sprites, the fonts and the background

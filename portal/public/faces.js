@@ -284,8 +284,11 @@ const newFace = () => ({
   name: '', background: null,
   time: { x: 160, y: 24, size: 72, color: '#ffffff', shadow: '#000000', align: 'center' },
   date: { x: 160, y: 118, size: 20, color: '#ffffff', shadow: '#000000', align: 'center', format: 'long' },
-  icon: null, layers: [], particles: [], when: FaceRules.emptyWhen(),
+  icon: null, layers: [], particles: [], nowplaying: null, when: FaceRules.emptyWhen(),
 });
+// The Spotify strip's usual look on the clock (and what "Customise" starts from).
+const NP_DEFAULT = { show: true, x: 8, y: 8, w: 304, bg: '#000000', bg_pct: 60, title: '#ffffff', artist: '#ffb3c0' };
+const NP_H = 46;
 const payload = () => { const { assets, rev, id, ...rest } = draft; return rest; };
 const snapshot = () => JSON.stringify(payload());
 const isDirty = () => draft && snapshot() !== savedJson;
@@ -425,6 +428,8 @@ function renderElements() {
   const swatch = t => el('span', 'swatch', t);
   const thumb = h => { const i = el('img'); i.alt = ''; i.src = assetUrl(h); return i; };
   // front-most first, like a layers panel
+  const np = draft.nowplaying;
+  row('np', undefined, swatch('♪'), 'Now playing', !np ? 'usual look' : np.show ? 'custom' : 'hidden');
   if (draft.icon) row('icon', undefined, thumb(draft.icon.sprite), 'Icon', motionSummary(draft.icon));
   row('date', undefined, swatch('Aa'), 'Date', draft.date ? '' : 'hidden');
   row('time', undefined, swatch('12'), 'Time', '');
@@ -434,7 +439,7 @@ function renderElements() {
   }
   for (let i = draft.layers.length - 1; i >= 0; i--) {
     const l = draft.layers[i];
-    row('layer', i, thumb(l.sprite), layerName(l, i), (l.copies > 1 ? `×${l.copies} ` : '') + motionSummary(l));
+    row('layer', i, thumb(l.sprite), layerName(l, i), (l.copies > 1 ? `×${l.copies}${l.scatter ? ' scattered' : ''} ` : '') + (l.scale !== 100 ? `${l.scale}% ` : '') + motionSummary(l));
   }
   row('bg', undefined, draft.background ? thumb(draft.background) : swatch('🖼'), 'Background', draft.background ? '' : 'choose one');
 }
@@ -505,7 +510,10 @@ function syncBound() { for (const b of bound) if (document.activeElement !== b.i
 // ---------------------------------------------------------------- inspector
 
 const target = () => sel.kind === 'layer' ? draft.layers[sel.i] : sel.kind === 'icon' ? draft.icon
-  : sel.kind === 'time' ? draft.time : sel.kind === 'date' ? draft.date : sel.kind === 'particles' ? draft.particles[sel.i] : null;
+  : sel.kind === 'time' ? draft.time : sel.kind === 'date' ? draft.date : sel.kind === 'particles' ? draft.particles[sel.i]
+  : sel.kind === 'np' ? draft.nowplaying : null;
+// The rectangle that moves when you drag it: a particle effect's area, a scattered layer's area, else the thing itself.
+const areaOf = t => !t ? null : t.area ? t.area : t.scatter ? t.scatter.area : null;
 
 function nudgePad() {
   const pad = el('div', 'nudge');
@@ -523,7 +531,7 @@ function nudgePad() {
 function nudge(dx, dy) {
   const t = target();
   if (!t || sel.kind === 'bg') return;
-  const a = sel.kind === 'particles' ? t.area : t;
+  const a = areaOf(t) || t;
   a.x += dx; a.y += dy;
   syncBound(); changed(false);
 }
@@ -598,15 +606,37 @@ function renderInspector() {
     box.append(sp);
     if (!isIcon) { const n = el('input'); n.maxLength = 24; n.value = l.name || ''; n.placeholder = `Sprite ${i + 1}`; n.oninput = () => { l.name = n.value; changed(false); }; n.onchange = () => renderElements(); box.append(field('Name', n)); }
     if (isIcon) box.append(el('p', 'hint', `The icon is drawn above the time and date. Up to ${limits.icon || 64}×${limits.icon || 64} px.`));
-    box.append(posFields(l));
-    const cf = el('div', 'fields');
-    cf.append(numField('Copies', l, 'copies', { min: 1, max: limits.copies, structural: true }));
-    box.append(cf);
-    if (l.copies > 1) {
-      const sf = el('div', 'fields three');
-      sf.append(numField('Step x', l.stagger, 'x', { min: -320, max: 320 }), numField('Step y', l.stagger, 'y', { min: -240, max: 240 }),
-        numField('Delay (ms)', l.stagger, 'phase', { min: -60000, max: 60000 }));
-      box.append(sf, el('p', 'hint', 'Each copy sits one step further along and its motions start a little later.'));
+    const sheet = frameCount(l) > 1;
+    const sf = el('div', 'fields');
+    if (!sheet) sf.append(numField('Size (%)', l, 'scale', { min: limits.scale_min || 10, max: limits.scale_max || 200, structural: true }));
+    sf.append(numField('Copies', l, 'copies', { min: 1, max: limits.copies, structural: true }));
+    box.append(sf);
+    if (sheet) box.append(el('p', 'hint', 'A sprite sheet can’t be resized here: upload it smaller (“fit within”).'));
+    else if (l.scale !== 100) box.append(el('p', 'hint', `Drawn at ${l.scale}% of its size, about its centre. Software scaling costs the clock a little more redraw time.`));
+    if (l.copies > 1 || l.scatter) {
+      box.append(checkField('Spawn the copies at random places', () => !!l.scatter, on => {
+        l.scatter = on ? { area: { x: 0, y: 0, w: SCREEN_W, h: SCREEN_H }, seed: 1 + Math.floor(Math.random() * 99999) } : null;
+        changed(true);
+      }));
+    }
+    if (l.scatter) {
+      const a = l.scatter.area;
+      const af = el('div', 'fields');
+      af.append(numField('Area x', a, 'x', { min: -1000, max: 1000 }), numField('Area y', a, 'y', { min: -1000, max: 1000 }),
+        numField('Width', a, 'w', { min: 1, max: 1000 }), numField('Height', a, 'h', { min: 1, max: 1000 }));
+      box.append(af);
+      const row2 = el('div', 'actions left');
+      row2.append(small('Whole screen', () => { Object.assign(a, { x: 0, y: 0, w: SCREEN_W, h: SCREEN_H }); syncBound(); changed(false); }),
+        small('🎲 Shuffle', () => { l.scatter.seed = 1 + Math.floor(Math.random() * 99999); changed(false); }), nudgePad());
+      box.append(row2, el('p', 'hint', 'Each copy lands somewhere inside this area, and its motions start at a random point of their cycle. Drag the area on the preview; drag its corner to resize.'));
+    } else {
+      box.append(posFields(l));
+      if (l.copies > 1) {
+        const sf2 = el('div', 'fields three');
+        sf2.append(numField('Step x', l.stagger, 'x', { min: -320, max: 320 }), numField('Step y', l.stagger, 'y', { min: -240, max: 240 }),
+          numField('Delay (ms)', l.stagger, 'phase', { min: -60000, max: 60000 }));
+        box.append(sf2, el('p', 'hint', 'Each copy sits one step further along and its motions start a little later.'));
+      }
     }
     box.append(el('div', 'sub-h', 'Motion'));
     l.motion.forEach((m, mi) => box.append(motionCard(l, mi)));
@@ -619,6 +649,24 @@ function renderInspector() {
       box.append(wrap);
     } else box.append(el('p', 'hint', `At most ${limits.motions} motions per sprite.`));
     box.append(el('p', 'hint', 'No rotation: it is slow on the clock. For a wobble or a flap, use a sprite sheet with Frames.'));
+  } else if (sel.kind === 'np') {
+    const np = draft.nowplaying;
+    head('Now playing', ...(np ? [small('Usual look', () => { draft.nowplaying = null; changed(true); })] : []));
+    if (!np) {
+      box.append(el('p', 'hint first', 'The Spotify strip (the two songs playing) has its usual look on this face: a dark pill at the top. It only appears while somebody is playing. The preview shows a stand-in while this is selected.'));
+      box.append(small('Customise', () => { draft.nowplaying = { ...NP_DEFAULT }; changed(true); }));
+    } else {
+      box.append(checkField('Show it on this face', () => np.show, on => { np.show = on; changed(true); }));
+      if (np.show) {
+        box.append(posFields(np));
+        const f = el('div', 'fields');
+        f.append(numField('Width', np, 'w', { min: limits.np_w_min || 200, max: limits.np_w_max || 320 }),
+          checkField('Dark pill behind it', () => !!np.bg, on => { np.bg = on ? '#000000' : ''; changed(true); }));
+        if (np.bg) f.append(colorField('Pill colour', np, 'bg'), numField('Pill opacity (%)', np, 'bg_pct', { min: 0, max: 100 }));
+        f.append(colorField('Song colour', np, 'title'), colorField('Artist colour', np, 'artist'));
+        box.append(f, el('p', 'hint', `The strip is ${NP_H} px high and always on top. It sits at x, y; the first person's song on the left half, the second's on the right.`));
+      }
+    }
   } else if (sel.kind === 'particles') {
     const p = target(), i = sel.i;
     head(`Particles ${i + 1}`, small('Delete', () => { draft.particles.splice(i, 1); sel = { kind: 'bg' }; changed(true); }, 'danger'));
@@ -822,7 +870,7 @@ function addLayer(h, frames = 1) {
   if (draft.layers.length >= limits.layers) return toast(`At most ${limits.layers} sprites on a face.`, true);
   const m = spriteInfo(h);
   const fw = Math.floor(m.w / frames);
-  const l = { name: '', sprite: h, x: Math.round((SCREEN_W - fw) / 2), y: Math.round((SCREEN_H - m.h) / 2), copies: 1, stagger: { x: 0, y: 0, phase: 0 }, motion: [] };
+  const l = { name: '', sprite: h, x: Math.round((SCREEN_W - fw) / 2), y: Math.round((SCREEN_H - m.h) / 2), copies: 1, stagger: { x: 0, y: 0, phase: 0 }, motion: [], scale: 100, scatter: null };
   if (frames > 1) l.motion.push({ type: 'frames', period: Math.round(1000 * frames / 6), phase: 0, frames, fps: 6 });
   draft.layers.push(l);
   select('layer', draft.layers.length - 1);
@@ -839,7 +887,7 @@ $('addIcon').onclick = () => {
   if (draft.icon) return select('icon');
   const sprites = Object.keys(assetMeta).filter(h => assetMeta[h].kind === 'sprite' && spriteInfo(h).w <= (limits.icon || 64) && spriteInfo(h).h <= (limits.icon || 64));
   if (!sprites.length) { toast(`The icon has to be a sprite of at most ${limits.icon || 64}×${limits.icon || 64} px. Upload one (Images, below).`, true); return; }
-  draft.icon = { sprite: sprites[0], x: 8, y: 8, copies: 1, stagger: { x: 0, y: 0, phase: 0 }, motion: [] };
+  draft.icon = { sprite: sprites[0], x: 8, y: 8, copies: 1, stagger: { x: 0, y: 0, phase: 0 }, motion: [], scale: 100, scatter: null };
   select('icon');
   changed(true);
 };
@@ -1051,8 +1099,41 @@ function draw(t) {
   drawText(draft.time, FaceRules.formatTime(now), 'time');
   if (draft.date) drawText(draft.date, FaceRules.formatDate(draft.date.format, now), 'date');
   if (draft.icon) drawLayer(draft.icon, 'icon', undefined, t);
+  if (sel.kind === 'np') drawNowPlaying();
 
   drawSelection(sc);
+}
+
+// A stand-in for the Spotify strip, drawn only while its row is selected (on the clock it appears when somebody plays).
+function drawNowPlaying() {
+  const np = draft.nowplaying || NP_DEFAULT;
+  const x = np.x, y = np.y, w = np.w;
+  ctx.save();
+  ctx.globalAlpha = np.show ? 1 : 0.35;
+  if (np.bg) {
+    ctx.globalAlpha *= np.bg_pct / 100;
+    ctx.fillStyle = np.bg;
+    ctx.beginPath(); ctx.roundRect(x, y, w, NP_H, 12); ctx.fill();
+    ctx.globalAlpha = np.show ? 1 : 0.35;
+  }
+  const half = w / 2, art = 38, pad = np.bg ? 6 : 0;
+  for (let side = 0; side < 2; side++) {
+    const left = side === 0;
+    const hx = left ? x + pad : x + w - pad - art;
+    ctx.fillStyle = '#d9667a';
+    ctx.beginPath(); ctx.roundRect(hx, y + (NP_H - art) / 2, art, art, 7); ctx.fill();
+    ctx.font = '500 14px Montserrat, system-ui, sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = left ? 'left' : 'right';
+    const tx = left ? hx + art + 6 : hx - 6;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(left ? x : x + half, y, half, NP_H); ctx.clip();
+    ctx.fillStyle = np.title; ctx.fillText(left ? 'First song' : 'Second song', tx, y + NP_H / 2 - 9);
+    ctx.fillStyle = np.artist; ctx.fillText('Artist', tx, y + NP_H / 2 + 9);
+    ctx.restore();
+  }
+  ctx.restore();
+  hits.push({ kind: 'np', x, y, w, h: NP_H });
 }
 
 function drawLayer(l, kind, i, t) {
@@ -1067,6 +1148,7 @@ function drawLayer(l, kind, i, t) {
     }
     hits.push({ kind, i, x: p.x, y: p.y, w: p.w, h: p.h });
   }
+  if (l.scatter) areaHits.push({ kind, i, ...l.scatter.area });   // dragging the area moves where the copies spawn
 }
 
 function drawParticles(p, i, t) {
@@ -1112,9 +1194,11 @@ function drawText(slot, text, kind) {
 }
 
 function selectedRects() {
-  if (sel.kind === 'particles') return areaHits.filter(h => h.i === sel.i);
+  if (sel.kind === 'particles') return areaHits.filter(h => h.kind === 'particles' && h.i === sel.i);
   if (sel.kind === 'bg') return [];
-  return hits.filter(h => h.kind === sel.kind && (sel.kind === 'time' || sel.kind === 'date' || sel.kind === 'icon' || h.i === sel.i));
+  const own = hits.filter(h => h.kind === sel.kind && (sel.kind === 'time' || sel.kind === 'date' || sel.kind === 'icon' || sel.kind === 'np' || h.i === sel.i));
+  const t = target();
+  return t && t.scatter ? own.concat(areaHits.filter(h => h.kind === sel.kind && h.i === sel.i)) : own;
 }
 
 function drawSelection(sc) {
@@ -1127,8 +1211,9 @@ function drawSelection(sc) {
     ctx.lineWidth = 1.5 / sc; ctx.strokeStyle = '#fff'; ctx.setLineDash([5 / sc, 4 / sc]);
     ctx.strokeRect(r.x, r.y, r.w, r.h);
   }
-  if (sel.kind === 'particles' && rects[0]) {
-    const r = rects[0], s = 12 / sc;
+  const areaRect = rects.find(r => areaHits.includes(r));
+  if (areaRect) {
+    const r = areaRect, s = 12 / sc;
     ctx.setLineDash([]);
     ctx.fillStyle = '#fff'; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.lineWidth = 1 / sc;
     ctx.fillRect(r.x + r.w - s / 2, r.y + r.h - s / 2, s, s);
@@ -1158,8 +1243,8 @@ stage.addEventListener('pointerdown', e => {
   const r = stage.getBoundingClientRect();
   const px = SCREEN_W / r.width;           // logical pixels per screen pixel
   // the corner handle of the selected particle area
-  if (sel.kind === 'particles') {
-    const a = draft.particles[sel.i].area;
+  const a = areaOf(target());
+  if (a) {
     if (Math.hypot(p.x - (a.x + a.w), p.y - (a.y + a.h)) < 14 * px) {
       drag = { mode: 'resize', obj: a, id: e.pointerId, start: p, orig: { w: a.w, h: a.h } };
       stage.setPointerCapture(e.pointerId); stage.classList.add('dragging');
@@ -1171,8 +1256,8 @@ stage.addEventListener('pointerdown', e => {
   if (!(sel.kind === hit.kind && (hit.i === undefined || hit.i === sel.i))) select(hit.kind, hit.i);
   const obj = target();
   if (!obj) return;
-  const pos = hit.kind === 'particles' ? obj.area : obj;
-  drag = { mode: 'move', obj: pos, kind: hit.kind, id: e.pointerId, start: p, orig: { x: pos.x, y: pos.y } };
+  const pos = areaOf(obj) || obj;
+  drag = { mode: 'move', obj: pos, kind: hit.kind, isArea: pos !== obj, id: e.pointerId, start: p, orig: { x: pos.x, y: pos.y } };
   stage.setPointerCapture(e.pointerId);
   stage.classList.add('dragging');
   e.preventDefault();
@@ -1188,8 +1273,9 @@ stage.addEventListener('pointermove', e => {
   } else {
     const o = drag.orig;
     let w = 8, h = 8;
-    if (drag.kind === 'layer' || drag.kind === 'icon') { const l = target(); w = frameWidth(l); h = spriteInfo(l.sprite).h; }
-    else if (drag.kind === 'particles') { w = drag.obj.w; h = drag.obj.h; }
+    if (drag.isArea) { w = drag.obj.w; h = drag.obj.h; }
+    else if (drag.kind === 'layer' || drag.kind === 'icon') { const l = target(); w = frameWidth(l); h = spriteInfo(l.sprite).h; }
+    else if (drag.kind === 'np') { w = drag.obj.w; h = NP_H; }
     else { const hit = hits.find(x => x.kind === drag.kind); w = hit ? hit.w : 40; h = hit ? hit.h : 20; }
     const text = drag.kind === 'time' || drag.kind === 'date';     // x of a text is where it is anchored, not its left edge
     drag.obj.x = clamp(o.x + dx, 0, SCREEN_W - (text ? 0 : w));

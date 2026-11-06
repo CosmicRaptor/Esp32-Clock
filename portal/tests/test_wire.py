@@ -131,10 +131,12 @@ class FaceMessageTests(unittest.TestCase):
         layer = {"name": "Panda", "sprite": self.S1, "x": 100, "y": 90, "copies": 3, "stagger": {"x": 40, "y": 0, "phase": 250},
                  "motion": [self.motion(), {"type": "path", "period": 5000, "phase": 0, "dx": -30, "dy": 10, "mode": "loop"}, fade]}
         data = {"name": "Test", "background": self.BG, "time": slot, "date": dict(slot, y=100, size=20, format="short", shadow=""),
-                "icon": {"sprite": self.S2, "x": 10, "y": 10, "motion": [{"type": "pulse", "period": 1000, "phase": 0, "min": 90, "max": 110}]},
-                "layers": [layer],
+                "icon": {"sprite": self.S2, "x": 10, "y": 10, "motion": [{"type": "pulse", "period": 1000, "phase": 0, "min": 90, "max": 110}],
+                         "scatter": {"area": {"x": 0, "y": 0, "w": 100, "h": 80}, "seed": 12345}},
+                "layers": [dict(layer, scale=60)],
                 "particles": [{"kind": "rise", "sprites": [self.S3, self.S2], "count": 12, "area": {"x": 10, "y": 20, "w": 100, "h": 200},
                                "speed_min": 5, "speed_max": 30, "sway": 8, "period": 3000, "phase": 7, "depth": "back", "seed": 42}],
+                "nowplaying": {"show": True, "x": 8, "y": 190, "w": 304, "bg": "#102030", "bg_pct": 40, "title": "#ffffff", "artist": "#ffb3c0"},
                 "when": {"hours": {"from": 22, "to": 6}, "months": [1, 12], "weekdays": [0, 6],
                          "dates": [{"month": 2, "day": 14, "year": None}, {"month": 11, "day": 7, "year": 2026}]}}
         face = model.clean_face(data, self.A, "abcdefabcdef")
@@ -156,6 +158,9 @@ class FaceMessageTests(unittest.TestCase):
         self.assertEqual((layer.sprite.hash, layer.sprite.w, layer.sprite.size, layer.x, layer.y, layer.copies),
                          (self.S1, 40, 12 + 4800, 100, 90, 3))
         self.assertEqual((layer.stagger_x, layer.stagger_y, layer.stagger_phase_ms), (40, 0, 250))
+        self.assertEqual((layer.scale_pct, layer.scatter), (60, False))
+        self.assertEqual((msg.icon.scale_pct, msg.icon.scatter, msg.icon.scatter_seed), (100, True, 12345))
+        self.assertEqual((msg.icon.scatter_area.x, msg.icon.scatter_area.y, msg.icon.scatter_area.w, msg.icon.scatter_area.h), (0, 0, 100, 80))
         bob, path, fade = layer.motion
         self.assertEqual((bob.type, bob.period_ms, bob.phase_ms, bob.amp), (pb.Motion.BOB, 2000, 100, 4))
         self.assertEqual((path.type, path.dx, path.dy, path.loop), (pb.Motion.PATH, -30, 10, True))
@@ -164,6 +169,8 @@ class FaceMessageTests(unittest.TestCase):
         self.assertEqual((e.kind, e.count, e.front, e.seed, e.sway, e.period_ms, e.phase_ms), (pb.Emitter.RISE, 12, False, 42, 8, 3000, 7))
         self.assertEqual([s.hash for s in e.sprites], [self.S3, self.S2])
         self.assertEqual((e.area.x, e.area.y, e.area.w, e.area.h, e.speed_min, e.speed_max), (10, 20, 100, 200, 5, 30))
+        np = msg.nowplaying
+        self.assertEqual((np.show, np.x, np.y, np.w, np.has_bg, np.bg, np.bg_pct, np.title, np.artist), (True, 8, 190, 304, True, 0x102030, 40, 0xffffff, 0xffb3c0))
         w = msg.when
         self.assertEqual((w.hour_from, w.hour_to, w.months, w.days), (22, 6, 0b100000000001, 0b1000001))
         self.assertEqual([(d.year, d.month, d.day) for d in w.dates], [(0, 2, 14), (2026, 11, 7)])
@@ -195,7 +202,8 @@ class FaceMessageTests(unittest.TestCase):
         motions = [{"type": "fade", "period": 60000, "phase": 59999, "keys": keys}] * 2 + \
                   [{"type": "path", "period": 60000, "phase": 59999, "dx": -320, "dy": -240, "mode": "loop"}]
         layer = {"name": "x" * 24, "sprite": self.S1, "x": -1000, "y": -1000, "copies": 12, "stagger": {"x": -320, "y": -240, "phase": -60000},
-                 "motion": motions}
+                 "motion": motions, "scale": 200,
+                 "scatter": {"area": {"x": -1000, "y": -1000, "w": 1000, "h": 1000}, "seed": 2**32 - 1}}
         emitter = {"kind": "fall", "sprites": [self.S1, self.S2, self.S3], "count": 40, "area": {"x": 1000, "y": 1000, "w": 1000, "h": 1000},
                    "speed_min": 400, "speed_max": 400, "sway": 60, "period": 60000, "phase": 59999, "depth": "front", "seed": 2**32 - 1}
         when = {"hours": {"from": 23, "to": 24}, "months": list(range(1, 13)), "weekdays": list(range(7)),
@@ -203,7 +211,9 @@ class FaceMessageTests(unittest.TestCase):
         # clean_face's range checks are tighter than nanopb's, so build the clean dict directly (without the
         # on-screen checks, which are not what this test is about)
         base = model.clean_face({"name": "x", "background": self.BG, "time": dict(slot, x=0, y=0), "layers": [], "particles": []}, assets, "f" * 12)
-        face = dict(base, time=slot, date=slot, icon=layer, layers=[layer] * model.MAX_LAYERS, particles=[emitter] * model.MAX_EMITTERS, when=when)
+        np = {"show": True, "x": -1000, "y": 1000, "w": 320, "bg": "#ffffff", "bg_pct": 100, "title": "#ffffff", "artist": "#ffffff"}
+        face = dict(base, time=slot, date=slot, icon=layer, layers=[layer] * model.MAX_LAYERS, particles=[emitter] * model.MAX_EMITTERS,
+                    when=when, nowplaying=np)
         face["assets"] = {self.BG: assets[self.BG], self.S1: spr, self.S2: spr, self.S3: spr}
         face["rev"] = "f" * 12
         data = wire.face_message(face).SerializeToString()

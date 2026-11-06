@@ -100,6 +100,11 @@ def _fill_layer(out: pb.Layer, face: dict, layer: dict) -> None:
     out.stagger_x, out.stagger_y, out.stagger_phase_ms = layer["stagger"]["x"], layer["stagger"]["y"], layer["stagger"]["phase"]
     for m in layer["motion"]:
         _fill_motion(out.motion.add(), m)
+    out.scale_pct = layer.get("scale", 100)
+    if layer.get("scatter"):
+        a = layer["scatter"]["area"]
+        out.scatter, out.scatter_seed = True, layer["scatter"]["seed"]
+        out.scatter_area.x, out.scatter_area.y, out.scatter_area.w, out.scatter_area.h = a["x"], a["y"], a["w"], a["h"]
 
 
 def face_message(face: dict) -> pb.Face:
@@ -120,6 +125,14 @@ def face_message(face: dict) -> pb.Face:
         for h in p["sprites"]:
             _fill_sprite(e.sprites.add(), face, h)
         e.area.x, e.area.y, e.area.w, e.area.h = p["area"]["x"], p["area"]["y"], p["area"]["w"], p["area"]["h"]
+    np = face.get("nowplaying")
+    if np:
+        out.nowplaying.show = np["show"]
+        out.nowplaying.x, out.nowplaying.y, out.nowplaying.w = np["x"], np["y"], np["w"]
+        if np["bg"]:
+            out.nowplaying.has_bg, out.nowplaying.bg = True, _hex_color(np["bg"])
+        out.nowplaying.bg_pct = np["bg_pct"]
+        out.nowplaying.title, out.nowplaying.artist = _hex_color(np["title"]), _hex_color(np["artist"])
     when = face["when"]
     out.when.SetInParent()
     if when["hours"]:

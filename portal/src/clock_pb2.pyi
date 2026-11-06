@@ -224,7 +224,7 @@ class Motion(_message.Message):
     def __init__(self, type: _Optional[_Union[Motion.Type, str]] = ..., period_ms: _Optional[int] = ..., phase_ms: _Optional[int] = ..., amp: _Optional[int] = ..., dx: _Optional[int] = ..., dy: _Optional[int] = ..., loop: _Optional[bool] = ..., keys: _Optional[_Iterable[_Union[Keyframe, _Mapping]]] = ..., on_ms: _Optional[int] = ..., min_pct: _Optional[int] = ..., max_pct: _Optional[int] = ..., frames: _Optional[int] = ..., fps: _Optional[int] = ...) -> None: ...
 
 class Layer(_message.Message):
-    __slots__ = ("sprite", "x", "y", "copies", "stagger_x", "stagger_y", "stagger_phase_ms", "motion")
+    __slots__ = ("sprite", "x", "y", "copies", "stagger_x", "stagger_y", "stagger_phase_ms", "motion", "scale_pct", "scatter", "scatter_area", "scatter_seed")
     SPRITE_FIELD_NUMBER: _ClassVar[int]
     X_FIELD_NUMBER: _ClassVar[int]
     Y_FIELD_NUMBER: _ClassVar[int]
@@ -233,6 +233,10 @@ class Layer(_message.Message):
     STAGGER_Y_FIELD_NUMBER: _ClassVar[int]
     STAGGER_PHASE_MS_FIELD_NUMBER: _ClassVar[int]
     MOTION_FIELD_NUMBER: _ClassVar[int]
+    SCALE_PCT_FIELD_NUMBER: _ClassVar[int]
+    SCATTER_FIELD_NUMBER: _ClassVar[int]
+    SCATTER_AREA_FIELD_NUMBER: _ClassVar[int]
+    SCATTER_SEED_FIELD_NUMBER: _ClassVar[int]
     sprite: SpriteRef
     x: int
     y: int
@@ -241,7 +245,11 @@ class Layer(_message.Message):
     stagger_y: int
     stagger_phase_ms: int
     motion: _containers.RepeatedCompositeFieldContainer[Motion]
-    def __init__(self, sprite: _Optional[_Union[SpriteRef, _Mapping]] = ..., x: _Optional[int] = ..., y: _Optional[int] = ..., copies: _Optional[int] = ..., stagger_x: _Optional[int] = ..., stagger_y: _Optional[int] = ..., stagger_phase_ms: _Optional[int] = ..., motion: _Optional[_Iterable[_Union[Motion, _Mapping]]] = ...) -> None: ...
+    scale_pct: int
+    scatter: bool
+    scatter_area: Rect
+    scatter_seed: int
+    def __init__(self, sprite: _Optional[_Union[SpriteRef, _Mapping]] = ..., x: _Optional[int] = ..., y: _Optional[int] = ..., copies: _Optional[int] = ..., stagger_x: _Optional[int] = ..., stagger_y: _Optional[int] = ..., stagger_phase_ms: _Optional[int] = ..., motion: _Optional[_Iterable[_Union[Motion, _Mapping]]] = ..., scale_pct: _Optional[int] = ..., scatter: _Optional[bool] = ..., scatter_area: _Optional[_Union[Rect, _Mapping]] = ..., scatter_seed: _Optional[int] = ...) -> None: ...
 
 class Rect(_message.Message):
     __slots__ = ("x", "y", "w", "h")
@@ -303,8 +311,30 @@ class When(_message.Message):
     dates: _containers.RepeatedCompositeFieldContainer[Date]
     def __init__(self, hour_from: _Optional[int] = ..., hour_to: _Optional[int] = ..., months: _Optional[int] = ..., days: _Optional[int] = ..., dates: _Optional[_Iterable[_Union[Date, _Mapping]]] = ...) -> None: ...
 
+class NowPlayingSlot(_message.Message):
+    __slots__ = ("show", "x", "y", "w", "has_bg", "bg", "bg_pct", "title", "artist")
+    SHOW_FIELD_NUMBER: _ClassVar[int]
+    X_FIELD_NUMBER: _ClassVar[int]
+    Y_FIELD_NUMBER: _ClassVar[int]
+    W_FIELD_NUMBER: _ClassVar[int]
+    HAS_BG_FIELD_NUMBER: _ClassVar[int]
+    BG_FIELD_NUMBER: _ClassVar[int]
+    BG_PCT_FIELD_NUMBER: _ClassVar[int]
+    TITLE_FIELD_NUMBER: _ClassVar[int]
+    ARTIST_FIELD_NUMBER: _ClassVar[int]
+    show: bool
+    x: int
+    y: int
+    w: int
+    has_bg: bool
+    bg: int
+    bg_pct: int
+    title: int
+    artist: int
+    def __init__(self, show: _Optional[bool] = ..., x: _Optional[int] = ..., y: _Optional[int] = ..., w: _Optional[int] = ..., has_bg: _Optional[bool] = ..., bg: _Optional[int] = ..., bg_pct: _Optional[int] = ..., title: _Optional[int] = ..., artist: _Optional[int] = ...) -> None: ...
+
 class Face(_message.Message):
-    __slots__ = ("id", "rev", "background", "time", "date", "icon", "layers", "emitters", "when")
+    __slots__ = ("id", "rev", "background", "time", "date", "icon", "layers", "emitters", "when", "nowplaying")
     ID_FIELD_NUMBER: _ClassVar[int]
     REV_FIELD_NUMBER: _ClassVar[int]
     BACKGROUND_FIELD_NUMBER: _ClassVar[int]
@@ -314,6 +344,7 @@ class Face(_message.Message):
     LAYERS_FIELD_NUMBER: _ClassVar[int]
     EMITTERS_FIELD_NUMBER: _ClassVar[int]
     WHEN_FIELD_NUMBER: _ClassVar[int]
+    NOWPLAYING_FIELD_NUMBER: _ClassVar[int]
     id: str
     rev: str
     background: SpriteRef
@@ -323,4 +354,5 @@ class Face(_message.Message):
     layers: _containers.RepeatedCompositeFieldContainer[Layer]
     emitters: _containers.RepeatedCompositeFieldContainer[Emitter]
     when: When
-    def __init__(self, id: _Optional[str] = ..., rev: _Optional[str] = ..., background: _Optional[_Union[SpriteRef, _Mapping]] = ..., time: _Optional[_Union[TextSlot, _Mapping]] = ..., date: _Optional[_Union[TextSlot, _Mapping]] = ..., icon: _Optional[_Union[Layer, _Mapping]] = ..., layers: _Optional[_Iterable[_Union[Layer, _Mapping]]] = ..., emitters: _Optional[_Iterable[_Union[Emitter, _Mapping]]] = ..., when: _Optional[_Union[When, _Mapping]] = ...) -> None: ...
+    nowplaying: NowPlayingSlot
+    def __init__(self, id: _Optional[str] = ..., rev: _Optional[str] = ..., background: _Optional[_Union[SpriteRef, _Mapping]] = ..., time: _Optional[_Union[TextSlot, _Mapping]] = ..., date: _Optional[_Union[TextSlot, _Mapping]] = ..., icon: _Optional[_Union[Layer, _Mapping]] = ..., layers: _Optional[_Iterable[_Union[Layer, _Mapping]]] = ..., emitters: _Optional[_Iterable[_Union[Emitter, _Mapping]]] = ..., when: _Optional[_Union[When, _Mapping]] = ..., nowplaying: _Optional[_Union[NowPlayingSlot, _Mapping]] = ...) -> None: ...

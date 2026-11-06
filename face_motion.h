@@ -23,6 +23,54 @@ inline int64_t floorDiv(int64_t a, int64_t n) { return (a - pmod(a, n)) / n; }
 inline int roundHalfUp(double v) { return (int)floor(v + 0.5); }
 inline double wave(double u) { return 0.5 - 0.5 * cos(TAU * u); }  // 0 -> 1 -> 0 over u in [0, 1)
 
+// ---- particles: a seeded xorshift32, all 32-bit integer maths ----
+
+inline uint32_t mix32(uint32_t seed, uint32_t index) {
+  uint32_t h = seed ^ ((index + 1) * 0x9E3779B1u);
+  h = (h ^ (h >> 16)) * 0x85EBCA6Bu;
+  h = (h ^ (h >> 13)) * 0xC2B2AE35u;
+  h = h ^ (h >> 16);
+  return h ? h : 1;
+}
+inline uint32_t xorshift32(uint32_t s) {
+  s ^= s << 13;
+  s ^= s >> 17;
+  s ^= s << 5;
+  return s;
+}
+// The six 16-bit draws r1..r6 of particle `index`.
+inline void draws(uint32_t seed, uint32_t index, uint16_t r[6]) {
+  uint32_t s = mix32(seed, index);
+  for (int i = 0; i < 6; i++) {
+    s = xorshift32(s);
+    r[i] = (uint16_t)(s >> 16);
+  }
+}
+
+// A scattered layer's copy has three draws of its own: r[0], r[1] pick its place in the area, r[2] (ms) is how far into
+// their cycles its motions are (the same PRNG as the particles', seeded with scatter_seed).
+inline int64_t copyPhase(const Layer &L, int copy) {
+  if (L.scatter) {
+    uint16_t r[6];
+    draws(L.scatter_seed, (uint32_t)copy, r);
+    return r[2];
+  }
+  return (int64_t)copy * L.stagger_phase_ms;
+}
+
+// Where copy `copy` sits before its motions: in a row, or at a random place with the whole frame inside the area.
+inline void copyOrigin(const Layer &L, int copy, int fw, int fh, double &x, double &y) {
+  if (L.scatter) {
+    uint16_t r[6];
+    draws(L.scatter_seed, (uint32_t)copy, r);
+    x = L.scatter_area.x + r[0] / 65536.0 * ((double)L.scatter_area.w - fw);
+    y = L.scatter_area.y + r[1] / 65536.0 * ((double)L.scatter_area.h - fh);
+    return;
+  }
+  x = L.x + (double)copy * L.stagger_x;
+  y = L.y + (double)copy * L.stagger_y;
+}
+
 // How a layer's copy looks at time t: an offset from its place, an opacity (0-100), a scale in percent about the
 // sprite's centre and, for a sprite sheet, the frame number. Offsets add, opacities and scales multiply.
 struct Pose {
@@ -46,8 +94,9 @@ inline double fadeAt(const Motion &m, double x) {  // x: permille of the period
 }
 
 inline Pose layerPose(const Layer &L, int copy, uint32_t t) {
-  int64_t ti = (int64_t)t + (int64_t)copy * L.stagger_phase_ms;
+  int64_t ti = (int64_t)t + copyPhase(L, copy);
   Pose p;
+  p.scale = L.scale_pct ? L.scale_pct : 100;
   for (pb_size_t i = 0; i < L.motion_count; i++) {
     const Motion &m = L.motion[i];
     if (m.type == bhoomi_clock_v1_Motion_Type_NONE) continue;
@@ -85,30 +134,6 @@ inline int frameCount(const Layer &L) {
   for (pb_size_t i = 0; i < L.motion_count; i++)
     if (L.motion[i].type == bhoomi_clock_v1_Motion_Type_FRAMES && L.motion[i].frames) return (int)L.motion[i].frames;
   return 1;
-}
-
-// ---- particles: a seeded xorshift32, all 32-bit integer maths ----
-
-inline uint32_t mix32(uint32_t seed, uint32_t index) {
-  uint32_t h = seed ^ ((index + 1) * 0x9E3779B1u);
-  h = (h ^ (h >> 16)) * 0x85EBCA6Bu;
-  h = (h ^ (h >> 13)) * 0xC2B2AE35u;
-  h = h ^ (h >> 16);
-  return h ? h : 1;
-}
-inline uint32_t xorshift32(uint32_t s) {
-  s ^= s << 13;
-  s ^= s >> 17;
-  s ^= s << 5;
-  return s;
-}
-// The six 16-bit draws r1..r6 of particle `index`.
-inline void draws(uint32_t seed, uint32_t index, uint16_t r[6]) {
-  uint32_t s = mix32(seed, index);
-  for (int i = 0; i < 6; i++) {
-    s = xorshift32(s);
-    r[i] = (uint16_t)(s >> 16);
-  }
 }
 
 struct ParticleParams {

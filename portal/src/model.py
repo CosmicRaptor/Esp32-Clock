@@ -221,17 +221,23 @@ def _sound_name_ok(name, allow_empty=False) -> bool:
 #     "time": {"x": 160, "y": 40, "size": 64, "color": "#ffffff", "shadow": "#000000", "align": "center"},
 #     "date": {... same ..., "format": "long"} | None,
 #     "icon": {layer} | None,                         # drawn above the text
-#     "layers": [ {"name": "Panda", "sprite": "<hash>", "x": 80, "y": 90, "copies": 1,
-#                  "stagger": {"x": 0, "y": 0, "phase": 0}, "motion": [ {motion}, ... ]} ],
+#     "layers": [ {"name": "Panda", "sprite": "<hash>", "x": 80, "y": 90, "copies": 1, "scale": 100,
+#                  "stagger": {"x": 0, "y": 0, "phase": 0}, "motion": [ {motion}, ... ],
+#                  "scatter": None | {"area": {"x": 0, "y": 0, "w": 320, "h": 240}, "seed": 7}} ],
 #     "particles": [ {"kind": "fall", "sprites": ["<hash>"], "count": 24, "area": {"x":0,"y":0,"w":320,"h":240},
 #                     "speed_min": 15, "speed_max": 40, "sway": 12, "period": 4000, "phase": 0,
 #                     "depth": "front", "seed": 1234} ],
+#     "nowplaying": None | {"show": True, "x": 8, "y": 8, "w": 304, "bg": "#000000" | "", "bg_pct": 60,
+#                           "title": "#ffffff", "artist": "#ffb3c0"},   # the Spotify strip; None = the usual look
 #     "when": {"hours": {"from": 22, "to": 6} | None, "months": [12, 1], "weekdays": [0, 6],
 #              "dates": [{"month": 12, "day": 25, "year": None}]},
 #     # added by the server, never sent by the page:
 #     "assets": {"<hash>": {"kind": "bg" | "sprite", "w": 320, "h": 240, "bytes": 31877}},
 #     "rev": "0123456789ab"                           # hash of everything above; changes whenever the face does
 #   }
+#
+# A layer's "scale" is its size in percent (10-200), about its centre. With "scatter" its copies are placed at random
+# inside the area (from the seed) instead of in a row (x, y and stagger are then ignored).
 #
 # Motions (every one has "period" in ms, 200-60000, and "phase" in ms, 0 <= phase < period):
 #   {"type": "bob", "amp": 4}            sway likewise. Vertical / horizontal sine, in pixels
@@ -260,6 +266,7 @@ MAX_EMITTER_COUNT = 40
 MAX_PARTICLES = 60          # over all emitters
 MAX_DATES = 8
 LAYER_NAME_MAX = 24
+SCALE_MIN, SCALE_MAX = 10, 200   # a layer's own size, in percent
 
 # Sprite files (LVGL RGB565A8). A "frames" layer uses a sheet of equal frames side by side.
 SPRITE_MAX_FRAME = 160      # one sprite or frame: at most 160 x 160
@@ -275,6 +282,10 @@ LV_MAGIC, LV_CF_RGB565A8 = 0x19, 0x14
 # Everything of a face that sits in the clock's PSRAM at once: the decoded background (RGB565) + the sprites.
 FACE_MAX_BYTES = 1_500_000
 BACKGROUND_DECODED_BYTES = IMAGE_W * IMAGE_H * 2
+
+NP_H = 46                   # the now-playing strip's height; its width is 200-320
+NP_W_MIN, NP_W_MAX = 200, 320
+NP_DEFAULT = {"show": True, "x": 8, "y": 8, "w": 304, "bg": "#000000", "bg_pct": 60, "title": "#ffffff", "artist": "#ffb3c0"}
 
 TEXT_MIN, TEXT_MAX = 10, 96
 # Montserrat Medium: line height (hhea ascent 968 + descent 251) and the widest string each slot can show, in
@@ -332,8 +343,8 @@ def face_limits() -> dict:
     return {"faces": MAX_FACES, "name": FACE_NAME_MAX, "layers": MAX_LAYERS, "copies": MAX_COPIES, "instances": MAX_INSTANCES,
             "motions": MAX_MOTIONS, "emitters": MAX_EMITTERS, "emitter_sprites": MAX_EMITTER_SPRITES,
             "particles_each": MAX_EMITTER_COUNT, "particles": MAX_PARTICLES, "dates": MAX_DATES,
-            "sprite_frame": SPRITE_MAX_FRAME, "sprite_w": SPRITE_MAX_W, "sprite_h": SPRITE_MAX_H, "sprite_pixels": SPRITE_MAX_PIXELS,
-            "icon": ICON_MAX, "particle_sprite": PARTICLE_SPRITE_MAX, "text_min": TEXT_MIN, "text_max": TEXT_MAX,
+            "scale_min": SCALE_MIN, "scale_max": SCALE_MAX, "sprite_frame": SPRITE_MAX_FRAME, "sprite_w": SPRITE_MAX_W, "sprite_h": SPRITE_MAX_H, "sprite_pixels": SPRITE_MAX_PIXELS,
+            "icon": ICON_MAX, "np_h": NP_H, "np_w_min": NP_W_MIN, "np_w_max": NP_W_MAX, "particle_sprite": PARTICLE_SPRITE_MAX, "text_min": TEXT_MIN, "text_max": TEXT_MAX,
             "fade_keys": MAX_FADE_KEYS, "anim_fps": ANIM_FPS, "budget_px": BUDGET_PX}
 
 
@@ -500,6 +511,17 @@ def _clean_layer(d, assets, where, limit):
     fw = meta["w"] // next((m["frames"] for m in motions if m["type"] == "frames"), 1)
     if fw > limit or meta["h"] > limit:
         raise Invalid(f"{where}: the sprite is {fw}x{meta['h']}; here the limit is {limit}x{limit}.")
+    scale = _int(d.get("scale", 100), SCALE_MIN, SCALE_MAX, f"{where}: size")
+    if scale != 100 and any(m["type"] == "frames" for m in motions):
+        raise Invalid(f"{where}: a sprite sheet can't be resized here (the clock would show the neighbouring frames). "
+                      "Upload it smaller instead.")
+    scatter = d.get("scatter")
+    if scatter is not None:
+        scatter = _obj(scatter, f"{where}: scatter")
+        area = _obj(scatter.get("area"), f"{where}: scatter area")
+        scatter = {"area": {"x": _int(area.get("x"), -1000, 1000, f"{where}: scatter x"), "y": _int(area.get("y"), -1000, 1000, f"{where}: scatter y"),
+                            "w": _int(area.get("w"), 1, 1000, f"{where}: scatter width"), "h": _int(area.get("h"), 1, 1000, f"{where}: scatter height")},
+                   "seed": _int(scatter.get("seed", 1), 0, 2**32 - 1, f"{where}: scatter pattern")}
     return {
         "name": _clean_name(d.get("name", ""), "layer name", LAYER_NAME_MAX),
         "sprite": sprite,
@@ -510,6 +532,8 @@ def _clean_layer(d, assets, where, limit):
                     "y": _int(st.get("y", 0), -240, 240, f"{where}: stagger y"),
                     "phase": _int(st.get("phase", 0), -60000, 60000, f"{where}: stagger phase")},
         "motion": motions,
+        "scale": scale,
+        "scatter": scatter,
     }
 
 
@@ -542,6 +566,22 @@ def _clean_particles(d, assets, where):
         "depth": _enum(d.get("depth", "front"), ("front", "back"), f"{where}: depth"),
         "seed": _int(d.get("seed", 1), 0, 2**32 - 1, f"{where}: seed"),
     }
+
+
+def _clean_nowplaying(d):
+    if d is None:
+        return None
+    d = _obj(d, "The now-playing settings")
+    show = d.get("show", True)
+    if not isinstance(show, bool):
+        raise Invalid("Show now playing must be on or off.")
+    return {"show": show,
+            "x": _int(d.get("x"), -1000, 1000, "The now-playing x"), "y": _int(d.get("y"), -1000, 1000, "The now-playing y"),
+            "w": _int(d.get("w"), NP_W_MIN, NP_W_MAX, "The now-playing width"),
+            "bg": _color(d.get("bg"), "The now-playing background", allow_empty=True),
+            "bg_pct": _int(d.get("bg_pct", 60), 0, 100, "The now-playing background opacity"),
+            "title": _color(d.get("title"), "The now-playing title colour"),
+            "artist": _color(d.get("artist"), "The now-playing artist colour")}
 
 
 def _clean_when(d):
@@ -606,6 +646,7 @@ def clean_face(data, assets: dict, face_id: str) -> dict:
         "icon": None if d.get("icon") is None else _clean_layer(d["icon"], assets, "The icon", ICON_MAX),
         "layers": [_clean_layer(layer, assets, f"Layer {i + 1}", SPRITE_MAX_FRAME) for i, layer in enumerate(layers)],
         "particles": [_clean_particles(p, assets, f"Particles {i + 1}") for i, p in enumerate(particles)],
+        "nowplaying": _clean_nowplaying(d.get("nowplaying")),
         "when": _clean_when(d.get("when")),
     }
     used = {bg}
@@ -653,11 +694,20 @@ def _motion_growth(motions, fw, fh):
 
 
 def _layer_boxes(layer, fw, fh):
-    """The box each copy of a layer can reach: (copy index, left, top, right, bottom)."""
-    left, up, right, down = _motion_growth(layer["motion"], fw, fh)
+    """The box(es) a layer's copies can reach: (copy index, left, top, right, bottom). A scaled sprite is `scale`% of
+    its frame about the frame's centre; scattered copies can be anywhere in the area (one box covers them all)."""
+    s0 = layer.get("scale", 100) / 100
+    sw, sh = fw * s0, fh * s0
+    left, up, right, down = _motion_growth(layer["motion"], sw, sh)
+    dx, dy = (fw - sw) / 2, (fh - sh) / 2     # a smaller or bigger sprite stays centred on its frame
+    if layer.get("scatter"):
+        a = layer["scatter"]["area"]
+        xs, ys = (a["x"], a["x"] + a["w"] - fw), (a["y"], a["y"] + a["h"] - fh)
+        yield 0, math.floor(min(xs) + dx - left), math.floor(min(ys) + dy - up), math.ceil(max(xs) + dx + sw + right), math.ceil(max(ys) + dy + sh + down)
+        return
     for i in range(layer["copies"]):
-        x, y = layer["x"] + i * layer["stagger"]["x"], layer["y"] + i * layer["stagger"]["y"]
-        yield i, math.floor(x - left), math.floor(y - up), math.ceil(x + fw + right), math.ceil(y + fh + down)
+        x, y = layer["x"] + i * layer["stagger"]["x"] + dx, layer["y"] + i * layer["stagger"]["y"] + dy
+        yield i, math.floor(x - left), math.floor(y - up), math.ceil(x + sw + right), math.ceil(y + sh + down)
 
 
 def _text_box(slot, what):
@@ -676,6 +726,8 @@ def _inside(box):
 def _layer_px(layer, fw, fh):
     """Pixels redrawn per animation tick by one copy of a layer, on average. See the budget notes above."""
     tick = 1000 / ANIM_FPS
+    s0 = layer.get("scale", 100) / 100
+    fw, fh = fw * s0, fh * s0  # what is actually drawn
     step_x = step_y = 0.0     # peak distance moved per tick
     scale, repaint, duty = 1.0, 0.0, 0.0
     for m in layer["motion"]:
@@ -703,7 +755,7 @@ def _layer_px(layer, fw, fh):
         px = max(px, (fw + math.ceil(step_x)) * (fh + math.ceil(step_y)) * moves)
     if repaint:
         px = max(px, area * scale * scale * repaint)
-    if any(m["type"] == "pulse" for m in layer["motion"]):
+    if s0 != 1 or any(m["type"] == "pulse" for m in layer["motion"]):
         px *= SCALE_COST
     return min(px, IMAGE_W * IMAGE_H)
 
@@ -734,6 +786,10 @@ def face_report(face: dict) -> dict:
     for what, slot in (("time", face["time"]), ("date", face["date"])):
         if slot and not _inside(_text_box(slot, what)):
             errors.append(f"The {what} runs off the screen.")
+
+    np = face.get("nowplaying")
+    if np and np["show"] and not _inside((np["x"], np["y"], np["x"] + np["w"], np["y"] + NP_H)):
+        errors.append("The now-playing strip runs off the screen.")
 
     instances = 0
     named = [("The icon", face["icon"])] if face["icon"] else []

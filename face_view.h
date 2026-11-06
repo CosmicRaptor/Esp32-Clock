@@ -20,6 +20,8 @@ lv_obj_t *root();
 bool show(const portal::Face &f);
 void clear();
 bool active();
+// This face's Spotify-strip settings, or nullptr when the face has none (or nothing is showing): the usual look.
+const bhoomi_clock_v1_NowPlayingSlot *nowPlayingSlot();
 
 // Advance the animation and the time and date text. Call ~15 times a second while the face is on screen.
 void tick(const struct tm &now);

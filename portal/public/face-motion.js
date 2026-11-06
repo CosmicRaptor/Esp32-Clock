@@ -56,11 +56,25 @@
     return a.v + (b.v - a.v) * (x - a.at) / (b.at - a.at);
   }
 
+  // A scattered layer's copy `copy` has three draws of its own: r[0], r[1] pick its place in the area, r[2] (ms) is how
+  // far into their cycles its motions are. The same PRNG as the particles', seeded with the layer's scatter seed.
+  function scatterDraws(layer, copy) { return draws(layer.scatter.seed, copy, 3); }
+
+  // Where copy `copy` of a layer sits before its motions: in a row (x, y plus copy * stagger), or, scattered, at a
+  // random place so that the whole frame (fw x fh) lies inside the area. Floats: round at the very end.
+  function copyOrigin(layer, copy, fw, fh) {
+    if (layer.scatter) {
+      const a = layer.scatter.area, r = scatterDraws(layer, copy);
+      return { x: a.x + r[0] / 65536 * (a.w - fw), y: a.y + r[1] / 65536 * (a.h - fh) };
+    }
+    return { x: layer.x + copy * layer.stagger.x, y: layer.y + copy * layer.stagger.y };
+  }
+
   // How a layer's copy `copy` looks at time t. Returns an offset from its place, an opacity (0-100), a scale in
   // percent about the sprite's centre and, for a sprite sheet, the frame number.
   function layerPose(layer, copy, t) {
-    const ti = t + copy * ((layer.stagger && layer.stagger.phase) || 0);
-    const pose = { dx: 0, dy: 0, opacity: 100, scale: 100, frame: 0 };
+    const ti = t + (layer.scatter ? scatterDraws(layer, copy)[2] : copy * ((layer.stagger && layer.stagger.phase) || 0));
+    const pose = { dx: 0, dy: 0, opacity: 100, scale: layer.scale || 100, frame: 0 };
     for (const m of layer.motion || []) {
       const p = m.period, tm = ti + (m.phase || 0);
       const u = mod(tm, p) / p;
@@ -92,8 +106,9 @@
   function layerPlacement(layer, sprite, copy, t) {
     const pose = layerPose(layer, copy, t);
     const n = frameCount(layer), fw = sprite.w / n, fh = sprite.h;
-    const cx = layer.x + copy * layer.stagger.x + pose.dx + fw / 2;
-    const cy = layer.y + copy * layer.stagger.y + pose.dy + fh / 2;
+    const o = copyOrigin(layer, copy, fw, fh);
+    const cx = o.x + pose.dx + fw / 2;
+    const cy = o.y + pose.dy + fh / 2;
     const w = round(fw * pose.scale / 100), h = round(fh * pose.scale / 100);
     return {
       sx: pose.frame * fw, sy: 0, sw: fw, sh: fh,
@@ -137,5 +152,5 @@
     return { sprite: q.sprite, x: round(x), y: round(y), opacity: 100 };
   }
 
-  return { TAU, round, mod, wave, mix32, xorshift32, draws, fadeAt, layerPose, frameCount, layerPlacement, particleParams, particle };
+  return { TAU, round, mod, wave, mix32, xorshift32, draws, fadeAt, layerPose, copyOrigin, frameCount, layerPlacement, particleParams, particle };
 });

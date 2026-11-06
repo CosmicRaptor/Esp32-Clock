@@ -175,6 +175,15 @@ typedef struct _bhoomi_clock_v1_Motion {
     uint32_t fps; /* FRAMES: 1-15 */
 } bhoomi_clock_v1_Motion;
 
+/* Particles in a rectangle. Each particle's start values come from a seeded PRNG, so the clock and the portal agree.
+ Particles are clipped to `area`. See "Particles" in portal/README.md for the exact formulas. */
+typedef struct _bhoomi_clock_v1_Rect {
+    int32_t x;
+    int32_t y;
+    uint32_t w;
+    uint32_t h;
+} bhoomi_clock_v1_Rect;
+
 /* A sprite placed on the face, copied `copies` times. Copy i (0-based) is moved by i * stagger and its motions are
  shifted in time by i * stagger_phase_ms, so a row of hearts can pulse one after another. */
 typedef struct _bhoomi_clock_v1_Layer {
@@ -188,16 +197,13 @@ typedef struct _bhoomi_clock_v1_Layer {
     int32_t stagger_phase_ms;
     pb_size_t motion_count;
     bhoomi_clock_v1_Motion motion[3]; /* up to 3 */
+    uint32_t scale_pct; /* size of every copy in percent, 10-200; 0 is read as 100. Scales about the sprite's */
+    /* centre and multiplies with a PULSE. Not for a sprite sheet (FRAMES) */
+    bool scatter; /* true: the copies are not in a row. Copy i sits at a random place inside */
+    bool has_scatter_area;
+    bhoomi_clock_v1_Rect scatter_area; /* `scatter_area` (a Rect, below), chosen from `scatter_seed`, and its motions start at a */
+    uint32_t scatter_seed; /* random point of their cycles. x, y and stagger_* are then ignored. See README, "Scatter" */
 } bhoomi_clock_v1_Layer;
-
-/* Particles in a rectangle. Each particle's start values come from a seeded PRNG, so the clock and the portal agree.
- Particles are clipped to `area`. See "Particles" in portal/README.md for the exact formulas. */
-typedef struct _bhoomi_clock_v1_Rect {
-    int32_t x;
-    int32_t y;
-    uint32_t w;
-    uint32_t h;
-} bhoomi_clock_v1_Rect;
 
 typedef struct _bhoomi_clock_v1_Emitter {
     bhoomi_clock_v1_Emitter_Kind kind;
@@ -226,6 +232,21 @@ typedef struct _bhoomi_clock_v1_When {
     bhoomi_clock_v1_Date dates[8]; /* up to 8; matches if today is any of them. `year` 0 = every year. Empty = any date */
 } bhoomi_clock_v1_When;
 
+/* Where and how the Spotify "now playing" strip (NowPlaying, above) sits on this face. The strip is always 46 px high
+ and is drawn above everything else on the face; it only appears while somebody is playing. A face without this
+ message gets the clock's usual look: show = true at x 8, y 8, w 304, a black pill at 60%, white title, pink artist. */
+typedef struct _bhoomi_clock_v1_NowPlayingSlot {
+    bool show; /* false: this face never shows the strip */
+    int32_t x; /* top-left corner */
+    int32_t y;
+    uint32_t w; /* 200-320; the two songs get half each */
+    bool has_bg; /* false: no pill behind the text */
+    uint32_t bg; /* pill colour */
+    uint32_t bg_pct; /* pill opacity in percent, 0-100 */
+    uint32_t title; /* text colours */
+    uint32_t artist;
+} bhoomi_clock_v1_NowPlayingSlot;
+
 /* GET /api/device/face/<id>  (Content-Type: application/x-protobuf; ETag is the face's `rev`) */
 typedef struct _bhoomi_clock_v1_Face {
     char id[13];
@@ -244,6 +265,8 @@ typedef struct _bhoomi_clock_v1_Face {
     bhoomi_clock_v1_Emitter emitters[3]; /* up to 3 */
     bool has_when;
     bhoomi_clock_v1_When when;
+    bool has_nowplaying;
+    bhoomi_clock_v1_NowPlayingSlot nowplaying; /* unset: the clock's usual look (see NowPlayingSlot) */
 } bhoomi_clock_v1_Face;
 
 
@@ -296,6 +319,7 @@ extern "C" {
 
 
 
+
 /* Initializer values for message structs */
 #define bhoomi_clock_v1_DeviceState_init_default {0, false, bhoomi_clock_v1_Note_init_default, false, bhoomi_clock_v1_Photo_init_default, 0, {bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default}, false, bhoomi_clock_v1_NowPlaying_init_default, 0, {bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default}, "", ""}
 #define bhoomi_clock_v1_Note_init_default        {"", 0}
@@ -310,11 +334,12 @@ extern "C" {
 #define bhoomi_clock_v1_TextSlot_init_default    {0, 0, 0, 0, 0, 0, _bhoomi_clock_v1_TextSlot_Align_MIN, _bhoomi_clock_v1_TextSlot_DateFormat_MIN}
 #define bhoomi_clock_v1_Keyframe_init_default    {0, 0}
 #define bhoomi_clock_v1_Motion_init_default      {_bhoomi_clock_v1_Motion_Type_MIN, 0, 0, 0, 0, 0, 0, 0, {bhoomi_clock_v1_Keyframe_init_default, bhoomi_clock_v1_Keyframe_init_default, bhoomi_clock_v1_Keyframe_init_default, bhoomi_clock_v1_Keyframe_init_default}, 0, 0, 0, 0, 0}
-#define bhoomi_clock_v1_Layer_init_default       {false, bhoomi_clock_v1_SpriteRef_init_default, 0, 0, 0, 0, 0, 0, 0, {bhoomi_clock_v1_Motion_init_default, bhoomi_clock_v1_Motion_init_default, bhoomi_clock_v1_Motion_init_default}}
+#define bhoomi_clock_v1_Layer_init_default       {false, bhoomi_clock_v1_SpriteRef_init_default, 0, 0, 0, 0, 0, 0, 0, {bhoomi_clock_v1_Motion_init_default, bhoomi_clock_v1_Motion_init_default, bhoomi_clock_v1_Motion_init_default}, 0, 0, false, bhoomi_clock_v1_Rect_init_default, 0}
 #define bhoomi_clock_v1_Rect_init_default        {0, 0, 0, 0}
 #define bhoomi_clock_v1_Emitter_init_default     {_bhoomi_clock_v1_Emitter_Kind_MIN, 0, {bhoomi_clock_v1_SpriteRef_init_default, bhoomi_clock_v1_SpriteRef_init_default, bhoomi_clock_v1_SpriteRef_init_default}, 0, false, bhoomi_clock_v1_Rect_init_default, 0, 0, 0, 0, 0, 0, 0}
 #define bhoomi_clock_v1_When_init_default        {0, 0, 0, 0, 0, {bhoomi_clock_v1_Date_init_default, bhoomi_clock_v1_Date_init_default, bhoomi_clock_v1_Date_init_default, bhoomi_clock_v1_Date_init_default, bhoomi_clock_v1_Date_init_default, bhoomi_clock_v1_Date_init_default, bhoomi_clock_v1_Date_init_default, bhoomi_clock_v1_Date_init_default}}
-#define bhoomi_clock_v1_Face_init_default        {"", "", false, bhoomi_clock_v1_SpriteRef_init_default, false, bhoomi_clock_v1_TextSlot_init_default, false, bhoomi_clock_v1_TextSlot_init_default, false, bhoomi_clock_v1_Layer_init_default, 0, {bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default}, 0, {bhoomi_clock_v1_Emitter_init_default, bhoomi_clock_v1_Emitter_init_default, bhoomi_clock_v1_Emitter_init_default}, false, bhoomi_clock_v1_When_init_default}
+#define bhoomi_clock_v1_NowPlayingSlot_init_default {0, 0, 0, 0, 0, 0, 0, 0, 0}
+#define bhoomi_clock_v1_Face_init_default        {"", "", false, bhoomi_clock_v1_SpriteRef_init_default, false, bhoomi_clock_v1_TextSlot_init_default, false, bhoomi_clock_v1_TextSlot_init_default, false, bhoomi_clock_v1_Layer_init_default, 0, {bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default}, 0, {bhoomi_clock_v1_Emitter_init_default, bhoomi_clock_v1_Emitter_init_default, bhoomi_clock_v1_Emitter_init_default}, false, bhoomi_clock_v1_When_init_default, false, bhoomi_clock_v1_NowPlayingSlot_init_default}
 #define bhoomi_clock_v1_DeviceState_init_zero    {0, false, bhoomi_clock_v1_Note_init_zero, false, bhoomi_clock_v1_Photo_init_zero, 0, {bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero}, false, bhoomi_clock_v1_NowPlaying_init_zero, 0, {bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero}, "", ""}
 #define bhoomi_clock_v1_Note_init_zero           {"", 0}
 #define bhoomi_clock_v1_Photo_init_zero          {"", 0, 0}
@@ -328,11 +353,12 @@ extern "C" {
 #define bhoomi_clock_v1_TextSlot_init_zero       {0, 0, 0, 0, 0, 0, _bhoomi_clock_v1_TextSlot_Align_MIN, _bhoomi_clock_v1_TextSlot_DateFormat_MIN}
 #define bhoomi_clock_v1_Keyframe_init_zero       {0, 0}
 #define bhoomi_clock_v1_Motion_init_zero         {_bhoomi_clock_v1_Motion_Type_MIN, 0, 0, 0, 0, 0, 0, 0, {bhoomi_clock_v1_Keyframe_init_zero, bhoomi_clock_v1_Keyframe_init_zero, bhoomi_clock_v1_Keyframe_init_zero, bhoomi_clock_v1_Keyframe_init_zero}, 0, 0, 0, 0, 0}
-#define bhoomi_clock_v1_Layer_init_zero          {false, bhoomi_clock_v1_SpriteRef_init_zero, 0, 0, 0, 0, 0, 0, 0, {bhoomi_clock_v1_Motion_init_zero, bhoomi_clock_v1_Motion_init_zero, bhoomi_clock_v1_Motion_init_zero}}
+#define bhoomi_clock_v1_Layer_init_zero          {false, bhoomi_clock_v1_SpriteRef_init_zero, 0, 0, 0, 0, 0, 0, 0, {bhoomi_clock_v1_Motion_init_zero, bhoomi_clock_v1_Motion_init_zero, bhoomi_clock_v1_Motion_init_zero}, 0, 0, false, bhoomi_clock_v1_Rect_init_zero, 0}
 #define bhoomi_clock_v1_Rect_init_zero           {0, 0, 0, 0}
 #define bhoomi_clock_v1_Emitter_init_zero        {_bhoomi_clock_v1_Emitter_Kind_MIN, 0, {bhoomi_clock_v1_SpriteRef_init_zero, bhoomi_clock_v1_SpriteRef_init_zero, bhoomi_clock_v1_SpriteRef_init_zero}, 0, false, bhoomi_clock_v1_Rect_init_zero, 0, 0, 0, 0, 0, 0, 0}
 #define bhoomi_clock_v1_When_init_zero           {0, 0, 0, 0, 0, {bhoomi_clock_v1_Date_init_zero, bhoomi_clock_v1_Date_init_zero, bhoomi_clock_v1_Date_init_zero, bhoomi_clock_v1_Date_init_zero, bhoomi_clock_v1_Date_init_zero, bhoomi_clock_v1_Date_init_zero, bhoomi_clock_v1_Date_init_zero, bhoomi_clock_v1_Date_init_zero}}
-#define bhoomi_clock_v1_Face_init_zero           {"", "", false, bhoomi_clock_v1_SpriteRef_init_zero, false, bhoomi_clock_v1_TextSlot_init_zero, false, bhoomi_clock_v1_TextSlot_init_zero, false, bhoomi_clock_v1_Layer_init_zero, 0, {bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero}, 0, {bhoomi_clock_v1_Emitter_init_zero, bhoomi_clock_v1_Emitter_init_zero, bhoomi_clock_v1_Emitter_init_zero}, false, bhoomi_clock_v1_When_init_zero}
+#define bhoomi_clock_v1_NowPlayingSlot_init_zero {0, 0, 0, 0, 0, 0, 0, 0, 0}
+#define bhoomi_clock_v1_Face_init_zero           {"", "", false, bhoomi_clock_v1_SpriteRef_init_zero, false, bhoomi_clock_v1_TextSlot_init_zero, false, bhoomi_clock_v1_TextSlot_init_zero, false, bhoomi_clock_v1_Layer_init_zero, 0, {bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero}, 0, {bhoomi_clock_v1_Emitter_init_zero, bhoomi_clock_v1_Emitter_init_zero, bhoomi_clock_v1_Emitter_init_zero}, false, bhoomi_clock_v1_When_init_zero, false, bhoomi_clock_v1_NowPlayingSlot_init_zero}
 
 /* Field tags (for use in manual encoding/decoding) */
 #define bhoomi_clock_v1_Note_text_tag            1
@@ -394,6 +420,10 @@ extern "C" {
 #define bhoomi_clock_v1_Motion_max_pct_tag       11
 #define bhoomi_clock_v1_Motion_frames_tag        12
 #define bhoomi_clock_v1_Motion_fps_tag           13
+#define bhoomi_clock_v1_Rect_x_tag               1
+#define bhoomi_clock_v1_Rect_y_tag               2
+#define bhoomi_clock_v1_Rect_w_tag               3
+#define bhoomi_clock_v1_Rect_h_tag               4
 #define bhoomi_clock_v1_Layer_sprite_tag         1
 #define bhoomi_clock_v1_Layer_x_tag              2
 #define bhoomi_clock_v1_Layer_y_tag              3
@@ -402,10 +432,10 @@ extern "C" {
 #define bhoomi_clock_v1_Layer_stagger_y_tag      6
 #define bhoomi_clock_v1_Layer_stagger_phase_ms_tag 7
 #define bhoomi_clock_v1_Layer_motion_tag         8
-#define bhoomi_clock_v1_Rect_x_tag               1
-#define bhoomi_clock_v1_Rect_y_tag               2
-#define bhoomi_clock_v1_Rect_w_tag               3
-#define bhoomi_clock_v1_Rect_h_tag               4
+#define bhoomi_clock_v1_Layer_scale_pct_tag      9
+#define bhoomi_clock_v1_Layer_scatter_tag        10
+#define bhoomi_clock_v1_Layer_scatter_area_tag   11
+#define bhoomi_clock_v1_Layer_scatter_seed_tag   12
 #define bhoomi_clock_v1_Emitter_kind_tag         1
 #define bhoomi_clock_v1_Emitter_sprites_tag      2
 #define bhoomi_clock_v1_Emitter_count_tag        3
@@ -422,6 +452,15 @@ extern "C" {
 #define bhoomi_clock_v1_When_months_tag          3
 #define bhoomi_clock_v1_When_days_tag            4
 #define bhoomi_clock_v1_When_dates_tag           5
+#define bhoomi_clock_v1_NowPlayingSlot_show_tag  1
+#define bhoomi_clock_v1_NowPlayingSlot_x_tag     2
+#define bhoomi_clock_v1_NowPlayingSlot_y_tag     3
+#define bhoomi_clock_v1_NowPlayingSlot_w_tag     4
+#define bhoomi_clock_v1_NowPlayingSlot_has_bg_tag 5
+#define bhoomi_clock_v1_NowPlayingSlot_bg_tag    6
+#define bhoomi_clock_v1_NowPlayingSlot_bg_pct_tag 7
+#define bhoomi_clock_v1_NowPlayingSlot_title_tag 8
+#define bhoomi_clock_v1_NowPlayingSlot_artist_tag 9
 #define bhoomi_clock_v1_Face_id_tag              1
 #define bhoomi_clock_v1_Face_rev_tag             2
 #define bhoomi_clock_v1_Face_background_tag      4
@@ -431,6 +470,7 @@ extern "C" {
 #define bhoomi_clock_v1_Face_layers_tag          8
 #define bhoomi_clock_v1_Face_emitters_tag        9
 #define bhoomi_clock_v1_Face_when_tag            10
+#define bhoomi_clock_v1_Face_nowplaying_tag      11
 
 /* Struct field encoding specification for nanopb */
 #define bhoomi_clock_v1_DeviceState_FIELDLIST(X, a) \
@@ -561,11 +601,16 @@ X(a, STATIC,   SINGULAR, UINT32,   copies,            4) \
 X(a, STATIC,   SINGULAR, SINT32,   stagger_x,         5) \
 X(a, STATIC,   SINGULAR, SINT32,   stagger_y,         6) \
 X(a, STATIC,   SINGULAR, SINT32,   stagger_phase_ms,   7) \
-X(a, STATIC,   REPEATED, MESSAGE,  motion,            8)
+X(a, STATIC,   REPEATED, MESSAGE,  motion,            8) \
+X(a, STATIC,   SINGULAR, UINT32,   scale_pct,         9) \
+X(a, STATIC,   SINGULAR, BOOL,     scatter,          10) \
+X(a, STATIC,   OPTIONAL, MESSAGE,  scatter_area,     11) \
+X(a, STATIC,   SINGULAR, UINT32,   scatter_seed,     12)
 #define bhoomi_clock_v1_Layer_CALLBACK NULL
 #define bhoomi_clock_v1_Layer_DEFAULT NULL
 #define bhoomi_clock_v1_Layer_sprite_MSGTYPE bhoomi_clock_v1_SpriteRef
 #define bhoomi_clock_v1_Layer_motion_MSGTYPE bhoomi_clock_v1_Motion
+#define bhoomi_clock_v1_Layer_scatter_area_MSGTYPE bhoomi_clock_v1_Rect
 
 #define bhoomi_clock_v1_Rect_FIELDLIST(X, a) \
 X(a, STATIC,   SINGULAR, SINT32,   x,                 1) \
@@ -602,6 +647,19 @@ X(a, STATIC,   REPEATED, MESSAGE,  dates,             5)
 #define bhoomi_clock_v1_When_DEFAULT NULL
 #define bhoomi_clock_v1_When_dates_MSGTYPE bhoomi_clock_v1_Date
 
+#define bhoomi_clock_v1_NowPlayingSlot_FIELDLIST(X, a) \
+X(a, STATIC,   SINGULAR, BOOL,     show,              1) \
+X(a, STATIC,   SINGULAR, SINT32,   x,                 2) \
+X(a, STATIC,   SINGULAR, SINT32,   y,                 3) \
+X(a, STATIC,   SINGULAR, UINT32,   w,                 4) \
+X(a, STATIC,   SINGULAR, BOOL,     has_bg,            5) \
+X(a, STATIC,   SINGULAR, UINT32,   bg,                6) \
+X(a, STATIC,   SINGULAR, UINT32,   bg_pct,            7) \
+X(a, STATIC,   SINGULAR, UINT32,   title,             8) \
+X(a, STATIC,   SINGULAR, UINT32,   artist,            9)
+#define bhoomi_clock_v1_NowPlayingSlot_CALLBACK NULL
+#define bhoomi_clock_v1_NowPlayingSlot_DEFAULT NULL
+
 #define bhoomi_clock_v1_Face_FIELDLIST(X, a) \
 X(a, STATIC,   SINGULAR, STRING,   id,                1) \
 X(a, STATIC,   SINGULAR, STRING,   rev,               2) \
@@ -611,7 +669,8 @@ X(a, STATIC,   OPTIONAL, MESSAGE,  date,              6) \
 X(a, STATIC,   OPTIONAL, MESSAGE,  icon,              7) \
 X(a, STATIC,   REPEATED, MESSAGE,  layers,            8) \
 X(a, STATIC,   REPEATED, MESSAGE,  emitters,          9) \
-X(a, STATIC,   OPTIONAL, MESSAGE,  when,             10)
+X(a, STATIC,   OPTIONAL, MESSAGE,  when,             10) \
+X(a, STATIC,   OPTIONAL, MESSAGE,  nowplaying,       11)
 #define bhoomi_clock_v1_Face_CALLBACK NULL
 #define bhoomi_clock_v1_Face_DEFAULT NULL
 #define bhoomi_clock_v1_Face_background_MSGTYPE bhoomi_clock_v1_SpriteRef
@@ -621,6 +680,7 @@ X(a, STATIC,   OPTIONAL, MESSAGE,  when,             10)
 #define bhoomi_clock_v1_Face_layers_MSGTYPE bhoomi_clock_v1_Layer
 #define bhoomi_clock_v1_Face_emitters_MSGTYPE bhoomi_clock_v1_Emitter
 #define bhoomi_clock_v1_Face_when_MSGTYPE bhoomi_clock_v1_When
+#define bhoomi_clock_v1_Face_nowplaying_MSGTYPE bhoomi_clock_v1_NowPlayingSlot
 
 extern const pb_msgdesc_t bhoomi_clock_v1_DeviceState_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_Note_msg;
@@ -639,6 +699,7 @@ extern const pb_msgdesc_t bhoomi_clock_v1_Layer_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_Rect_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_Emitter_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_When_msg;
+extern const pb_msgdesc_t bhoomi_clock_v1_NowPlayingSlot_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_Face_msg;
 
 /* Defines for backwards compatibility with code written before nanopb-0.4.0 */
@@ -659,6 +720,7 @@ extern const pb_msgdesc_t bhoomi_clock_v1_Face_msg;
 #define bhoomi_clock_v1_Rect_fields &bhoomi_clock_v1_Rect_msg
 #define bhoomi_clock_v1_Emitter_fields &bhoomi_clock_v1_Emitter_msg
 #define bhoomi_clock_v1_When_fields &bhoomi_clock_v1_When_msg
+#define bhoomi_clock_v1_NowPlayingSlot_fields &bhoomi_clock_v1_NowPlayingSlot_msg
 #define bhoomi_clock_v1_Face_fields &bhoomi_clock_v1_Face_msg
 
 /* Maximum encoded size of messages (where known) */
@@ -668,12 +730,13 @@ extern const pb_msgdesc_t bhoomi_clock_v1_Face_msg;
 #define bhoomi_clock_v1_DeviceState_size         6949
 #define bhoomi_clock_v1_Emitter_size             186
 #define bhoomi_clock_v1_FaceRef_size             28
-#define bhoomi_clock_v1_Face_size                4883
+#define bhoomi_clock_v1_Face_size                5291
 #define bhoomi_clock_v1_Keyframe_size            12
-#define bhoomi_clock_v1_Layer_size               440
+#define bhoomi_clock_v1_Layer_size               480
 #define bhoomi_clock_v1_Listener_size            168
 #define bhoomi_clock_v1_Motion_size              120
 #define bhoomi_clock_v1_Note_size                494
+#define bhoomi_clock_v1_NowPlayingSlot_size      46
 #define bhoomi_clock_v1_NowPlaying_size          342
 #define bhoomi_clock_v1_Photo_size               31
 #define bhoomi_clock_v1_Rect_size                24

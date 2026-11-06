@@ -373,11 +373,19 @@ void applyPortal() {
                 (unsigned)portal::state().alarms_count);
 }
 
+constexpr int NP_H = 46;  // the now-playing strip's height (below)
+
 // The card is up for the first 20 s of each minute, so the photo isn't covered all day.
 void updateNote() {
   // over the photo the strip sits at the top, so the card goes below it while both are up
   static int noteY = -1;
-  int y = (current == View::Photo || current == View::Face) && npVisible ? 62 : 12;
+  int y = 12;  // over a picture the strip sits at the top, so the card goes below it while both are up
+  if (npVisible && current == View::Photo) y = 62;
+  if (npVisible && current == View::Face) {
+    const auto *slot = faceview::nowPlayingSlot();
+    int top = slot ? slot->y : 8;
+    y = top < 60 ? top + NP_H + 8 : 12;  // a strip down in the lower half doesn't get in the card's way
+  }
   if (y != noteY) {  // only when it moves: re-aligning invalidates the area every time
     noteY = y;
     lv_obj_align(noteCard, LV_ALIGN_TOP_MID, 0, y);
@@ -393,7 +401,6 @@ void updateNote() {
 // stays where it is); with neither playing the strip is hidden and the face is just the clock.
 constexpr int NP_ART = 38;                       // cover thumbnail, px (the JPEG is 64x64, scaled down)
 constexpr int NP_GAP = 6;
-constexpr int NP_H = 46;
 constexpr uint32_t NP_PAUSED_HIDE_MS = 5 * 60 * 1000;  // a song paused this long is no longer "what you're playing"
 const lv_color_t NP_TITLE_PHOTO = lv_color_white();
 const lv_color_t NP_ARTIST_PHOTO = lv_color_hex(0xFFB3C0);
@@ -469,7 +476,17 @@ void placeStrip() {
   if (lv_obj_get_parent(npStrip) != parent) lv_obj_set_parent(npStrip, parent);
   if (onFace) lv_obj_move_foreground(npStrip);  // above the face's own objects
   int w, padH;
-  if (onPhoto) {
+  lv_color_t titleCol = onPhoto ? NP_TITLE_PHOTO : INK, artistCol = onPhoto ? NP_ARTIST_PHOTO : MUTE;
+  const auto *slot = onFace ? faceview::nowPlayingSlot() : nullptr;  // this face's own placement and colours, if it has any
+  if (slot) {
+    w = slot->w;
+    padH = slot->has_bg ? 6 : 0;
+    lv_obj_set_style_bg_color(npStrip, lv_color_hex(slot->bg), 0);
+    lv_obj_set_style_bg_opa(npStrip, slot->has_bg ? (lv_opa_t)(slot->bg_pct * 255 / 100) : LV_OPA_TRANSP, 0);
+    lv_obj_align(npStrip, LV_ALIGN_TOP_LEFT, slot->x, slot->y);
+    titleCol = lv_color_hex(slot->title);
+    artistCol = lv_color_hex(slot->artist);
+  } else if (onPhoto) {
     w = 304;
     padH = 6;
     lv_obj_set_style_bg_color(npStrip, lv_color_black(), 0);
@@ -486,8 +503,8 @@ void placeStrip() {
   int colW = (w - 2 * padH) / 2 - NP_ART - NP_GAP;
   for (NpSide &n : np) {
     lv_obj_set_width(n.col, colW);
-    lv_obj_set_style_text_color(n.title, onPhoto ? NP_TITLE_PHOTO : INK, 0);
-    lv_obj_set_style_text_color(n.artist, onPhoto ? NP_ARTIST_PHOTO : MUTE, 0);
+    lv_obj_set_style_text_color(n.title, titleCol, 0);
+    lv_obj_set_style_text_color(n.artist, artistCol, 0);
   }
 }
 
@@ -584,7 +601,8 @@ void updateNowPlaying() {
     Serial.printf("[ui] now playing %s side: %s\n", i ? "right" : "left",
                   !on ? "hidden" : st == bhoomi_clock_v1_Listener_Status_PAUSED ? "paused (dimmed)" : "playing");
   }
-  bool want = any && inClock();
+  const auto *slot = current == View::Face ? faceview::nowPlayingSlot() : nullptr;
+  bool want = any && inClock() && !(slot && !slot->show);  // a face can switch the strip off
   if (want != npVisible) {
     npVisible = want;
     show(npStrip, want);

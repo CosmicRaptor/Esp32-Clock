@@ -95,7 +95,7 @@ message Listener {
 // A face whose `when` has no constraint at all never matches by itself (it can still be the default or pinned).
 //
 // Draw order, back to front: background, emitters with front = false, layers (in order, each copy in turn),
-// emitters with front = true, the time, the date, the icon.
+// emitters with front = true, the time, the date, the icon, and on top of all of it the now-playing strip.
 //
 // Coordinates are pixels on the 320x240 landscape screen, origin top-left, y down. Sprites are placed by their
 // top-left corner. Colours are 0xRRGGBB. Animation time `t` is milliseconds since the face was shown. Every motion
@@ -191,6 +191,11 @@ message Layer {
   sint32 stagger_y = 6;
   sint32 stagger_phase_ms = 7;
   repeated Motion motion = 8;    // up to 3
+  uint32 scale_pct = 9;          // size of every copy in percent, 10-200; 0 is read as 100. Scales about the sprite's
+                                 //   centre and multiplies with a PULSE. Not for a sprite sheet (FRAMES)
+  bool scatter = 10;             // true: the copies are not in a row. Copy i sits at a random place inside
+  Rect scatter_area = 11;        //   `scatter_area` (a Rect, below), chosen from `scatter_seed`, and its motions start at a
+  uint32 scatter_seed = 12;      //   random point of their cycles. x, y and stagger_* are then ignored. See README, "Scatter"
 }
 
 // Particles in a rectangle. Each particle's start values come from a seeded PRNG, so the clock and the portal agree.
@@ -231,6 +236,21 @@ message When {
   repeated Date dates = 5;       // up to 8; matches if today is any of them. `year` 0 = every year. Empty = any date
 }
 
+// Where and how the Spotify "now playing" strip (NowPlaying, above) sits on this face. The strip is always 46 px high
+// and is drawn above everything else on the face; it only appears while somebody is playing. A face without this
+// message gets the clock's usual look: show = true at x 8, y 8, w 304, a black pill at 60%, white title, pink artist.
+message NowPlayingSlot {
+  bool show = 1;                 // false: this face never shows the strip
+  sint32 x = 2;                  // top-left corner
+  sint32 y = 3;
+  uint32 w = 4;                  // 200-320; the two songs get half each
+  bool has_bg = 5;               // false: no pill behind the text
+  uint32 bg = 6;                 // pill colour
+  uint32 bg_pct = 7;             // pill opacity in percent, 0-100
+  uint32 title = 8;              // text colours
+  uint32 artist = 9;
+}
+
 // GET /api/device/face/<id>  (Content-Type: application/x-protobuf; ETag is the face's `rev`)
 message Face {
   reserved 3;                    // (was going to be the name: the clock never shows it)
@@ -243,4 +263,5 @@ message Face {
   repeated Layer layers = 8;     // up to 8, back to front
   repeated Emitter emitters = 9; // up to 3
   When when = 10;
+  NowPlayingSlot nowplaying = 11;  // unset: the clock's usual look (see NowPlayingSlot)
 }

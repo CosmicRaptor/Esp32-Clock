@@ -19,6 +19,10 @@ static Motion mo(M type, uint32_t period, uint32_t phase = 0) {
 int main() {
   Layer L = {};
   L.stagger_phase_ms = -250;
+  L.stagger_x = 7;
+  L.stagger_y = -3;
+  L.x = 5;
+  L.y = 9;
   L.motion_count = 3;
   L.motion[0] = mo(bhoomi_clock_v1_Motion_Type_BOB, 3200, 100);
   L.motion[0].amp = 4;
@@ -47,10 +51,28 @@ int main() {
   L3.motion[1] = mo(bhoomi_clock_v1_Motion_Type_PATH, 1000);
   L3.motion[1].dx = 40;
   L3.motion[1].loop = true;
-  const Layer *layers[3] = {&L, &L2, &L3};
+  Layer L4 = {};  // scattered and scaled down, with a bob
+  L4.scale_pct = 60;
+  L4.scatter = true;
+  L4.scatter_area = {10, 20, 200, 150};
+  L4.scatter_seed = 4242;
+  L4.motion_count = 2;
+  L4.motion[0] = mo(bhoomi_clock_v1_Motion_Type_BOB, 2000);
+  L4.motion[0].amp = 3;
+  L4.motion[1] = mo(bhoomi_clock_v1_Motion_Type_PULSE, 900, 100);
+  L4.motion[1].min_pct = 90;
+  L4.motion[1].max_pct = 120;
+  const Layer *layers[4] = {&L, &L2, &L3, &L4};
+  for (int copy = 0; copy < 5; copy++) {
+    double x, y;
+    copyOrigin(L4, copy, 24, 22, x, y);
+    printf("origin scatter %d %.3f %.3f\n", copy, x, y);
+    copyOrigin(L, copy, 24, 22, x, y);
+    printf("origin row %d %.3f %.3f\n", copy, x, y);
+  }
   const uint32_t times[] = {0, 137, 500, 1234, 2999, 9999, 123456};
-  for (int li = 0; li < 3; li++)
-    for (int copy = 0; copy < 3; copy++)
+  for (int li = 0; li < 4; li++)
+    for (int copy = 0; copy < 5; copy++)
       for (uint32_t t : times) {
         Pose p = layerPose(*layers[li], copy, t);
         printf("pose %d %d %u %.3f %.3f %.3f %.3f %d\n", li, copy, t, p.dx, p.dy, p.opacity, p.scale, p.frame);

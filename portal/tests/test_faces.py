@@ -32,7 +32,8 @@ def slot(**kw):
 
 
 def layer(**kw):
-    s = {"name": "Panda", "sprite": PANDA, "x": 100, "y": 100, "copies": 1, "stagger": {"x": 0, "y": 0, "phase": 0}, "motion": []}
+    s = {"name": "Panda", "sprite": PANDA, "x": 100, "y": 100, "copies": 1, "stagger": {"x": 0, "y": 0, "phase": 0}, "motion": [],
+         "scale": 100, "scatter": None}
     s.update(kw)
     return s
 
@@ -379,6 +380,111 @@ class ReportTests(unittest.TestCase):
         f = model.clean_face(face(layers=layers[:1], particles=[emitter(sprites=[SNOW])]), assets, "x")
         f["assets"].update({h: huge[h] for h in list(huge)[:20]})            # twenty big sprites in one face
         self.assertTrue(any("memory" in e for e in model.face_report(f)["errors"]))
+
+
+class ScaleAndScatterTests(unittest.TestCase):
+    def errors(self, **kw):
+        return report(**kw)["errors"]
+
+    def test_scale_defaults_to_100_and_is_limited(self):
+        f = clean(layers=[{k: v for k, v in layer().items() if k not in ("scale", "scatter")}])
+        self.assertEqual((f["layers"][0]["scale"], f["layers"][0]["scatter"]), (100, None))
+        self.assertEqual(clean(layers=[layer(scale=50)])["layers"][0]["scale"], 50)
+        for bad in (9, 201, 50.5, "big", True):
+            with self.assertRaises(Invalid, msg=bad):
+                clean(layers=[layer(scale=bad)])
+
+    def test_a_sprite_sheet_cannot_be_resized(self):
+        sheet = layer(sprite=SHEET, scale=50, motion=[{"type": "frames", "frames": 4, "fps": 6}])
+        with self.assertRaises(Invalid):
+            clean(layers=[sheet])
+        clean(layers=[dict(sheet, scale=100)])
+
+    def test_a_scaled_sprite_is_centred_on_its_frame(self):
+        # 120x100 at 50% is 60x50, centred in the 120x100 frame placed at (100, 100): it spans 130..190 x 125..175
+        self.assertEqual(self.errors(layers=[layer(x=-30, y=-25, scale=50)], particles=[]), [])      # 0..60 x 0..50
+        self.assertTrue(self.errors(layers=[layer(x=-31, y=-25, scale=50)], particles=[]))
+        self.assertEqual(self.errors(layers=[layer(x=230, y=165, scale=50)], particles=[]), [])      # ends at 320 x 240
+        self.assertTrue(self.errors(layers=[layer(x=231, y=165, scale=50)], particles=[]))
+
+    def test_a_bigger_sprite_has_to_fit_too(self):
+        self.assertEqual(self.errors(layers=[layer(x=100, y=70, sprite=HEART, scale=200)], particles=[]), [])
+        self.assertTrue(self.errors(layers=[layer(x=0, y=0, sprite=HEART, scale=200)], particles=[]))   # grows 12 px left
+
+    def test_pulse_grows_from_the_scaled_size(self):
+        pulse = {"type": "pulse", "period": 3000, "phase": 0, "min": 100, "max": 150}
+        # 24x22 heart at 50% is 12x11; the pulse takes it to 18x16.5 about the same centre: 3 px and 2.75 px more each side
+        frame_x, frame_y = 6 - 6 + 3, 6 - 5.5 + 3     # (the frame's left edge where the box just touches 0)
+        self.assertEqual(self.errors(layers=[layer(sprite=HEART, x=-3, y=-2, scale=50, motion=[pulse])], particles=[]), [])
+        self.assertTrue(self.errors(layers=[layer(sprite=HEART, x=-4, y=-2, scale=50, motion=[pulse])], particles=[]))
+
+    def test_smaller_costs_less_but_scaling_is_never_free(self):
+        fade = {"type": "fade", "period": 2000, "phase": 0, "keys": [{"at": 0, "v": 100}, {"at": 500, "v": 20}]}
+        full = report(layers=[layer(x=50, y=50, motion=[fade])], particles=[])["budget"]["px"]
+        half = report(layers=[layer(x=50, y=50, scale=50, motion=[fade])], particles=[])["budget"]["px"]
+        self.assertEqual(half, round(full / 4 * model.SCALE_COST))
+        self.assertGreater(report(layers=[layer(x=50, y=50, scale=100, motion=[fade])], particles=[])["budget"]["px"], 0)
+
+    def test_scatter_is_cleaned(self):
+        sc = {"area": {"x": 10, "y": 20, "w": 200, "h": 150}, "seed": 99, "extra": 1}
+        f = clean(layers=[layer(sprite=HEART, copies=5, scatter=sc)])
+        self.assertEqual(f["layers"][0]["scatter"], {"area": {"x": 10, "y": 20, "w": 200, "h": 150}, "seed": 99})
+        for bad in ({"seed": 1}, {"area": {"x": 0, "y": 0, "w": 0, "h": 10}, "seed": 1}, {"area": {"x": 0, "y": 0, "w": 10, "h": 10}, "seed": -1},
+                    {"area": {"x": 0, "y": 0, "w": 10, "h": 10}, "seed": 2**32}, "everywhere"):
+            with self.assertRaises(Invalid, msg=bad):
+                clean(layers=[layer(sprite=HEART, copies=5, scatter=bad)])
+
+    def test_scattered_copies_must_fit_inside_the_screen_wherever_they_land(self):
+        def sc(**area):
+            return {"area": dict({"x": 0, "y": 0, "w": 320, "h": 240}, **area), "seed": 3}
+        self.assertEqual(self.errors(layers=[layer(sprite=HEART, copies=6, scatter=sc())], particles=[]), [])
+        self.assertTrue(self.errors(layers=[layer(sprite=HEART, copies=6, scatter=sc(x=10))], particles=[]))   # area runs off the right
+        self.assertTrue(self.errors(layers=[layer(sprite=HEART, copies=6, scatter=sc(x=-1, w=100))], particles=[]))
+        bob = {"type": "bob", "period": 3000, "phase": 0, "amp": 10}
+        self.assertTrue(self.errors(layers=[layer(sprite=HEART, copies=6, scatter=sc(), motion=[bob])], particles=[]))  # a bob at the edge
+        self.assertEqual(self.errors(layers=[layer(sprite=HEART, copies=6, scatter=sc(y=10, h=220), motion=[bob])], particles=[]), [])
+
+    def test_stagger_and_position_do_not_matter_when_scattered(self):
+        sc = {"area": {"x": 0, "y": 0, "w": 320, "h": 240}, "seed": 3}
+        wild = layer(sprite=HEART, copies=4, x=900, y=900, stagger={"x": 300, "y": 200, "phase": 0}, scatter=sc)
+        self.assertEqual(self.errors(layers=[wild], particles=[]), [])
+
+    def test_scatter_copies_still_count_towards_the_limit(self):
+        sc = {"area": {"x": 0, "y": 0, "w": 320, "h": 240}, "seed": 3}
+        many = [layer(sprite=STAR, copies=4, scatter=sc) for _ in range(7)]
+        self.assertTrue(any("sprites on screen" in e for e in self.errors(layers=many, particles=[])))
+
+    def test_old_faces_without_the_new_fields_still_work_on_the_wire(self):
+        import wire
+        f = clean(layers=[layer(sprite=HEART)])
+        del f["layers"][0]["scale"], f["layers"][0]["scatter"]
+        f["rev"] = "x"
+        msg = wire.face_message(f)
+        self.assertEqual((msg.layers[0].scale_pct, msg.layers[0].scatter), (100, False))
+
+
+class NowPlayingSettingsTests(unittest.TestCase):
+    NP = {"show": True, "x": 8, "y": 190, "w": 304, "bg": "#000000", "bg_pct": 60, "title": "#ffffff", "artist": "#FFB3C0"}
+
+    def test_unset_means_the_usual_look(self):
+        self.assertIsNone(clean()["nowplaying"])
+
+    def test_cleaned(self):
+        f = clean(nowplaying=dict(self.NP, extra=1))
+        self.assertEqual(f["nowplaying"], dict(self.NP, artist="#ffb3c0"))
+        self.assertEqual(clean(nowplaying=dict(self.NP, bg=""))["nowplaying"]["bg"], "")
+
+    def test_limits(self):
+        for bad in (dict(self.NP, w=199), dict(self.NP, w=321), dict(self.NP, bg_pct=101), dict(self.NP, title="white"),
+                    dict(self.NP, show="yes"), dict(self.NP, x=1.5), "strip"):
+            with self.assertRaises(Invalid, msg=bad):
+                clean(nowplaying=bad)
+
+    def test_it_must_be_on_screen_if_shown(self):
+        self.assertEqual(model.face_report(clean(nowplaying=self.NP))["errors"], [])        # 190 + 46 = 236
+        self.assertTrue(model.face_report(clean(nowplaying=dict(self.NP, y=195)))["errors"])  # runs off the bottom
+        self.assertTrue(model.face_report(clean(nowplaying=dict(self.NP, x=17)))["errors"])   # 17 + 304 > 320
+        self.assertEqual(model.face_report(clean(nowplaying=dict(self.NP, y=900, show=False)))["errors"], [])  # hidden: nobody cares
 
 
 class RulesTests(unittest.TestCase):
