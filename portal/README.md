@@ -35,11 +35,25 @@ npx wrangler secret put ADMIN_PASSWORD    # a long one: it's the only thing guar
 npx wrangler secret put DEVICE_TOKEN      # e.g. python3 -c 'import secrets;print(secrets.token_urlsafe(24))'
 ```
 
-For extra protection, put [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/) in front of everything except `/api/device/*`.
+### HTTPS only, behind Cloudflare Access
+
+The Worker runs first for every request (`run_worker_first`), static files included:
+
+- **HTTPS only.** Plain `http://` gets a `301` to `https://` for GET/HEAD and a `403` for anything else, and the page sends HSTS (`public/_headers`). `wrangler dev` on localhost or a LAN IP is exempt.
+- **Cloudflare Access** guards the whole site, `/api/device/*` included. People log in with their email (one-time PIN); the clock uses a **service token**. The Worker also re-checks the JWT that Access adds (`Cf-Access-Jwt-Assertion`: RS256 signature against the team's keys, the application's AUD tag, issuer, expiry), so the site stays closed if Access is ever switched off. That check is on once both of these secrets are set:
+
+```bash
+npx wrangler secret put ACCESS_AUD            # the Access application's "Application Audience (AUD) Tag"
+npx wrangler secret put ACCESS_TEAM_DOMAIN    # https://<team>.cloudflareaccess.com
+```
+
+Setting up Access (Cloudflare dashboard): Workers & Pages, **bhoomi-clock**, Settings, Domains & Routes, enable **Cloudflare Access** on the `workers.dev` route. Then in Zero Trust, Access, Applications, edit that application: an **Allow** policy for your two emails, and a **Service Auth** policy for a service token made under Access, Service credentials. Keep them out of `.dev.vars`, or local dev will want Access tokens too.
+
+The admin password stays as a second lock behind Access.
 
 ## Clock API
 
-The messages are defined in [`proto/clock.proto`](../proto/clock.proto). The firmware uses the nanopb code in `clock.pb.{c,h}` at the sketch root. Every request sends `Authorization: Bearer <DEVICE_TOKEN>`.
+The messages are defined in [`proto/clock.proto`](../proto/clock.proto). The firmware uses the nanopb code in `clock.pb.{c,h}` at the sketch root. Every request goes to `https://` and sends three headers: `Authorization: Bearer <DEVICE_TOKEN>`, plus the Access service token's `CF-Access-Client-Id: <id>` and `CF-Access-Client-Secret: <secret>`. Without the Access headers the request never reaches the Worker: Access answers `403`.
 
 **`GET /api/device/state?tz=Asia/Kolkata&fw=0.6.0&rssi=-71`** returns a `DeviceState` (`application/x-protobuf`). It is the clock's one heartbeat: poll it every ~10 s. Send the last `ETag` as `If-None-Match` to get a bare `304` when nothing changed. The ETag moves with the portal's `version` *and* with what's playing, so a new song is a new `200` (and so is a message or alarm edit, which now reaches the clock within ~10 s). The query parameters are optional. They power the "Clock online" line, the time zone label on alarms, and the weak Wi-Fi hint. Add `&format=json` to read the response with curl.
 

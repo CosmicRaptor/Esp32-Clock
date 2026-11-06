@@ -6,9 +6,12 @@ compatibility_date = "2026-10-01"
 # pyproject.toml (protobuf) and the `workers` SDK before handing over to wrangler.
 compatibility_flags = ["python_workers"]
 
-# The admin page. Files here are served as-is; anything else (the /api/*) reaches the Python code.
+# The admin page. The Python code runs first for every request (HTTPS-only and Cloudflare Access
+# checks), then hands non-/api paths to these files through the ASSETS binding.
 [assets]
 directory = "./public"
+binding = "ASSETS"
+run_worker_first = true
 
 # All clock data: the state document, the photo, and the clock's last check-in.
 # No id: `wrangler deploy` creates the namespace on the first deploy and fills it in.
@@ -18,6 +21,9 @@ binding = "CLOCK"
 # Secrets (not in this file):
 #   ADMIN_PASSWORD  password for the admin page
 #   DEVICE_TOKEN    the clock's bearer token (also goes in the firmware)
+#   ACCESS_AUD          the Cloudflare Access application's "Application Audience (AUD) Tag"
+#   ACCESS_TEAM_DOMAIN  https://<team>.cloudflareaccess.com
+#   (With both set, every request must carry a valid Access JWT. Leave them out of .dev.vars.)
 # Locally they come from .dev.vars; in production: `npx wrangler secret put ADMIN_PASSWORD`.
 
 # Shown on the admin page's Spotify card (left of the clock = ME_NAME, right = HER_NAME).

@@ -1,7 +1,15 @@
 """Bhoomi clock portal: a Python Cloudflare Worker.
 
-Static files in public/ (the admin page) are served by Workers Static Assets before this code
-runs, so everything here is the JSON API:
+Every request runs this code first (`run_worker_first` in wrangler.toml), so two gates cover the
+whole site, the admin page's static files included:
+
+  1. HTTPS only. Plain http gets a 301 to https (GET/HEAD) or a 403. Local `wrangler dev` is exempt.
+  2. Cloudflare Access. Access sits in front of the site; this code re-checks the JWT it adds
+     (Cf-Access-Jwt-Assertion) against the Access application's AUD tag and the team's keys, so the
+     site stays closed even if Access is switched off. On when ACCESS_AUD and ACCESS_TEAM_DOMAIN are
+     set (secrets, production only). People log in through Access; the clock uses a service token.
+
+Behind those, static files in public/ are the admin page, and the rest is the JSON API:
 
   Admin (session cookie, from POST /api/login):
     POST   /api/login            {"password": "..."}
@@ -47,6 +55,8 @@ import time
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from google.protobuf import json_format
+from js import Object, crypto
+from pyodide.ffi import to_js
 from workers import Response, WorkerEntrypoint, fetch
 
 import auth
@@ -66,6 +76,18 @@ _last_listening: dict = {}
 
 # What this isolate last saw of the clock's check-in, so the 10 s polls don't each cost a KV read.
 _checkin: dict = {"at": 0}
+
+# Cloudflare Access signing keys (kid -> WebCrypto key), fetched from the team's certs URL. Access
+# rotates keys every few weeks and publishes the next one early, so an hour's cache is plenty; an
+# unknown kid triggers a refetch, at most once a minute.
+_access_keys: dict = {"keys": {}, "at": 0}
+ACCESS_KEYS_TTL = 3600
+ACCESS_KEYS_RETRY = 60
+RS256 = {"name": "RSASSA-PKCS1-v1_5", "hash": "SHA-256"}
+
+
+def js_obj(value):
+    return to_js(value, dict_converter=Object.fromEntries)
 
 
 class Upstream(Exception):
@@ -123,17 +145,65 @@ class Default(WorkerEntrypoint):
 
     # ---------- entry ----------
 
+    async def access_keys(self, team: str, kid: str) -> dict:
+        now = time.time()
+        cache = _access_keys
+        fresh = now - cache["at"] < ACCESS_KEYS_TTL
+        if kid in cache["keys"] and fresh:
+            return cache["keys"]
+        if fresh and now - cache["at"] < ACCESS_KEYS_RETRY:
+            return cache["keys"]  # just fetched: an unknown kid is a forged token, not a rotation
+        try:
+            resp = await fetch(team.rstrip("/") + "/cdn-cgi/access/certs")
+            jwks = json.loads(await resp.text()) if resp.status == 200 else None
+        except Exception:
+            jwks = None
+        if not isinstance(jwks, dict) or not isinstance(jwks.get("keys"), list):
+            if cache["keys"]:
+                return cache["keys"]  # keep the last good keys if Access's endpoint hiccups
+            raise HttpError(503, "Couldn't reach Cloudflare Access to check the login.")
+        keys = {}
+        for jwk in jwks["keys"]:
+            if isinstance(jwk, dict) and jwk.get("kty") == "RSA" and isinstance(jwk.get("kid"), str):
+                pub = {k: jwk[k] for k in ("kty", "n", "e") if k in jwk}
+                keys[jwk["kid"]] = await crypto.subtle.importKey("jwk", js_obj(pub), js_obj(RS256), False,
+                                                                 to_js(["verify"]))
+        cache["keys"], cache["at"] = keys, now
+        return keys
+
+    async def check_access(self, request) -> None:
+        """Raises HttpError(403) unless the request carries a valid Access JWT for this application."""
+        aud, team = self.secret("ACCESS_AUD"), self.secret("ACCESS_TEAM_DOMAIN")
+        if not (aud and team):
+            return  # Access isn't configured for this Worker (local dev)
+        try:
+            header, claims, signed, signature = auth.split_jwt(request.headers.get(auth.ACCESS_HEADER))
+            key = (await self.access_keys(team, header["kid"])).get(header["kid"])
+            if key is None:
+                raise auth.BadJwt("unknown signing key")
+            if not await crypto.subtle.verify(js_obj(RS256), key, to_js(signature), to_js(signed)):
+                raise auth.BadJwt("bad signature")
+            auth.check_access_claims(claims, aud, team)
+        except auth.BadJwt as e:
+            raise HttpError(403, f"Cloudflare Access login required ({e}).") from None
+
     async def fetch(self, request):
         url = urlparse(request.url)
         path = url.path.rstrip("/") or "/"
         try:
+            if url.scheme != "https" and not auth.is_local(url.hostname):
+                if request.method in ("GET", "HEAD"):
+                    return Response(None, status=301, headers={"location": auth.https_url(request.url),
+                                                               "cache-control": "no-store"})
+                raise HttpError(403, "HTTPS only.")
+            await self.check_access(request)
+            if not path.startswith("/api/"):
+                return await self.env.ASSETS.fetch(request)  # the admin page (public/)
             if path.startswith("/api/device/"):
                 return await self.device_api(request, path, url)
             if path == "/api/spotify/callback" and request.method == "GET":
                 return await self.spotify_callback(url)  # before the cookie check: see auth.make_oauth_state
-            if path.startswith("/api/"):
-                return await self.admin_api(request, path, url)
-            raise HttpError(404, "Not found.")
+            return await self.admin_api(request, path, url)
         except Invalid as e:
             return json_response({"error": str(e)}, 400)
         except HttpError as e:

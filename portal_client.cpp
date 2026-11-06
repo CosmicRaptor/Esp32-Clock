@@ -24,6 +24,10 @@
 #else
 #include "portal_config.example.h"
 #endif
+#ifndef PORTAL_ACCESS_CLIENT_ID  // older portal_config.h files: no Cloudflare Access in front
+#define PORTAL_ACCESS_CLIENT_ID ""
+#define PORTAL_ACCESS_CLIENT_SECRET ""
+#endif
 
 namespace portal {
 namespace {
@@ -108,8 +112,13 @@ struct Conn {
   bool open(const String &path) {
     String url = String(PORTAL_URL) + path;
     bool ok = https() ? http.begin(secure, url) : http.begin(plain, url);
-    if (ok) http.addHeader("Authorization", String("Bearer ") + PORTAL_DEVICE_TOKEN);
-    return ok;
+    if (!ok) return false;
+    http.addHeader("Authorization", String("Bearer ") + PORTAL_DEVICE_TOKEN);
+    if (PORTAL_ACCESS_CLIENT_ID[0]) {  // Cloudflare Access service token: lets the clock past the login page
+      http.addHeader("CF-Access-Client-Id", PORTAL_ACCESS_CLIENT_ID);
+      http.addHeader("CF-Access-Client-Secret", PORTAL_ACCESS_CLIENT_SECRET);
+    }
+    return true;
   }
   // After an answer that was read to the end: keep the socket for the next request (if the server allows).
   void finish() { http.end(); }
@@ -333,7 +342,10 @@ Poll fetchState(Conn &c) {
   }
   if (code != HTTP_CODE_OK) {
     Serial.printf("[portal] state: HTTP %d%s\n", code, code < 0 ? (" " + c.http.errorToString(code)).c_str() : "");
-    if (code == 401 || code == 403) Serial.println("[portal] the device token was rejected; check portal_config.h");
+    if (code == 401) Serial.println("[portal] the device token was rejected; check portal_config.h");
+    if (code == 302 || code == 403)  // Access sends anything it doesn't let through to its login page
+      Serial.println("[portal] Cloudflare Access refused the clock; check PORTAL_ACCESS_CLIENT_ID/SECRET in portal_config.h");
+    if (code == 301) Serial.println("[portal] the portal is HTTPS only; PORTAL_URL must start with https://");
     if (code < 0 && https()) {  // say why a TLS connection failed (certificate, memory, ...)
       char why[100] = "";
       c.secure.lastError(why, sizeof why);
