@@ -3,14 +3,17 @@
 // - Wi-Fi setup via captive portal, with on-screen instructions + join QR code
 // - Time zone picked on the setup page, changeable later at http://bhoomi-clock.local
 // - NTP time, shown in local time
+// - Photos and sounds uploaded to the microSD card from the same page
 //
 // Build & flash: ./build.sh flash
 
 #include <WiFi.h>
 #include <time.h>
 
+#include "app_lock.h"
 #include "display.h"
 #include "settings.h"
+#include "storage.h"
 #include "ui.h"
 #include "web.h"
 #include "wifi_setup.h"
@@ -37,20 +40,24 @@ void setup() {
   Serial.println();
   Serial.println("=== Bhoomi clock booting ===");
 
+  app::Lock lock;
   settings::begin();
   display::begin();
   ui::begin(AP_NAME);
   display::loop();  // draw "waking up" before the (slow) initial Wi-Fi scan
 
+  storage::begin();
   wifisetup::begin(AP_NAME, onWifi);
   web::begin();  // after Wi-Fi: opening a socket before the TCP/IP stack is up crashes
 }
 
 void loop() {
-  wifisetup::loop();
-  web::loop();
-  ui::loop();
-  display::loop();
+  {
+    app::Lock lock;  // the web task takes this too; see app_lock.h
+    wifisetup::loop();
+    ui::loop();
+    display::loop();
+  }
 
   static uint32_t lastLog = 0;
   if (ntpStarted && millis() - lastLog > 60000) {

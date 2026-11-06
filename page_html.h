@@ -3,39 +3,58 @@
 
 // The one page the clock serves. /info tells it which mode it's in:
 //  - "setup":    on the Bhoomi-Clock hotspot -> Wi-Fi picker + time zone, "Connect"
-//  - "settings": on the home network         -> time zone only, "Save"
-// Networks and zones are fetched as JSON and rendered with textContent (no HTML escaping needed).
+//  - "settings": on the home network         -> time zone ("Save") + photos & sounds on the SD card
+// Networks, zones and files are fetched as JSON and rendered with textContent (no HTML escaping).
+// Photos are decoded and resized in the browser (fit inside 320x240, JPEG) before upload.
 static const char PAGE_HTML[] PROGMEM = R"HTML(<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Bhoomi's clock</title>
 <style>
-:root{--bg:#fbf7f2;--card:#fff;--ink:#2b2420;--mute:#8a7f78;--accent:#d9667a;--line:#ece4dc;--ok:#3a8f5c;--err:#c0392b}
+:root{--bg:#fbf7f2;--card:#fff;--ink:#2b2420;--mute:#8a7f78;--accent:#d9667a;--line:#ece4dc;--soft:#fbeef0;--ok:#3a8f5c;--err:#c0392b}
 *{box-sizing:border-box}
 body{margin:0;font:16px/1.4 -apple-system,system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
-main{max-width:420px;margin:0 auto;padding:28px 16px 40px}
+main{max-width:520px;margin:0 auto;padding:28px 16px 40px}
 h1{font-size:24px;margin:0 0 4px}
 p.sub{color:var(--mute);margin:0 0 20px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:16px}
-.row{display:flex;justify-content:space-between;align-items:center}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .lbl{font-size:13px;color:var(--mute);text-transform:uppercase;letter-spacing:.04em}
-button.link{background:none;border:0;color:var(--accent);font:inherit;font-size:14px;padding:4px}
-ul{list-style:none;margin:8px 0 0;padding:0;max-height:260px;overflow:auto}
-li{display:flex;justify-content:space-between;padding:11px 6px;border-top:1px solid var(--line);cursor:pointer}
+.meta{color:var(--mute);font-size:13px;white-space:nowrap}
+button.link{background:none;border:0;color:var(--accent);font:inherit;font-size:14px;padding:4px;cursor:pointer}
+ul{list-style:none;margin:8px 0 0;padding:0}
+#list{max-height:260px;overflow:auto}
+li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:11px 6px;border-top:1px solid var(--line)}
 li:first-child{border-top:0}
-li.sel{background:#fbeef0;border-radius:10px}
-li .meta{color:var(--mute);font-size:13px;white-space:nowrap;padding-left:8px}
+#list li{cursor:pointer}
+li.sel{background:var(--soft);border-radius:10px}
+li .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}
 input,select{width:100%;font:inherit;padding:12px;border:1px solid var(--line);border-radius:10px;margin-top:6px;background:#fff;color:var(--ink)}
 select{appearance:none;-webkit-appearance:none}
 .pw{position:relative}
 .pw button{position:absolute;right:6px;top:12px}
-.go{width:100%;margin-top:4px;padding:14px;border:0;border-radius:12px;background:var(--accent);color:#fff;font:inherit;font-weight:600}
+.go{width:100%;margin-top:4px;padding:14px;border:0;border-radius:12px;background:var(--accent);color:#fff;font:inherit;font-weight:600;cursor:pointer}
 .go:disabled{opacity:.5}
-#msg{margin-top:14px;min-height:1.4em;text-align:center}
+#msg{margin:14px 0 16px;min-height:1.4em;text-align:center}
 .ok{color:var(--ok)}.err{color:var(--err)}
 .empty{color:var(--mute);padding:10px 6px}
 .note{color:var(--mute);font-size:13px;margin-top:8px}
+.drop{display:block;margin-top:12px;border:2px dashed var(--line);border-radius:14px;padding:22px 12px;text-align:center;cursor:pointer;transition:.15s}
+.drop b{display:block;font-size:17px}
+.drop span{color:var(--mute);font-size:14px}
+.drop.over{border-color:var(--accent);background:var(--soft)}
+.q{margin-top:10px;font-size:14px}
+.q .row{padding:4px 0}
+.bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:4px}
+.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
+.sec{margin-top:18px;display:flex;justify-content:space-between;align-items:baseline}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin-top:8px}
+.ph{position:relative;aspect-ratio:4/3;border-radius:10px;overflow:hidden;background:var(--line)}
+.ph img{width:100%;height:100%;object-fit:cover;display:block}
+.x{position:absolute;top:4px;right:4px;width:26px;height:26px;border-radius:13px;border:0;background:rgba(0,0,0,.55);color:#fff;font-size:15px;line-height:26px;padding:0;cursor:pointer}
+.snd .x{position:static;background:none;color:var(--mute);font-size:18px}
+.play{border:0;background:var(--soft);color:var(--accent);width:32px;height:32px;border-radius:16px;font-size:13px;cursor:pointer;flex:none}
 [hidden]{display:none!important}
 </style></head><body><main>
 <h1 id="title">Hello! &#x1F570;</h1>
@@ -64,12 +83,30 @@ select{appearance:none;-webkit-appearance:none}
 <button class="go" id="go">Connect</button>
 <div id="msg"></div>
 </form>
+
+<div class="card" id="files" hidden>
+  <div class="row"><span class="lbl">Photos &amp; sounds</span><span class="meta" id="space"></span></div>
+  <div id="noCard" class="note" hidden></div>
+  <div id="filesBody">
+    <label class="drop" id="drop">
+      <input type="file" id="pick" multiple accept="image/*,audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.opus" hidden>
+      <b>Drop photos or sounds here</b>
+      <span>or tap to choose. Photos are resized to fit the clock's screen.</span>
+    </label>
+    <div class="q" id="queue"></div>
+    <div class="sec"><span class="lbl">Photos</span><span class="meta" id="pCount"></span></div>
+    <div class="grid" id="photos"></div>
+    <div class="sec"><span class="lbl">Sounds</span><span class="meta" id="sCount"></span></div>
+    <ul id="sounds"></ul>
+  </div>
+</div>
 </main>
 <script>
 const $=id=>document.getElementById(id);
+const el=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e;};
 let mode='setup',polling=null;
 
-// ---- time zones ----
+// ---------------- time zones ----------------
 const ALIAS={'Asia/Calcutta':'Asia/Kolkata','Asia/Saigon':'Asia/Ho_Chi_Minh','Europe/Kiev':'Europe/Kyiv',
   'Asia/Katmandu':'Asia/Kathmandu','Asia/Rangoon':'Asia/Yangon','America/Buenos_Aires':'America/Argentina/Buenos_Aires',
   'Etc/UTC':'UTC','Etc/GMT':'UTC','GMT':'UTC','Asia/Tel_Aviv':'Asia/Jerusalem','Australia/ACT':'Australia/Sydney'};
@@ -90,8 +127,7 @@ async function loadZones(saved){
   zones.forEach(z=>z.off=offMin(z.id));
   zones.sort((a,b)=>(a.off??1e9)-(b.off??1e9)||a.city.localeCompare(b.city));
   const sel=$('tz');sel.innerHTML='';
-  zones.forEach(z=>{const o=document.createElement('option');o.value=z.id;
-    o.textContent=(z.off===null?'':fmtOff(z.off)+'  ')+z.city;sel.appendChild(o);});
+  zones.forEach(z=>{const o=el('option','',(z.off===null?'':fmtOff(z.off)+'  ')+z.city);o.value=z.id;sel.appendChild(o);});
   const mine=phoneTz();
   let pick=saved||'';
   if(!pick&&zones.some(z=>z.id===mine))pick=mine;
@@ -103,17 +139,15 @@ async function loadZones(saved){
   else note.textContent='Pick the city closest to where the clock lives.';
 }
 
-// ---- wifi list (setup mode) ----
+// ---------------- Wi-Fi (setup mode) ----------------
 function bars(r){return r>-60?'▂▄▆█':r>-70?'▂▄▆':r>-80?'▂▄':'▂';}
 function render(nets){
   const ul=$('list');ul.innerHTML='';
-  if(!nets.length){const li=document.createElement('li');li.className='empty';li.textContent='Looking for networks…';ul.appendChild(li);return;}
+  if(!nets.length){ul.appendChild(el('li','empty','Looking for networks…'));return;}
   nets.forEach(n=>{
-    const li=document.createElement('li');
-    const a=document.createElement('span');a.textContent=n.ssid;
-    const b=document.createElement('span');b.className='meta';b.textContent=(n.open?'':'\u{1F512} ')+bars(n.rssi);
-    li.append(a,b);
-    li.onclick=()=>{document.querySelectorAll('li').forEach(x=>x.classList.remove('sel'));li.classList.add('sel');
+    const li=el('li');
+    li.append(el('span','name',n.ssid),el('span','meta',(n.open?'':'\u{1F512} ')+bars(n.rssi)));
+    li.onclick=()=>{document.querySelectorAll('#list li').forEach(x=>x.classList.remove('sel'));li.classList.add('sel');
       $('ssid').value=n.ssid;$('pass').value='';if(n.open){$('pass').placeholder='(open network)';}else{$('pass').placeholder='';$('pass').focus();}};
     ul.appendChild(li);
   });
@@ -161,6 +195,137 @@ function poll(){
   },1000);
 }
 
+// ---------------- files (settings mode) ----------------
+const AUDIO=/\.(mp3|wav|m4a|aac|flac|ogg|opus)$/i, IMAGE=/\.(jpe?g|png|heic|heif|webp|gif|bmp|avif)$/i;
+const W=320,H=240;
+function human(b){const u=['B','KB','MB','GB','TB'];let i=0;while(b>=1024&&i<u.length-1){b/=1024;i++;}return (i?b.toFixed(b<10?1:0):b)+' '+u[i];}
+function clean(n){n=n.replace(/[^A-Za-z0-9._\-() ]/g,'_').replace(/^\.+/,'').trim();return n.slice(0,64)||'file';}
+function fileUrl(folder,name){return '/file?'+new URLSearchParams({folder,name});}
+
+let audio=null,playing='';
+async function listFolder(folder){
+  const r=await fetch('/files?folder='+folder);const j=await r.json();
+  if(!j.ok)throw new Error(j.error||'Could not read the card');
+  j.files.sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));
+  return j;
+}
+async function refreshFiles(){
+  try{
+    const p=await listFolder('photos'), s=await listFolder('sounds');
+    $('noCard').hidden=true;$('filesBody').hidden=false;
+    $('space').textContent=human(p.total-p.used)+' free of '+human(p.total);
+    const g=$('photos');g.innerHTML='';
+    $('pCount').textContent=p.files.length?p.files.length+' photo'+(p.files.length>1?'s':''):'';
+    if(!p.files.length)g.appendChild(el('div','empty','No photos yet.'));
+    p.files.forEach(f=>{
+      const d=el('div','ph');const img=el('img');img.loading='lazy';img.alt=f.name;img.src=fileUrl('photos',f.name);
+      const x=el('button','x','×');x.title='Delete '+f.name;x.onclick=()=>del('photos',f.name);
+      d.append(img,x);g.appendChild(d);
+    });
+    const ul=$('sounds');ul.innerHTML='';
+    $('sCount').textContent=s.files.length?s.files.length+' sound'+(s.files.length>1?'s':''):'';
+    if(!s.files.length)ul.appendChild(el('li','empty','No sounds yet.'));
+    s.files.forEach(f=>{
+      const li=el('li','snd');
+      const pb=el('button','play',playing===f.name?'❚❚':'▶');pb.title='Play on this device';
+      pb.onclick=()=>togglePlay(f.name);
+      const x=el('button','x','×');x.title='Delete '+f.name;x.onclick=()=>del('sounds',f.name);
+      li.append(pb,el('span','name',f.name),el('span','meta',human(f.size)),x);ul.appendChild(li);
+    });
+  }catch(e){
+    $('filesBody').hidden=true;$('noCard').hidden=false;$('noCard').textContent=e.message;$('space').textContent='';
+  }
+}
+function togglePlay(name){
+  if(audio){audio.pause();audio=null;}
+  if(playing===name){playing='';refreshFiles();return;}
+  playing=name;audio=new Audio(fileUrl('sounds',name));audio.onended=()=>{playing='';refreshFiles();};
+  audio.play().catch(()=>{playing='';});refreshFiles();
+}
+async function del(folder,name){
+  if(!confirm('Delete '+name+' from the clock?'))return;
+  try{
+    const r=await fetch('/delete',{method:'POST',body:new URLSearchParams({folder,name})});
+    const j=await r.json();if(!j.ok)throw new Error(j.error);
+  }catch(e){alert('Could not delete: '+(e.message||'error'));}
+  refreshFiles();
+}
+
+// decode (respecting EXIF rotation) and shrink to fit inside W x H, as a JPEG blob
+async function decode(file){
+  try{return await createImageBitmap(file,{imageOrientation:'from-image'});}catch(e){}
+  return new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);
+    i.onerror=()=>rej(new Error("This browser can't open that image (HEIC? try Safari, or export as JPEG)."));
+    i.src=URL.createObjectURL(file);});
+}
+async function resize(file){
+  const src=await decode(file);
+  const w=src.width,h=src.height,s=Math.min(1,W/w,H/h);
+  const tw=Math.max(1,Math.round(w*s)),th=Math.max(1,Math.round(h*s));
+  let cur=src,cw=w,ch=h;
+  while(cw/2>=tw&&ch/2>=th){ // halve in steps: sharper than one big jump
+    cw=Math.round(cw/2);ch=Math.round(ch/2);
+    const c=el('canvas');c.width=cw;c.height=ch;const x=c.getContext('2d');x.imageSmoothingQuality='high';
+    x.drawImage(cur,0,0,cw,ch);cur=c;
+  }
+  const c=el('canvas');c.width=tw;c.height=th;const x=c.getContext('2d');x.imageSmoothingQuality='high';
+  x.fillStyle='#000';x.fillRect(0,0,tw,th);x.drawImage(cur,0,0,tw,th);
+  return new Promise((res,rej)=>c.toBlob(b=>b?res(b):rej(new Error('Could not convert image')),'image/jpeg',0.85));
+}
+function send(blob,folder,name,onp){
+  return new Promise((res,rej)=>{
+    const fd=new FormData();fd.append('file',blob,name);
+    const x=new XMLHttpRequest();
+    x.open('POST','/upload?'+new URLSearchParams({folder,name,size:blob.size}));
+    x.upload.onprogress=e=>{if(e.lengthComputable)onp(e.loaded/e.total);};
+    x.onload=()=>{let j={};try{j=JSON.parse(x.responseText);}catch(e){}
+      if(x.status===200&&j.ok)res(j);else rej(new Error(j.error||('Upload failed ('+x.status+')')));};
+    x.onerror=()=>rej(new Error('Lost connection to the clock'));
+    x.send(fd);
+  });
+}
+
+const jobs=[];let busy=false;
+function enqueue(files){
+  for(const f of files){
+    const isA=(f.type||'').startsWith('audio/')||AUDIO.test(f.name);
+    const isI=!isA&&((f.type||'').startsWith('image/')||IMAGE.test(f.name));
+    const row=el('div');const top=el('div','row');const nm=el('span','name',f.name);const st=el('span','meta','waiting');
+    const bar=el('div','bar');const fill=el('i');bar.appendChild(fill);top.append(nm,st);row.append(top,bar);
+    $('queue').appendChild(row);
+    if(!isA&&!isI){st.textContent='not a photo or sound';st.className='meta err';bar.remove();continue;}
+    jobs.push({f,isA,st,fill,row});
+  }
+  run();
+}
+async function run(){
+  if(busy)return;busy=true;
+  while(jobs.length){
+    const j=jobs.shift();
+    try{
+      let blob=j.f,name=clean(j.f.name),folder='sounds';
+      if(!j.isA){
+        j.st.textContent='resizing…';
+        blob=await resize(j.f);folder='photos';name=clean(j.f.name.replace(/\.[^.]*$/,''))+'.jpg';
+      }
+      j.st.textContent='0%';
+      const r=await send(blob,folder,name,p=>{j.fill.style.width=(p*100).toFixed(0)+'%';j.st.textContent=(p*100).toFixed(0)+'% of '+human(blob.size);});
+      j.fill.style.width='100%';j.st.textContent='saved';j.st.className='meta ok';
+      setTimeout(()=>j.row.remove(),2500);
+      refreshFiles();
+    }catch(e){j.st.textContent=e.message;j.st.className='meta err';j.fill.parentNode&&j.fill.parentNode.remove();}
+  }
+  busy=false;
+}
+const drop=$('drop');
+['dragenter','dragover'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.add('over');}));
+['dragleave','drop'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.remove('over');}));
+drop.addEventListener('drop',e=>enqueue(e.dataTransfer.files));
+$('pick').onchange=e=>{enqueue(e.target.files);e.target.value='';};
+// a file dropped anywhere else shouldn't navigate away from the page
+['dragover','drop'].forEach(t=>window.addEventListener(t,e=>e.preventDefault()));
+
+// ---------------- start ----------------
 (async()=>{
   let info={mode:'setup',tz:''};
   try{info=await (await fetch('/info')).json();}catch(e){}
@@ -168,7 +333,8 @@ function poll(){
   if(mode==='settings'){
     $('title').textContent='Clock settings';
     $('sub').textContent=info.clock?'The clock currently reads '+info.clock+'.':'Adjust how your clock shows the time.';
-    $('wifiList').hidden=true;$('wifiCreds').hidden=true;$('go').textContent='Save';
+    $('wifiList').hidden=true;$('wifiCreds').hidden=true;$('go').textContent='Save time zone';
+    $('files').hidden=false;refreshFiles();
   }else{
     loadNets(false);
   }
