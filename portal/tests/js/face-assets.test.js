@@ -50,6 +50,13 @@ test('sizes: never enlarge, fit 160x160 per frame, keep the sheet within the pix
   assert.ok(four.w * four.h <= 51200, JSON.stringify(four));
 });
 
+test('the fit-within size caps each frame, and never goes above the 160 limit', () => {
+  assert.deepEqual(A.spriteSize(320, 160, 1, LIM, 64), { w: 64, h: 32, fw: 64 });
+  assert.deepEqual(A.spriteSize(40, 30, 1, LIM, 64), { w: 40, h: 30, fw: 40 });      // already small: left alone
+  assert.deepEqual(A.spriteSize(1000, 1000, 1, LIM, 500), { w: 160, h: 160, fw: 160 });
+  assert.deepEqual(A.spriteSize(400, 100, 4, LIM, 64), { w: 256, h: 64, fw: 64 });   // 4 frames of 100x100 -> 64x64 each
+});
+
 test('too many frames for the image', () => {
   assert.throws(() => A.spriteSize(3, 10, 4, LIM));
 });

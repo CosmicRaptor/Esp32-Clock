@@ -887,7 +887,7 @@ async function uploadSprites(files) {
   const added = [];
   for (const file of files) {
     try {
-      const s = await FaceAssets.makeSprite(file, frames, limits);
+      const s = await FaceAssets.makeSprite(file, frames, limits, clamp(Math.floor($('spMax').value) || 64, 8, limits.sprite_frame || 160));
       const j = await api('/api/assets/sprite', { method: 'PUT', headers: { 'content-type': 'application/octet-stream' }, body: s.bin });
       await api(`/api/assets/${j.asset.hash}.png`, { method: 'PUT', headers: { 'content-type': 'image/png' }, body: s.png });
       register(j.asset);

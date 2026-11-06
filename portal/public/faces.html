@@ -96,10 +96,13 @@
           <h2>Images</h2>
           <span class="meta" id="imagesMeta"></span>
         </div>
-        <p class="hint first">Upload PNGs. A background is cropped to 320×240. Sprites keep their see-through parts and are shrunk to at most 160×160. Click a sprite below to put it on the face.</p>
+        <p class="hint first">Upload PNGs. Backgrounds are scaled and cropped to 320×240. Sprites keep their see-through parts and are shrunk to fit within the “fit within” size (64 px to start with, 160 at most). Click a sprite below to put it on the face.</p>
         <div class="actions left">
           <label class="btn ghost small" tabindex="0" role="button" id="bgChoose">Choose background<input type="file" id="bgPick" accept="image/*" hidden></label>
           <label class="btn ghost small" tabindex="0" role="button" id="spChoose">Add sprites<input type="file" id="spPick" accept="image/*" multiple hidden></label>
+          <label class="inline-field" title="Sprites are shrunk to fit inside this many pixels (never enlarged). Particles must be at most 48">
+            <span>fit within (px)</span><input type="number" id="spMax" min="8" max="160" value="64">
+          </label>
           <label class="inline-field" title="For an animated sprite sheet: how many equal frames sit side by side in the PNG">
             <span>frames across</span><input type="number" id="spFrames" min="1" max="16" value="1">
           </label>

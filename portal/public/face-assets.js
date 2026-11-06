@@ -31,12 +31,13 @@
     return out;
   }
 
-  // The size a sprite is shrunk to: each frame at most `frame` x `frame`, and the whole sheet within the pixel budget.
-  // Never enlarges. Returns {w, h, fw} (the whole width, the height, one frame's width).
-  function spriteSize(srcW, srcH, frames, lim) {
+  // The size a sprite is shrunk to: each frame fits within `max` x `max` (default and ceiling: the 160 limit), and the
+  // whole sheet stays within the pixel budget. Never enlarges. Returns {w, h, fw} (whole width, height, one frame's width).
+  function spriteSize(srcW, srcH, frames, lim, max) {
+    const cap = Math.min(lim.sprite_frame, max > 0 ? max : lim.sprite_frame);
     const fw0 = Math.floor(srcW / frames);
     if (fw0 < 1 || srcH < 1) throw new Error('That image is too small for that many frames.');
-    const s = Math.min(1, lim.sprite_frame / fw0, lim.sprite_frame / srcH, Math.sqrt(lim.sprite_pixels / (fw0 * frames * srcH)),
+    const s = Math.min(1, cap / fw0, cap / srcH, Math.sqrt(lim.sprite_pixels / (fw0 * frames * srcH)),
       lim.sprite_h / srcH, lim.sprite_w / (fw0 * frames));
     const fw = Math.max(1, Math.floor(fw0 * s)), h = Math.max(1, Math.floor(srcH * s));
     return { w: fw * frames, h, fw };
@@ -100,12 +101,12 @@
   }
 
   // Any image -> {bin, png, w, h, canvas}: the clock's file, the preview PNG, and the size. `frames` > 1 means the
-  // image is a sheet of that many equal frames side by side.
-  async function makeSprite(file, frames, lim) {
+  // image is a sheet of that many equal frames side by side. `max` is the largest a frame may be, in pixels.
+  async function makeSprite(file, frames, lim, max) {
     const img = await decode(file);
     frames = Math.max(1, Math.floor(frames) || 1);
     const fw0 = Math.floor(img.width / frames);
-    const size = spriteSize(img.width, img.height, frames, lim);
+    const size = spriteSize(img.width, img.height, frames, lim, max);
     const c = resample(img, 0, 0, fw0 * frames, img.height, size.w, size.h);
     const data = c.getContext('2d').getImageData(0, 0, size.w, size.h).data;
     const png = await toBlob(c, 'image/png');
