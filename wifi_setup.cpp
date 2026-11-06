@@ -2,20 +2,18 @@
 
 #include <DNSServer.h>
 #include <Preferences.h>
-#include <WebServer.h>
 #include <WiFi.h>
 
 #include <algorithm>
 #include <vector>
-
-#include "portal_html.h"
 
 namespace wifisetup {
 namespace {
 
 constexpr uint8_t BOOT_PIN = 0;               // BOOT button, active low
 constexpr uint32_t JOIN_TIMEOUT_MS = 20000;   // any single join attempt
-constexpr uint32_t PORTAL_LINGER_MS = 30000;  // keep AP up after success so the phone sees "Connected"
+constexpr uint32_t PORTAL_LINGER_MS = 30000;  // max AP time after success (phone may miss the news)
+constexpr uint32_t PORTAL_SEEN_MS = 3000;     // AP time after the phone has seen "connected"
 constexpr uint32_t PORTAL_RETRY_MS = 60000;   // background retry of saved creds while portal is open
 constexpr uint32_t FORGET_HOLD_MS = 5000;
 
@@ -30,7 +28,6 @@ struct Net {
 
 Preferences prefs;
 DNSServer dns;
-WebServer server(80);
 
 Listener listener = nullptr;
 Status st;
@@ -40,7 +37,7 @@ String savedSsid, savedPass;
 bool portalUp = false;
 uint32_t portalCloseAt = 0;  // 0 = not scheduled
 
-bool joining = false;  // a WiFi.begin() is in flight that we are timing
+bool joining = false;          // a WiFi.begin() is in flight that we are timing
 bool joinIsCandidate = false;  // ...for credentials typed into the setup page
 uint32_t joinStart = 0;
 String candSsid, candPass;
@@ -59,30 +56,6 @@ void setStatus(Phase p, const String &ssid, const String &detail = "") {
   if (st.phase == p && st.ssid == ssid && st.detail == detail) return;
   st = {p, ssid, detail};
   if (listener) listener(st);
-}
-
-String jsonEscape(const String &s) {
-  String o;
-  o.reserve(s.length() + 8);
-  for (size_t i = 0; i < s.length(); i++) {
-    char c = s[i];
-    switch (c) {
-      case '"': o += "\\\""; break;
-      case '\\': o += "\\\\"; break;
-      case '\n': o += "\\n"; break;
-      case '\r': o += "\\r"; break;
-      case '\t': o += "\\t"; break;
-      default:
-        if ((uint8_t)c < 0x20) {
-          char buf[7];
-          snprintf(buf, sizeof buf, "\\u%04x", c);
-          o += buf;
-        } else {
-          o += c;
-        }
-    }
-  }
-  return o;
 }
 
 String reasonText(uint8_t r) {
@@ -146,81 +119,7 @@ void collectScan(int n) {
 void startScan() {
   if (scanning || joining) return;  // scanning mid-join breaks the join
   int16_t r = WiFi.scanNetworks(true, true);
-  Serial.printf("[wifi] async scan start -> %d\n", r);
   if (r != WIFI_SCAN_FAILED) scanning = true;
-}
-
-// ---------- web handlers ----------
-
-bool isPortalHost() {
-  String host = server.hostHeader();
-  return host == AP_IP.toString() || host.startsWith(AP_IP.toString() + ":");
-}
-
-void redirectToPortal() {
-  server.sendHeader("Location", String("http://") + AP_IP.toString() + "/", true);
-  server.send(302, "text/plain", "");
-}
-
-void handleRoot() {
-  if (!isPortalHost()) return redirectToPortal();
-  server.sendHeader("Cache-Control", "no-store");
-  server.send_P(200, "text/html", PORTAL_HTML);
-}
-
-void handleScan() {
-  if (server.hasArg("refresh") || nets.empty()) startScan();
-  String out = "{\"scanning\":";
-  out += scanning ? "true" : "false";
-  out += ",\"networks\":[";
-  for (size_t i = 0; i < nets.size(); i++) {
-    if (i) out += ',';
-    out += "{\"ssid\":\"" + jsonEscape(nets[i].ssid) + "\",\"rssi\":" + String(nets[i].rssi) +
-           ",\"open\":" + (nets[i].open ? "true" : "false") + "}";
-  }
-  out += "]}";
-  server.sendHeader("Cache-Control", "no-store");
-  server.send(200, "application/json", out);
-}
-
-void handleConnect() {
-  String s = server.arg("ssid");
-  String p = server.arg("pass");
-  if (s.isEmpty() || s.length() > 32 || p.length() > 63) {
-    server.send(400, "application/json", "{\"ok\":false}");
-    return;
-  }
-  candSsid = s;
-  candPass = p;
-  Serial.printf("[wifi] portal: trying \"%s\"\n", s.c_str());
-  server.send(200, "application/json", "{\"ok\":true}");
-  if (scanning) {  // a running scan would make the join fail
-    WiFi.scanDelete();
-    scanning = false;
-  }
-  startJoin(candSsid, candPass, true);
-  setStatus(Phase::PortalConnecting, candSsid);
-}
-
-void handleStatus() {
-  const char *s = "idle";
-  switch (st.phase) {
-    case Phase::PortalConnecting: s = "connecting"; break;
-    case Phase::Online: s = "connected"; break;
-    case Phase::PortalFailed: s = "failed"; break;
-    default: break;
-  }
-  String out = String("{\"state\":\"") + s + "\",\"ssid\":\"" + jsonEscape(candSsid) + "\"";
-  if (st.phase == Phase::PortalFailed) out += ",\"reason\":\"" + jsonEscape(st.detail) + "\"";
-  out += "}";
-  server.sendHeader("Cache-Control", "no-store");
-  server.send(200, "application/json", out);
-  // The phone now knows it worked: shut the hotspot shortly after instead of waiting out the
-  // full linger (which only exists for phones that drop off during the channel switch).
-  if (st.phase == Phase::Online) {
-    uint32_t soon = millis() + 3000;
-    if (!portalCloseAt || (int32_t)(portalCloseAt - soon) > 0) portalCloseAt = soon;
-  }
 }
 
 // ---------- portal lifecycle ----------
@@ -236,7 +135,6 @@ void startPortal() {
   delay(200);
   for (int i = 0; i < 3; i++) {
     int n = WiFi.scanNetworks(false, true);
-    Serial.printf("[wifi] initial scan attempt %d -> %d\n", i + 1, n);
     if (n >= 0) {
       collectScan(n);
       break;
@@ -252,15 +150,6 @@ void startPortal() {
   dns.setErrorReplyCode(DNSReplyCode::NoError);
   dns.start(53, "*", AP_IP);  // every hostname resolves to us -> phone shows the captive sheet
 
-  server.on("/", HTTP_GET, handleRoot);
-  server.on("/scan", HTTP_GET, handleScan);
-  server.on("/connect", HTTP_POST, handleConnect);
-  server.on("/status", HTTP_GET, handleStatus);
-  // Captive-portal probes (generate_204, hotspot-detect.html, connecttest.txt, ...) and anything
-  // else get redirected to the setup page.
-  server.onNotFound(redirectToPortal);
-  server.begin();
-
   portalUp = true;
   portalCloseAt = 0;
   lastSavedRetry = millis();
@@ -269,7 +158,6 @@ void startPortal() {
 
 void stopPortal() {
   if (!portalUp) return;
-  server.stop();
   dns.stop();
   WiFi.softAPdisconnect(true);
   WiFi.mode(WIFI_STA);
@@ -307,7 +195,12 @@ void joinLoop() {
   WiFi.disconnect(false, false);  // stop the driver retrying on its own
   Serial.printf("[wifi] join failed (reason %u, status %d)\n", lastDiscReason, ws);
   if (joinIsCandidate) {
-    setStatus(Phase::PortalFailed, candSsid, reasonText(lastDiscReason));
+    // Weak links fail the handshake too, which would otherwise read as "wrong password".
+    auto it = std::find_if(nets.begin(), nets.end(), [](const Net &n) { return n.ssid == candSsid; });
+    String why = (it != nets.end() && it->rssi < -85)
+                     ? "The signal is very weak here. Try moving the clock closer to the router."
+                     : reasonText(lastDiscReason);
+    setStatus(Phase::PortalFailed, candSsid, why);
   } else if (!portalUp) {
     startPortal();  // boot-time join of the saved network failed
   } else {
@@ -317,7 +210,6 @@ void joinLoop() {
 
 void portalLoop() {
   dns.processNextRequest();
-  server.handleClient();
 
   if (scanning) {
     int n = WiFi.scanComplete();
@@ -330,14 +222,6 @@ void portalLoop() {
   }
 
   uint32_t now = millis();
-
-  static uint32_t lastBeat = 0;
-  if (now - lastBeat > 5000) {
-    lastBeat = now;
-    Serial.printf("[wifi] portal: phones=%d networks=%u scanning=%d joining=%d\n",
-                  WiFi.softAPgetStationNum(), (unsigned)nets.size(), scanning, joining);
-  }
-
   if (portalCloseAt && (int32_t)(now - portalCloseAt) >= 0) {
     stopPortal();
     return;
@@ -371,6 +255,30 @@ void checkForgetButton() {
 }  // namespace
 
 // ---------- public API ----------
+
+String jsonEscape(const String &s) {
+  String o;
+  o.reserve(s.length() + 8);
+  for (size_t i = 0; i < s.length(); i++) {
+    char c = s[i];
+    switch (c) {
+      case '"': o += "\\\""; break;
+      case '\\': o += "\\\\"; break;
+      case '\n': o += "\\n"; break;
+      case '\r': o += "\\r"; break;
+      case '\t': o += "\\t"; break;
+      default:
+        if ((uint8_t)c < 0x20) {
+          char buf[7];
+          snprintf(buf, sizeof buf, "\\u%04x", c);
+          o += buf;
+        } else {
+          o += c;
+        }
+    }
+  }
+  return o;
+}
 
 void begin(const char *name, Listener onChange) {
   apName = name;
@@ -422,6 +330,55 @@ void forget() {
   prefs.end();
   savedSsid = "";
   savedPass = "";
+}
+
+bool portalActive() { return portalUp; }
+IPAddress apIp() { return AP_IP; }
+
+String scanJson(bool refresh) {
+  if (refresh || nets.empty()) startScan();
+  String out = "{\"scanning\":";
+  out += scanning ? "true" : "false";
+  out += ",\"networks\":[";
+  for (size_t i = 0; i < nets.size(); i++) {
+    if (i) out += ',';
+    out += "{\"ssid\":\"" + jsonEscape(nets[i].ssid) + "\",\"rssi\":" + String(nets[i].rssi) +
+           ",\"open\":" + (nets[i].open ? "true" : "false") + "}";
+  }
+  out += "]}";
+  return out;
+}
+
+void connect(const String &s, const String &p) {
+  candSsid = s;
+  candPass = p;
+  Serial.printf("[wifi] portal: trying \"%s\"\n", s.c_str());
+  if (scanning) {  // a running scan would make the join fail
+    WiFi.scanDelete();
+    scanning = false;
+  }
+  startJoin(candSsid, candPass, true);
+  setStatus(Phase::PortalConnecting, candSsid);
+}
+
+String statusJson() {
+  const char *s = "idle";
+  switch (st.phase) {
+    case Phase::PortalConnecting: s = "connecting"; break;
+    case Phase::Online: s = "connected"; break;
+    case Phase::PortalFailed: s = "failed"; break;
+    default: break;
+  }
+  String out = String("{\"state\":\"") + s + "\",\"ssid\":\"" + jsonEscape(candSsid) + "\"";
+  if (st.phase == Phase::PortalFailed) out += ",\"reason\":\"" + jsonEscape(st.detail) + "\"";
+  out += "}";
+  // The phone now knows it worked: shut the hotspot shortly after instead of waiting out the
+  // full linger (which only exists for phones that drop off during the channel switch).
+  if (st.phase == Phase::Online && portalUp) {
+    uint32_t soon = millis() + PORTAL_SEEN_MS;
+    if (!portalCloseAt || (int32_t)(portalCloseAt - soon) > 0) portalCloseAt = soon;
+  }
+  return out;
 }
 
 }  // namespace wifisetup

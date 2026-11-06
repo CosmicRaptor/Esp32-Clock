@@ -2,11 +2,12 @@
 #include <Arduino.h>
 
 // Wi-Fi provisioning via a captive portal. Fully non-blocking: call loop() often.
+// HTTP is served by web.cpp, which calls into the portal functions below.
 //
 // Boot:   saved credentials? -> try to join (20 s). Success -> normal STA mode.
-//         no credentials / join failed -> open an access point + captive portal.
+//         no credentials / join failed -> open an access point + captive DNS.
 // Portal: phone joins the AP, the OS pops the setup page, user picks a network.
-//         Credentials are only saved after a successful join.
+//         Credentials are only saved after a successful join; the AP then shuts down.
 //         If saved credentials exist, they are retried in the background every minute
 //         (e.g. the router was just slow to come back after a power cut).
 // Reset:  hold BOOT for 5 s at any time -> forget Wi-Fi and reboot into the portal.
@@ -35,5 +36,14 @@ void loop();
 const Status &status();
 bool online();
 void forget();  // erase stored credentials
+
+// --- used by the web server while the portal is up ---
+bool portalActive();
+IPAddress apIp();
+String scanJson(bool refresh);           // {"scanning":bool,"networks":[{ssid,rssi,open}]}
+void connect(const String &ssid, const String &pass);
+String statusJson();                     // {"state":"idle|connecting|connected|failed",...}
+
+String jsonEscape(const String &s);
 
 }  // namespace wifisetup

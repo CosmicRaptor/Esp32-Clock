@@ -1,14 +1,18 @@
-// Bhoomi's clock — Waveshare ESP32-S3-Touch-LCD-2.8
-// Step 1: Wi-Fi setup via captive portal, with on-screen instructions (LVGL),
-//         plus a quick NTP check to prove we're online.
+// Bhoomi's clock — Waveshare ESP32-S3-Touch-LCD-2.8 (landscape, in the stand)
 //
-// Build & flash: ./build.sh            (see build.sh for board settings)
+// - Wi-Fi setup via captive portal, with on-screen instructions + join QR code
+// - Time zone picked on the setup page, changeable later at http://bhoomi-clock.local
+// - NTP time, shown in local time
+//
+// Build & flash: ./build.sh flash
 
 #include <WiFi.h>
 #include <time.h>
 
 #include "display.h"
+#include "settings.h"
 #include "ui.h"
+#include "web.h"
 #include "wifi_setup.h"
 
 static const char *AP_NAME = "Bhoomi-Clock";  // the open network the phone joins for setup
@@ -17,10 +21,14 @@ static bool ntpStarted = false;
 
 static void onWifi(const wifisetup::Status &s) {
   ui::showWifi(s);
-  if (s.phase == wifisetup::Phase::Online && !ntpStarted) {
-    configTime(0, 0, "pool.ntp.org", "time.google.com", "time.cloudflare.com");
-    ntpStarted = true;
-    Serial.println("[ntp] sync started");
+  if (s.phase == wifisetup::Phase::Online) {
+    web::onOnline();
+    if (!ntpStarted) {
+      // configTzTime keeps our TZ rule (plain configTime would overwrite it with a fixed offset).
+      configTzTime(settings::posixTz(), "pool.ntp.org", "time.google.com", "time.cloudflare.com");
+      ntpStarted = true;
+      Serial.println("[ntp] sync started");
+    }
   }
 }
 
@@ -29,27 +37,30 @@ void setup() {
   Serial.println();
   Serial.println("=== Bhoomi clock booting ===");
 
+  settings::begin();
   display::begin();
   ui::begin(AP_NAME);
   display::loop();  // draw "waking up" before the (slow) initial Wi-Fi scan
 
   wifisetup::begin(AP_NAME, onWifi);
+  web::begin();  // after Wi-Fi: opening a socket before the TCP/IP stack is up crashes
 }
 
 void loop() {
   wifisetup::loop();
+  web::loop();
   ui::loop();
   display::loop();
 
   static uint32_t lastLog = 0;
-  if (ntpStarted && millis() - lastLog > 30000) {
+  if (ntpStarted && millis() - lastLog > 60000) {
     lastLog = millis();
     time_t now = time(nullptr);
     struct tm t;
-    gmtime_r(&now, &t);
-    char buf[32];
-    strftime(buf, sizeof buf, "%Y-%m-%d %H:%M:%S", &t);
-    Serial.printf("[ntp] %s UTC%s\n", buf, now > 1700000000 ? "" : " (not synced yet)");
+    localtime_r(&now, &t);
+    char buf[40];
+    strftime(buf, sizeof buf, "%Y-%m-%d %H:%M:%S %Z", &t);
+    Serial.printf("[ntp] %s%s\n", buf, now > 1700000000 ? "" : " (not synced yet)");
   }
 
   delay(2);

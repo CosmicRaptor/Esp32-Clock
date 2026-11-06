@@ -26,6 +26,10 @@
 
 #define LV_USE_QRCODE 1
 
+// Big clock digits: render the embedded Montserrat TTF at any size on the device.
+#define LV_USE_TINY_TTF 1
+#define LV_TINY_TTF_FILE_SUPPORT 0
+
 // Not needed; keeps the build smaller and faster.
 #define LV_BUILD_EXAMPLES 0
 #define LV_BUILD_DEMOS 0
