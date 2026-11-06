@@ -34,6 +34,11 @@ def device_state(state: dict, listening: tuple | None = None) -> pb.DeviceState:
         out.photo.id = state["image"]["id"]
         out.photo.sent_at = state["image"]["at"]
         out.photo.size = state["image"]["bytes"]
+    faces = state.get("faces") or {}
+    for entry in faces.get("list", []):
+        out.faces.add(id=entry["id"], rev=entry["rev"])
+    out.pinned_face = faces.get("pinned", "")
+    out.default_face = faces.get("default", "")
     for a in state["alarms"]:
         if not a.get("enabled"):
             continue
@@ -43,6 +48,87 @@ def device_state(state: dict, listening: tuple | None = None) -> pb.DeviceState:
         if not a["days"]:
             d = datetime.date.fromisoformat(a["date"])
             alarm.date.year, alarm.date.month, alarm.date.day = d.year, d.month, d.day
+    return out
+
+
+_ALIGN = {"left": pb.TextSlot.LEFT, "center": pb.TextSlot.CENTER, "right": pb.TextSlot.RIGHT}
+_FORMAT = {"long": pb.TextSlot.LONG, "short": pb.TextSlot.SHORT, "day_month": pb.TextSlot.DAY_MONTH,
+           "weekday": pb.TextSlot.WEEKDAY, "numeric": pb.TextSlot.NUMERIC}
+_MOTION = {"bob": pb.Motion.BOB, "sway": pb.Motion.SWAY, "path": pb.Motion.PATH, "fade": pb.Motion.FADE,
+           "blink": pb.Motion.BLINK, "pulse": pb.Motion.PULSE, "frames": pb.Motion.FRAMES}
+_KIND = {"fall": pb.Emitter.FALL, "rise": pb.Emitter.RISE, "twinkle": pb.Emitter.TWINKLE}
+
+
+def _hex_color(c: str) -> int:
+    return int(c[1:], 16)
+
+
+def _fill_sprite(out: pb.SpriteRef, face: dict, h: str) -> None:
+    meta = face["assets"][h]
+    out.hash, out.w, out.h, out.size = h, meta["w"], meta["h"], meta["bytes"]
+
+
+def _fill_slot(out: pb.TextSlot, slot: dict) -> None:
+    out.x, out.y, out.size, out.color = slot["x"], slot["y"], slot["size"], _hex_color(slot["color"])
+    out.align = _ALIGN[slot["align"]]
+    if slot["shadow"]:
+        out.has_shadow, out.shadow = True, _hex_color(slot["shadow"])
+    if "format" in slot:
+        out.format = _FORMAT[slot["format"]]
+
+
+def _fill_motion(out: pb.Motion, m: dict) -> None:
+    out.type, out.period_ms, out.phase_ms = _MOTION[m["type"]], m["period"], m["phase"]
+    if m["type"] in ("bob", "sway"):
+        out.amp = m["amp"]
+    elif m["type"] == "path":
+        out.dx, out.dy, out.loop = m["dx"], m["dy"], m["mode"] == "loop"
+    elif m["type"] == "fade":
+        for k in m["keys"]:
+            out.keys.add(at=k["at"], pct=k["v"])
+    elif m["type"] == "blink":
+        out.on_ms = m["on"]
+    elif m["type"] == "pulse":
+        out.min_pct, out.max_pct = m["min"], m["max"]
+    elif m["type"] == "frames":
+        out.frames, out.fps = m["frames"], m["fps"]
+
+
+def _fill_layer(out: pb.Layer, face: dict, layer: dict) -> None:
+    _fill_sprite(out.sprite, face, layer["sprite"])
+    out.x, out.y, out.copies = layer["x"], layer["y"], layer["copies"]
+    out.stagger_x, out.stagger_y, out.stagger_phase_ms = layer["stagger"]["x"], layer["stagger"]["y"], layer["stagger"]["phase"]
+    for m in layer["motion"]:
+        _fill_motion(out.motion.add(), m)
+
+
+def face_message(face: dict) -> pb.Face:
+    """A stored face (model.clean_face's shape, with "rev") -> the Face message the clock downloads."""
+    out = pb.Face(id=face["id"], rev=face["rev"])
+    _fill_sprite(out.background, face, face["background"])
+    _fill_slot(out.time, face["time"])
+    if face["date"]:
+        _fill_slot(out.date, face["date"])
+    if face["icon"]:
+        _fill_layer(out.icon, face, face["icon"])
+    for layer in face["layers"]:
+        _fill_layer(out.layers.add(), face, layer)
+    for p in face["particles"]:
+        e = out.emitters.add(kind=_KIND[p["kind"]], count=p["count"], speed_min=p["speed_min"], speed_max=p["speed_max"],
+                             sway=p["sway"], period_ms=p["period"], phase_ms=p["phase"], front=p["depth"] == "front",
+                             seed=p["seed"])
+        for h in p["sprites"]:
+            _fill_sprite(e.sprites.add(), face, h)
+        e.area.x, e.area.y, e.area.w, e.area.h = p["area"]["x"], p["area"]["y"], p["area"]["w"], p["area"]["h"]
+    when = face["when"]
+    out.when.SetInParent()
+    if when["hours"]:
+        out.when.hour_from, out.when.hour_to = when["hours"]["from"], when["hours"]["to"]
+    for m in when["months"]:
+        out.when.months |= 1 << (m - 1)
+    out.when.days = days_mask(when["weekdays"])
+    for d in when["dates"]:
+        out.when.dates.add(year=d["year"] or 0, month=d["month"], day=d["day"])
     return out
 
 

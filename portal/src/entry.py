@@ -22,6 +22,17 @@ Behind those, static files in public/ are the admin page, and the rest is the JS
     POST   /api/alarms           {alarm}  -> creates
     PUT    /api/alarms/<id>      {alarm}  -> replaces
     DELETE /api/alarms/<id>
+    GET    /api/faces            -> {"faces": [face...], "settings": {default, pinned}, "budgets": {...}, "limits": {...}, ...}
+    POST   /api/faces            {face}   -> creates (answers with the saved face)
+    PUT    /api/faces/<id>       {face}   -> replaces
+    DELETE /api/faces/<id>
+    POST   /api/faces/<id>/duplicate
+    PUT    /api/face-settings    {"order": [ids], "default": id|"", "pinned": id|""}   (any of the three)
+    POST   /api/face-check       {face}   -> {"ok", "errors", "budget"}: validate a draft without saving it
+    PUT    /api/assets/bg        raw 320x240 baseline JPEG   -> {"asset": {hash, kind, w, h, bytes}}
+    PUT    /api/assets/sprite    raw LVGL RGB565A8 image     -> {"asset": ...}
+    PUT    /api/assets/<hash>.png    the sprite's PNG, for the preview
+    GET    /api/assets/<hash>.png|.jpg
     GET    /api/spotify          -> {"configured": bool, "sides": [{side, name, connected, playing}]}
     GET    /api/spotify/login?side=me|her    302 to Spotify's consent page
     DELETE /api/spotify/<side>   disconnect that person
@@ -36,6 +47,8 @@ Behind those, static files in public/ are the admin page, and the rest is the JS
     GET    /api/device/image/<id>
     PUT    /api/device/sounds    body: SoundList
     GET    /api/device/art/<id>     64x64 baseline JPEG cover, proxied from Spotify's CDN (id = Listener.art_id)
+    GET    /api/device/face/<id>    a Face (ETag = its rev; &format=json to read it)
+    GET    /api/device/asset/<hash> a face's background JPEG or sprite file (content-addressed: never changes)
 
   /api/device/state is the clock's one heartbeat, polled every ~10 s. Besides the portal's own state it carries
   `nowplaying` (asked from Spotify on each call), and its ETag covers both, so a new song is a new 200.
@@ -44,6 +57,10 @@ Storage is one KV namespace (binding CLOCK):
     "state"       the JSON document described in model.py
     "device"      what the clock last reported (seen, tz, fw, rssi, sounds)
     "img:<id>"    the current photo, base64
+    "face:<id>"   a clock face (JSON, see model.py); the state holds only the ids, revs, order, default and pinned
+    "asset:<hash>"      a face's background JPEG or sprite file, base64; the hash is of the bytes
+    "assetpng:<hash>"   the sprite's PNG, base64 (for the admin preview only)
+    "assetmeta:<hash>"  {"kind", "w", "h", "bytes", "at"}; one key per asset, so uploads never race each other
     "spotify"     per side ("me"/"her"): refresh token + cached access token (see spotify.py); never sent to any client
 """
 
@@ -65,6 +82,7 @@ import spotify
 import wire
 from model import Invalid
 
+FACE_PREFIX, ASSET_PREFIX, PNG_PREFIX, META_PREFIX = "face:", "asset:", "assetpng:", "assetmeta:"
 STATE_KEY = "state"
 DEVICE_KEY = "device"
 SPOTIFY_KEY = "spotify"
@@ -88,6 +106,9 @@ RS256 = {"name": "RSASSA-PKCS1-v1_5", "hash": "SHA-256"}
 
 def js_obj(value):
     return to_js(value, dict_converter=Object.fromEntries)
+
+
+IMAGE_SIZE = (model.IMAGE_W, model.IMAGE_H)
 
 
 class Upstream(Exception):
@@ -114,6 +135,12 @@ def json_response(data, status: int = 200, headers: dict | None = None) -> Respo
 def jpeg_response(data: bytes) -> Response:
     # image ids are random and never reused, so a photo at a given URL never changes
     return Response(data, headers={"content-type": "image/jpeg", "content-length": str(len(data)),
+                                   "cache-control": "private, max-age=31536000, immutable"})
+
+
+def binary_response(data: bytes, content_type: str) -> Response:
+    # assets are named by their content, so the bytes at a URL never change
+    return Response(data, headers={"content-type": content_type, "content-length": str(len(data)),
                                    "cache-control": "private, max-age=31536000, immutable"})
 
 
@@ -289,6 +316,58 @@ class Default(WorkerEntrypoint):
             state["alarms"] = model.sort_alarms(rest)
             return json_response({"state": await self.save_state(state)})
 
+        if path == "/api/faces" and method == "GET":
+            return json_response(await self.faces_overview())
+
+        if path == "/api/faces" and method == "POST":
+            return json_response(await self.save_face(model.new_id(), await read_json(request)))
+
+        if path.startswith("/api/faces/") and method in ("PUT", "DELETE", "POST"):
+            rest = path.removeprefix("/api/faces/").split("/")
+            if not model.valid_id(rest[0]) or len(rest) > 2:
+                raise HttpError(404, "Not found.")
+            if method == "PUT" and len(rest) == 1:
+                if not await self.load_face(rest[0]):
+                    raise HttpError(404, "That face doesn't exist any more.")
+                return json_response(await self.save_face(rest[0], await read_json(request)))
+            if method == "DELETE" and len(rest) == 1:
+                return json_response(await self.delete_face(rest[0]))
+            if method == "POST" and rest[1:] == ["duplicate"]:
+                return json_response(await self.duplicate_face(rest[0]))
+            raise HttpError(404, "Not found.")
+
+        if path == "/api/face-settings" and method == "PUT":
+            state = await self.load_state()
+            model.apply_face_settings(state, await read_json(request))
+            return json_response({"state": await self.save_state(state)})
+
+        if path == "/api/face-check" and method == "POST":
+            data = await read_json(request)
+            try:
+                _, report = model.check_face(data, await self.asset_metas(model.draft_hashes(data)), "0" * 12)
+            except Invalid as err:
+                return json_response({"ok": False, "errors": [str(err)], "budget": None})
+            return json_response({"ok": not report["errors"], **report})
+
+        if path == "/api/assets/bg" and method == "PUT":
+            data = bytes(await request.bytes())
+            model.check_clock_photo(data)
+            return json_response({"asset": await self.store_asset(data, "bg", IMAGE_SIZE)})
+
+        if path == "/api/assets/sprite" and method == "PUT":
+            data = bytes(await request.bytes())
+            return json_response({"asset": await self.store_asset(data, "sprite", model.check_sprite_file(data))})
+
+        if path.startswith("/api/assets/") and method in ("GET", "PUT"):
+            name, _, ext = path.removeprefix("/api/assets/").partition(".")
+            if not model.valid_hash(name) or ext not in ("png", "jpg"):
+                raise HttpError(404, "Not found.")
+            if method == "PUT" and ext == "png":
+                return json_response({"asset": await self.store_png(name, bytes(await request.bytes()))})
+            if method == "GET":
+                return await self.asset_for_page(name, ext)
+            raise HttpError(404, "Not found.")
+
         if path == "/api/spotify" and method == "GET":
             return json_response(await self.spotify_overview())
 
@@ -323,6 +402,95 @@ class Default(WorkerEntrypoint):
             raise HttpError(404, "No such photo.")
         return jpeg_response(base64.b64decode(raw))
 
+    # ---------- faces ----------
+
+    async def load_face(self, face_id: str):
+        return await self.kv_json(FACE_PREFIX + face_id)
+
+    async def asset_metas(self, hashes) -> dict:
+        """hash -> meta for those assets that exist."""
+        hashes = sorted(hashes)
+        metas = await asyncio.gather(*(self.kv_json(META_PREFIX + h) for h in hashes))
+        return {h: m for h, m in zip(hashes, metas) if m}
+
+    async def faces_overview(self) -> dict:
+        state = await self.load_state()
+        docs = await asyncio.gather(*(self.load_face(e["id"]) for e in state["faces"]["list"]))
+        faces = [f for f in docs if f]
+        return {"faces": faces, "settings": {"default": state["faces"]["default"], "pinned": state["faces"]["pinned"]},
+                "budgets": {f["id"]: model.face_report(f)["budget"] for f in faces},
+                "limits": model.face_limits(), "version": state["version"],
+                "device": await self.kv_json(DEVICE_KEY), "now": int(time.time())}
+
+    async def save_face(self, face_id: str, data, after: str = "") -> dict:
+        """Check a face draft, store it, and point the state at it. The clock's ETag moves, so it re-fetches."""
+        face, report = model.check_face(data, await self.asset_metas(model.draft_hashes(data)), face_id)
+        if report["errors"]:
+            raise Invalid(" ".join(report["errors"][:2]))
+        face["rev"] = model.face_rev(face)
+        state = await self.load_state()
+        before = next((e["rev"] for e in state["faces"]["list"] if e["id"] == face_id), None)
+        if before == face["rev"]:
+            return {"face": face, "state": state, "budget": report["budget"]}  # nothing changed: leave the clock alone
+        model.put_face(state, face, after)  # may refuse (too many faces) before anything is written
+        # the face first, then the state pointing at it, so the clock never sees a face it can't fetch
+        await self.env.CLOCK.put(FACE_PREFIX + face_id, json.dumps(face))
+        state = await self.save_state(state)
+        await self.collect_assets()
+        return {"face": face, "state": state, "budget": report["budget"]}
+
+    async def duplicate_face(self, face_id: str) -> dict:
+        face = await self.load_face(face_id)
+        if not face:
+            raise HttpError(404, "That face doesn't exist any more.")
+        face["name"] = (face["name"] + " copy")[:model.FACE_NAME_MAX].strip()
+        return await self.save_face(model.new_id(), face, after=face_id)
+
+    async def delete_face(self, face_id: str) -> dict:
+        state = await self.load_state()
+        if not any(e["id"] == face_id for e in state["faces"]["list"]):
+            raise HttpError(404, "That face doesn't exist any more.")
+        model.drop_face(state, face_id)
+        state = await self.save_state(state)   # unlist it first, then delete its data
+        await self.env.CLOCK.delete(FACE_PREFIX + face_id)
+        await self.collect_assets()
+        return {"state": state}
+
+    async def store_asset(self, data: bytes, kind: str, size: tuple) -> dict:
+        h = model.asset_hash(data)
+        meta = {"kind": kind, "w": size[0], "h": size[1], "bytes": len(data), "at": int(time.time())}
+        await self.env.CLOCK.put(ASSET_PREFIX + h, base64.b64encode(data).decode())
+        await self.env.CLOCK.put(META_PREFIX + h, json.dumps(meta))   # last, and again for a re-upload: it restarts the grace period
+        return {"hash": h, **{k: meta[k] for k in ("kind", "w", "h", "bytes")}}
+
+    async def store_png(self, h: str, data: bytes) -> dict:
+        meta = await self.kv_json(META_PREFIX + h)
+        if not meta or meta["kind"] != "sprite":
+            raise HttpError(404, "Upload the sprite first.")
+        if model.png_size(data) != (meta["w"], meta["h"]):
+            raise Invalid("The PNG isn't the same size as the sprite.")
+        await self.env.CLOCK.put(PNG_PREFIX + h, base64.b64encode(data).decode())
+        return {"hash": h, **{k: meta[k] for k in ("kind", "w", "h", "bytes")}}
+
+    async def asset_for_page(self, h: str, ext: str) -> Response:
+        raw = await self.env.CLOCK.get((PNG_PREFIX if ext == "png" else ASSET_PREFIX) + h)
+        if missing(raw):
+            raise HttpError(404, "No such image.")
+        return binary_response(base64.b64decode(raw), "image/png" if ext == "png" else "image/jpeg")
+
+    async def collect_assets(self) -> None:
+        """Delete the assets no face uses any more (after a grace period, see model.unreferenced_assets). Housekeeping:
+        it must never make a save fail."""
+        try:
+            listing = await self.env.CLOCK.list(js_obj({"prefix": META_PREFIX}))
+            hashes = [str(k.name).removeprefix(META_PREFIX) for k in listing.keys]
+            metas, state = await asyncio.gather(self.asset_metas(hashes), self.load_state())
+            docs = await asyncio.gather(*(self.load_face(e["id"]) for e in state["faces"]["list"]))
+            for h in model.unreferenced_assets(metas, [f for f in docs if f], time.time()):
+                await asyncio.gather(*(self.env.CLOCK.delete(prefix + h) for prefix in (ASSET_PREFIX, PNG_PREFIX, META_PREFIX)))
+        except Exception:
+            pass
+
     # ---------- clock ----------
 
     async def device_api(self, request, path: str, url):
@@ -349,6 +517,29 @@ class Default(WorkerEntrypoint):
 
         if path.startswith("/api/device/image/") and method == "GET":
             return await self.image(path.removeprefix("/api/device/image/"))
+
+        if path.startswith("/api/device/face/") and method == "GET":
+            face_id = path.removeprefix("/api/device/face/")
+            face = await self.load_face(face_id) if model.valid_id(face_id) else None
+            if not face:
+                raise HttpError(404, "No such face.")
+            etag = '"' + face["rev"] + '"'
+            if request.headers.get("if-none-match") == etag:
+                return Response(None, status=304, headers={"etag": etag, "cache-control": "no-store"})
+            msg = wire.face_message(face)
+            if "format=json" in (url.query or ""):  # for humans with curl
+                return json_response(json_format.MessageToDict(msg), headers={"etag": etag})
+            return Response(msg.SerializeToString(), headers={"content-type": wire.CONTENT_TYPE, "etag": etag,
+                                                              "cache-control": "no-store"})
+
+        if path.startswith("/api/device/asset/") and method == "GET":
+            h = path.removeprefix("/api/device/asset/")
+            raw = await self.env.CLOCK.get(ASSET_PREFIX + h) if model.valid_hash(h) else None
+            if raw is None or missing(raw):
+                # can briefly happen right after a change: KV takes up to ~60 s to reach every location
+                raise HttpError(404, "No such asset.")
+            data = base64.b64decode(raw)
+            return binary_response(data, "image/jpeg" if data[:2] == b"\xff\xd8" else "application/octet-stream")
 
         if path == "/api/device/nowplaying" and method == "GET":
             left, right = await asyncio.gather(*(self.listening(side) for side in spotify.SIDES))

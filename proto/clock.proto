@@ -1,6 +1,6 @@
 // What the clock and the portal say to each other. The single source of truth for the device API:
 //   ./proto/generate.sh  ->  portal/src/clock_pb2.py   (Python Worker)
-//                        ->  proto/nanopb/clock.pb.{c,h} (firmware, nanopb)
+//                        ->  clock.pb.{c,h} at the sketch root (firmware, nanopb)
 // Size limits for nanopb live in clock.options; keep them in step with portal/src/model.py.
 //
 // Evolving it: only add fields with new numbers. Never renumber or reuse a number, so an old clock
@@ -19,6 +19,10 @@ message DeviceState {
   repeated Alarm alarms = 4;     // enabled alarms only, sorted by time
   NowPlaying nowplaying = 5;     // what the two people are playing on Spotify; always set. It changes on its own
                                  // (not with `version`), but it is part of the ETag, so a new song is a new 200.
+  repeated FaceRef faces = 6;    // the clock faces, in priority order (earlier wins). Only ids and revisions: fetch a
+                                 // face with GET /api/device/face/<id> when its `rev` is new or changed.
+  string pinned_face = 7;        // face id the portal forces right now; empty = choose by the faces' `when` rules
+  string default_face = 8;       // face id shown when no face's `when` matches; empty = the clock's built-in face
 }
 
 // The message shown on the clock face.
@@ -74,4 +78,169 @@ message Listener {
   string title = 2;              // up to 60 characters
   string artist = 3;             // up to 60 characters
   string art_id = 4;             // 40 hex chars; GET /api/device/art/<art_id> is a 64x64 baseline JPEG. Empty: no cover
+}
+
+// ============================================================================================================
+// Clock faces
+//
+// A face is a layered scene: a background JPEG, sprites with their own motion, particle emitters, and a time and a
+// date text slot. Everything is described here and drawn by the clock; the portal only stores and validates it.
+// The portal checks a performance budget, so every face it hands out is cheap enough to animate over the SPI link.
+//
+// Which face to show (the clock decides this itself, offline, with its own clock):
+//   1. `pinned_face`, if it is in `faces`.
+//   2. else the first face in `faces` whose `when` matches the local date and time.
+//   3. else `default_face`, if it is in `faces`.
+//   4. else the clock's built-in face.
+// A face whose `when` has no constraint at all never matches by itself (it can still be the default or pinned).
+//
+// Draw order, back to front: background, emitters with front = false, layers (in order, each copy in turn),
+// emitters with front = true, the time, the date, the icon.
+//
+// Coordinates are pixels on the 320x240 landscape screen, origin top-left, y down. Sprites are placed by their
+// top-left corner. Colours are 0xRRGGBB. Animation time `t` is milliseconds since the face was shown. Every motion
+// below is a pure function of `t`, so the portal preview and the clock look the same.
+//
+// Asset files (GET /api/device/asset/<hash>): the background is a 320x240 baseline JPEG; a sprite is an LVGL 9
+// "RGB565A8" raw image: the 12-byte lv_image_header_t (magic 0x19, color format 0x14, flags 0, w, h, stride = 2*w,
+// 0; little-endian), then the RGB565 plane (h rows of w little-endian 16-bit pixels), then the A8 plane (h rows of w
+// alpha bytes). `size` is the file length. The clock copies the bytes straight into an lv_image_dsc_t.
+// ============================================================================================================
+
+// An entry of DeviceState.faces.
+message FaceRef {
+  string id = 1;                 // 12 hex chars, stable across edits
+  string rev = 2;                // 12 hex chars; changes whenever anything about the face changes (rules included)
+}
+
+// A downloadable image file.
+message SpriteRef {
+  string hash = 1;               // 16 hex chars: GET /api/device/asset/<hash>. Content-addressed: never changes
+  uint32 w = 2;                  // pixels. For a sprite sheet (Motion FRAMES) this is the whole sheet
+  uint32 h = 3;
+  uint32 size = 4;               // bytes in the file, to allocate before downloading
+}
+
+message TextSlot {
+  enum Align {
+    LEFT = 0;                    // x is the left edge of the text
+    CENTER = 1;                  // x is the middle
+    RIGHT = 2;                   // x is the right edge
+  }
+  enum DateFormat {              // the date slot only; English names, `date` is local time
+    LONG = 0;                    // "Friday, 7 November"
+    SHORT = 1;                   // "Fri, 7 Nov"
+    DAY_MONTH = 2;               // "7 November"
+    WEEKDAY = 3;                 // "Friday"
+    NUMERIC = 4;                 // "07/11/2026"
+  }
+  sint32 x = 1;
+  sint32 y = 2;                  // the TOP of the line box: the baseline is at y + 0.968 * size
+  uint32 size = 3;               // em size in pixels, as in lv_tiny_ttf_create_data(Montserrat Medium, size)
+  uint32 color = 4;
+  bool has_shadow = 5;
+  uint32 shadow = 6;             // shadow colour, drawn first, offset by max(1, size / 24) pixels right and down
+  Align align = 7;
+  DateFormat format = 8;         // date slot only. The time slot is always "HH:MM" (24 h)
+}
+
+// An animation on a sprite. Several can be stacked on one layer: their offsets add up, their opacities multiply.
+// With period P, phase F and time t, u = ((t + F) mod P) / P, in [0, 1). Percentages are integers.
+message Keyframe {
+  uint32 at = 1;                 // permille of the period, 0-1000; the first is 0 and they increase
+  uint32 pct = 2;                // opacity in percent, 0-100 (0 = invisible)
+}
+
+message Motion {
+  enum Type {
+    NONE = 0;                    // ignore
+    BOB = 1;                     // vertical:   dy = amp * sin(2*pi*u)
+    SWAY = 2;                    // horizontal: dx = amp * sin(2*pi*u)
+    PATH = 3;                    // offset (dx, dy) * w, where w = 0.5 - 0.5*cos(2*pi*u) (ping-pong: 0 -> 1 -> 0),
+                                 //   or, with loop, w = u (0 -> 1, then jump back to 0)
+    FADE = 4;                    // opacity: linear interpolation through `keys` over u, wrapping from the last key
+                                 //   back to the first one at u = 1
+    BLINK = 5;                   // visible while (t + F) mod P < on_ms, hidden otherwise
+    PULSE = 6;                   // scale about the sprite's centre: s = min_pct + (max_pct - min_pct) * (0.5 - 0.5*cos(2*pi*u)),
+                                 //   in percent
+    FRAMES = 7;                  // sprite sheet of `frames` equal frames side by side: frame = floor((t + F) / 1000 * fps) mod frames
+  }
+  Type type = 1;
+  uint32 period_ms = 2;          // 200-60000. For FRAMES it is round(1000 * frames / fps) and only informative
+  uint32 phase_ms = 3;           // shifts this motion in time, 0 <= phase < period
+  sint32 amp = 4;                // BOB / SWAY: pixels, up to 80
+  sint32 dx = 5;                 // PATH
+  sint32 dy = 6;
+  bool loop = 7;                 // PATH: false = ping-pong, true = loop
+  repeated Keyframe keys = 8;    // FADE: 2-4 keyframes
+  uint32 on_ms = 9;              // BLINK: 1 .. period - 1
+  uint32 min_pct = 10;           // PULSE: 50-200, min_pct < max_pct
+  uint32 max_pct = 11;
+  uint32 frames = 12;            // FRAMES: 2-16
+  uint32 fps = 13;               // FRAMES: 1-15
+}
+
+// A sprite placed on the face, copied `copies` times. Copy i (0-based) is moved by i * stagger and its motions are
+// shifted in time by i * stagger_phase_ms, so a row of hearts can pulse one after another.
+message Layer {
+  SpriteRef sprite = 1;
+  sint32 x = 2;
+  sint32 y = 3;
+  uint32 copies = 4;             // 1-12 (0 is read as 1)
+  sint32 stagger_x = 5;
+  sint32 stagger_y = 6;
+  sint32 stagger_phase_ms = 7;
+  repeated Motion motion = 8;    // up to 3
+}
+
+// Particles in a rectangle. Each particle's start values come from a seeded PRNG, so the clock and the portal agree.
+// Particles are clipped to `area`. See "Particles" in portal/README.md for the exact formulas.
+message Rect {
+  sint32 x = 1;
+  sint32 y = 2;
+  uint32 w = 3;
+  uint32 h = 4;
+}
+
+message Emitter {
+  enum Kind {
+    FALL = 0;                    // drifts down, wrapping from the bottom of `area` back to the top (snow, petals, leaves)
+    RISE = 1;                    // drifts up (bubbles, sparks)
+    TWINKLE = 2;                 // stays put and fades in and out (stars)
+  }
+  Kind kind = 1;
+  repeated SpriteRef sprites = 2;   // 1-3; each particle uses one of them
+  uint32 count = 3;              // 1-40 particles
+  Rect area = 4;                 // inside the screen
+  uint32 speed_min = 5;          // pixels per second, FALL / RISE
+  uint32 speed_max = 6;
+  uint32 sway = 7;               // FALL / RISE: sideways swing in pixels, 0-60
+  uint32 period_ms = 8;          // FALL / RISE: sway period; TWINKLE: fade cycle. 500-60000
+  uint32 phase_ms = 9;           // shifts the whole emitter in time
+  bool front = 10;               // true: drawn above the layers; false: behind them
+  uint32 seed = 11;              // PRNG seed
+}
+
+// When a face is shown. All the constraints that are set must hold (AND). Empty = no constraint, and a `When` with
+// no constraint at all never matches. Everything is in the clock's own local time.
+message When {
+  uint32 hour_from = 1;          // hours [hour_from, hour_to), whole hours; hour_to 0 = no hour constraint.
+  uint32 hour_to = 2;            //   hour_from 0-23, hour_to 1-24. hour_to < hour_from wraps past midnight (22 -> 6)
+  uint32 months = 3;             // bit 0 = January ... bit 11 = December; 0 = any month
+  uint32 days = 4;               // weekdays, bit 0 = Sunday ... bit 6 = Saturday (1 << tm_wday); 0 = any day
+  repeated Date dates = 5;       // up to 8; matches if today is any of them. `year` 0 = every year. Empty = any date
+}
+
+// GET /api/device/face/<id>  (Content-Type: application/x-protobuf; ETag is the face's `rev`)
+message Face {
+  reserved 3;                    // (was going to be the name: the clock never shows it)
+  string id = 1;
+  string rev = 2;
+  SpriteRef background = 4;      // a 320x240 baseline JPEG, decoded once when the face is shown
+  TextSlot time = 5;
+  TextSlot date = 6;
+  Layer icon = 7;                // unset: none. Drawn above the text, otherwise a layer like any other
+  repeated Layer layers = 8;     // up to 8, back to front
+  repeated Emitter emitters = 9; // up to 3
+  When when = 10;
 }

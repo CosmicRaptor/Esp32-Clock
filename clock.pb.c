@@ -30,6 +30,44 @@ PB_BIND(bhoomi_clock_v1_NowPlaying, bhoomi_clock_v1_NowPlaying, 2)
 PB_BIND(bhoomi_clock_v1_Listener, bhoomi_clock_v1_Listener, AUTO)
 
 
+PB_BIND(bhoomi_clock_v1_FaceRef, bhoomi_clock_v1_FaceRef, AUTO)
+
+
+PB_BIND(bhoomi_clock_v1_SpriteRef, bhoomi_clock_v1_SpriteRef, AUTO)
+
+
+PB_BIND(bhoomi_clock_v1_TextSlot, bhoomi_clock_v1_TextSlot, AUTO)
+
+
+PB_BIND(bhoomi_clock_v1_Keyframe, bhoomi_clock_v1_Keyframe, AUTO)
+
+
+PB_BIND(bhoomi_clock_v1_Motion, bhoomi_clock_v1_Motion, AUTO)
+
+
+PB_BIND(bhoomi_clock_v1_Layer, bhoomi_clock_v1_Layer, 2)
+
+
+PB_BIND(bhoomi_clock_v1_Rect, bhoomi_clock_v1_Rect, AUTO)
+
+
+PB_BIND(bhoomi_clock_v1_Emitter, bhoomi_clock_v1_Emitter, AUTO)
+
+
+PB_BIND(bhoomi_clock_v1_When, bhoomi_clock_v1_When, AUTO)
+
+
+PB_BIND(bhoomi_clock_v1_Face, bhoomi_clock_v1_Face, 2)
+
+
+
+
+
+
+
+
+
+
 
 
 

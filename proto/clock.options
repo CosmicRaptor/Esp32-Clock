@@ -11,3 +11,17 @@ bhoomi.clock.v1.SoundList.names    max_count:100 max_size:65
 bhoomi.clock.v1.Listener.title     max_size:61
 bhoomi.clock.v1.Listener.artist    max_size:61
 bhoomi.clock.v1.Listener.art_id    max_size:41
+bhoomi.clock.v1.DeviceState.faces        max_count:12
+bhoomi.clock.v1.DeviceState.pinned_face  max_size:13
+bhoomi.clock.v1.DeviceState.default_face max_size:13
+bhoomi.clock.v1.FaceRef.id               max_size:13
+bhoomi.clock.v1.FaceRef.rev              max_size:13
+bhoomi.clock.v1.SpriteRef.hash           max_size:17
+bhoomi.clock.v1.Motion.keys              max_count:4
+bhoomi.clock.v1.Layer.motion             max_count:3
+bhoomi.clock.v1.Emitter.sprites          max_count:3
+bhoomi.clock.v1.When.dates               max_count:8
+bhoomi.clock.v1.Face.id                  max_size:13
+bhoomi.clock.v1.Face.rev                 max_size:13
+bhoomi.clock.v1.Face.layers              max_count:8
+bhoomi.clock.v1.Face.emitters            max_count:3
