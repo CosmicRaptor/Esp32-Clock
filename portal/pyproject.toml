@@ -1,0 +1,9 @@
+[project]
+name = "bhoomi-clock-portal"
+version = "0.1.0"
+requires-python = ">=3.12"
+# Packages the Worker imports at runtime (vendored into python_modules/ by pywrangler).
+dependencies = ["protobuf"]
+
+[dependency-groups]
+dev = ["workers-py"]

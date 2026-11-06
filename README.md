@@ -59,3 +59,5 @@ If uploads fail with "No serial data received", close the Arduino IDE Serial Mon
 | `ui.*` | LVGL screens: setup (QR), status, clock |
 | `font_montserrat_ttf.c` | Montserrat Medium (OFL), rendered by LVGL Tiny TTF for the big digits |
 | `lv_conf.h` | LVGL config |
+| `proto/` | `clock.proto`: the clock ↔ portal protobuf schema, plus the generated nanopb code (`proto/generate.sh`) |
+| `portal/` | admin portal (Cloudflare Worker, Python) for the photo, message and alarms; see `portal/README.md` |

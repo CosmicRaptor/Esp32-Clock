@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Regenerate code from clock.proto. Needs `protoc` and `uv` (brew install protobuf uv).
+# The generated files are committed, so this only needs running after editing the .proto/.options.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+NANOPB_VERSION=0.4.9.1   # must match the Nanopb Arduino library the firmware builds against
+
+# Python, for the Worker. protoc's major version must not be newer than the protobuf package
+# that pywrangler vendors (see portal/pylock.toml).
+protoc -I . --python_out=../portal/src --pyi_out=../portal/src clock.proto
+
+# C, for the firmware.
+mkdir -p nanopb
+uvx --from "nanopb==${NANOPB_VERSION}" nanopb_generator -I . -D nanopb clock.proto
+
+echo "generated: portal/src/clock_pb2.py(i), proto/nanopb/clock.pb.{c,h}"

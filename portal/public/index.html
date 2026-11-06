@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="robots" content="noindex">
+<title>Bhoomi's clock</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='88'>🕰️</text></svg>">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main>
+
+<!-- ============ login ============ -->
+<section id="login" hidden>
+  <div class="login card">
+    <div class="emoji" aria-hidden="true">🕰️</div>
+    <h1>Bhoomi's clock</h1>
+    <p class="sub">Admin portal</p>
+    <form id="loginForm">
+      <label class="lbl" for="password">Password</label>
+      <input id="password" type="password" autocomplete="current-password" required>
+      <button class="btn primary wide" id="loginBtn">Log in</button>
+      <p class="err" id="loginErr" role="alert"></p>
+    </form>
+  </div>
+</section>
+
+<!-- ============ app ============ -->
+<section id="app" hidden>
+  <header class="top">
+    <div>
+      <h1>Bhoomi's clock</h1>
+      <p class="status" id="status"><i class="dot"></i><span>…</span></p>
+    </div>
+    <button class="btn ghost small" id="logout">Log out</button>
+  </header>
+
+  <!-- preview -->
+  <div class="screen-wrap">
+    <div class="screen" id="screen" aria-label="Preview of the clock screen">
+      <img id="pvImg" alt="" hidden>
+      <div class="pv-time" id="pvTime">--:--</div>
+      <div class="pv-msg" id="pvMsg" hidden></div>
+    </div>
+    <p class="hint center" id="pvNote">Rough preview, since the clock face isn't final yet.</p>
+  </div>
+
+  <!-- photo -->
+  <div class="card" id="photoCard">
+    <div class="row">
+      <h2>Photo</h2>
+      <span class="meta" id="photoMeta"></span>
+    </div>
+
+    <div id="photoView">
+      <div class="thumb" id="photoThumb">
+        <img id="photoImg" alt="Photo on the clock" hidden>
+        <span class="empty" id="photoEmpty">No photo yet</span>
+      </div>
+      <div class="actions">
+        <label class="btn primary" tabindex="0" role="button" id="choose">
+          <input type="file" id="pick" accept="image/*" hidden>
+          Choose a photo
+        </label>
+        <button class="btn ghost" id="removePhoto" hidden>Remove</button>
+      </div>
+      <p class="hint">You'll crop it to the clock's 320×240 screen. You can also drop a photo on this card.</p>
+    </div>
+
+    <div id="cropView" hidden>
+      <div class="crop" id="cropFrame">
+        <canvas id="cropCanvas" aria-label="Drag to position the photo"></canvas>
+        <div class="thirds" aria-hidden="true"></div>
+      </div>
+      <div class="zoom">
+        <span aria-hidden="true">−</span>
+        <input type="range" id="zoom" min="0" max="100" value="0" step="1" aria-label="Zoom">
+        <span aria-hidden="true">+</span>
+      </div>
+      <p class="hint center">Drag to move · pinch, scroll or use the slider to zoom</p>
+      <div class="actions">
+        <button class="btn ghost" id="cropCancel">Cancel</button>
+        <button class="btn primary" id="cropSend">Send to clock</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- message -->
+  <div class="card" id="msgCard">
+    <div class="row">
+      <h2>Message</h2>
+      <span class="meta" id="msgMeta"></span>
+    </div>
+    <form id="msgForm">
+      <textarea id="msgText" rows="3" maxlength="120" placeholder="Something sweet for the clock to show…"></textarea>
+      <div class="row hint-row">
+        <span class="hint" id="msgWarn"></span>
+        <span class="hint" id="msgCount">0/120</span>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn ghost" id="msgClear" hidden>Clear</button>
+        <button class="btn primary" id="msgSend">Send message</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- alarms -->
+  <div class="card" id="alarmCard">
+    <div class="row">
+      <h2>Alarms</h2>
+      <span class="meta" id="alarmTz"></span>
+    </div>
+    <ul class="alarms" id="alarms"></ul>
+
+    <form class="editor" id="editor" hidden>
+      <input type="time" id="aTime" required aria-label="Alarm time">
+      <div class="days" id="aDays" role="group" aria-label="Repeat on"></div>
+      <div class="presets">
+        <button type="button" class="chip-link" data-preset="1,2,3,4,5">Weekdays</button>
+        <button type="button" class="chip-link" data-preset="0,6">Weekends</button>
+        <button type="button" class="chip-link" data-preset="0,1,2,3,4,5,6">Every day</button>
+        <button type="button" class="chip-link" data-preset="">Just once</button>
+      </div>
+      <div id="aDateRow">
+        <label class="lbl" for="aDate">On</label>
+        <input type="date" id="aDate">
+      </div>
+      <label class="lbl" for="aLabel">Label</label>
+      <input id="aLabel" maxlength="40" placeholder="Wake up, sunshine ☀︎">
+      <label class="lbl" for="aSound">Sound</label>
+      <select id="aSound"></select>
+      <p class="hint" id="aSoundNote"></p>
+      <div class="actions">
+        <button type="button" class="btn danger ghost" id="aDelete" hidden>Delete</button>
+        <span class="grow"></span>
+        <button type="button" class="btn ghost" id="aCancel">Cancel</button>
+        <button class="btn primary" id="aSave">Save alarm</button>
+      </div>
+    </form>
+
+    <button class="btn ghost wide" id="addAlarm">+ Add alarm</button>
+  </div>
+</section>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="/app.js"></script>
+</body>
+</html>

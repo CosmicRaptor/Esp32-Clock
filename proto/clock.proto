@@ -1,0 +1,54 @@
+// What the clock and the portal say to each other. The single source of truth for the device API:
+//   ./proto/generate.sh  ->  portal/src/clock_pb2.py   (Python Worker)
+//                        ->  proto/nanopb/clock.pb.{c,h} (firmware, nanopb)
+// Size limits for nanopb live in clock.options; keep them in step with portal/src/model.py.
+//
+// Evolving it: only add fields with new numbers. Never renumber or reuse a number, so an old clock
+// keeps working against a new portal (unknown fields are skipped) and the other way round.
+syntax = "proto3";
+
+package bhoomi.clock.v1;
+
+// GET /api/device/state  (Content-Type: application/x-protobuf)
+// Sent whenever the ETag (= version) changes; otherwise the clock gets an empty 304.
+message DeviceState {
+  uint32 version = 1;            // bumped on every change in the portal
+  Note note = 2;                 // unset: no message to show
+  Photo photo = 3;               // unset: no photo
+  repeated Alarm alarms = 4;     // enabled alarms only, sorted by time
+}
+
+// The message shown on the clock face.
+message Note {
+  string text = 1;               // UTF-8, up to 120 characters and 4 lines ('\n' between lines)
+  int64 sent_at = 2;             // unix seconds
+}
+
+// The photo itself is fetched separately: GET /api/device/image/<id>, a 320x240 baseline JPEG.
+message Photo {
+  string id = 1;                 // 12 hex chars; a new id means a new photo
+  int64 sent_at = 2;             // unix seconds
+  uint32 size = 3;               // JPEG size in bytes, to allocate before downloading
+}
+
+message Alarm {
+  string id = 1;                 // 12 hex chars, stable across edits
+  uint32 hour = 2;               // 0-23, in the clock's own time zone
+  uint32 minute = 3;             // 0-59
+  uint32 days = 4;               // bit 0 = Sunday ... bit 6 = Saturday (1 << tm_wday); 0 = once, on `date`
+  Date date = 5;                 // set only when days == 0
+  string label = 6;              // up to 40 characters; may be empty
+  string sound = 7;              // file name in /sounds on the card; empty = built-in beep
+}
+
+message Date {
+  uint32 year = 1;
+  uint32 month = 2;              // 1-12
+  uint32 day = 3;                // 1-31
+}
+
+// PUT /api/device/sounds  (body: SoundList) — at boot and whenever /sounds on the card changes.
+// Fills the sound picker in the portal's alarm editor.
+message SoundList {
+  repeated string names = 1;     // file names only, no folder
+}

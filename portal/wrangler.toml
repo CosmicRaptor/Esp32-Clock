@@ -1,0 +1,21 @@
+# Bhoomi clock admin portal — Python Worker + static page.
+name = "bhoomi-clock"
+main = "src/entry.py"
+compatibility_date = "2026-10-01"
+# Run through pywrangler (`npm run dev` / `npm run deploy`), which vendors the packages in
+# pyproject.toml (protobuf) and the `workers` SDK before handing over to wrangler.
+compatibility_flags = ["python_workers"]
+
+# The admin page. Files here are served as-is; anything else (the /api/*) reaches the Python code.
+[assets]
+directory = "./public"
+
+# All clock data: the state document, the photo, and the clock's last check-in.
+# No id: `wrangler deploy` creates the namespace on the first deploy and fills it in.
+[[kv_namespaces]]
+binding = "CLOCK"
+
+# Secrets (not in this file):
+#   ADMIN_PASSWORD  password for the admin page
+#   DEVICE_TOKEN    the clock's bearer token (also goes in the firmware)
+# Locally they come from .dev.vars; in production: `npx wrangler secret put ADMIN_PASSWORD`.

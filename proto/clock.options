@@ -1,0 +1,10 @@
+# nanopb sizes: fixed-size fields instead of callbacks, so the firmware decodes into one plain struct.
+# Strings are UTF-8 bytes + 1 for the terminating NUL (a character is at most 4 bytes).
+# Keep in step with the limits in portal/src/model.py.
+bhoomi.clock.v1.Note.text          max_size:481
+bhoomi.clock.v1.Photo.id           max_size:13
+bhoomi.clock.v1.Alarm.id           max_size:13
+bhoomi.clock.v1.Alarm.label        max_size:161
+bhoomi.clock.v1.Alarm.sound        max_size:65
+bhoomi.clock.v1.DeviceState.alarms max_count:20
+bhoomi.clock.v1.SoundList.names    max_count:100 max_size:65
