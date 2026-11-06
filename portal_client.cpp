@@ -6,6 +6,7 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <esp_heap_caps.h>
+#include <mbedtls/platform.h>
 #include <pb_decode.h>
 #include <pb_encode.h>
 #include <time.h>
@@ -36,6 +37,23 @@ constexpr uint32_t NP_STALE_MS = 2 * 60 * 1000; // no answer from the portal for
 constexpr int32_t CONNECT_TIMEOUT_MS = 12000;   // weak Wi-Fi (~-90 dBm): TLS handshake is slow
 constexpr uint16_t IO_TIMEOUT_MS = 15000;
 constexpr size_t MAX_PHOTO_BYTES = 256 * 1024;  // a 320x240 JPEG is ~10-40 KB; refuse anything silly
+
+// ---------- TLS memory ----------
+// This core's mbedTLS keeps everything in internal RAM (CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC), including
+// two fixed 16 KB record buffers, so a handshake needs ~33 KB in one piece and the largest free block
+// is only ~31 KB. Route the big allocations to PSRAM instead; small ones (bignum limbs, hash state,
+// ...) stay internal where they are faster. mbedTLS frees through the same hook, and free() works on
+// either heap.
+constexpr size_t TLS_PSRAM_MIN = 1024;
+
+void *tlsCalloc(size_t n, size_t size) {
+  void *p = nullptr;
+  if (n && size && n <= SIZE_MAX / size && n * size >= TLS_PSRAM_MIN)
+    p = heap_caps_calloc(n, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  return p ? p : heap_caps_calloc(n, size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
+
+void tlsFree(void *p) { heap_caps_free(p); }
 
 // ---- latest state (guarded by app::Lock) ----
 State cur;                  // zeroed until the first successful decode
@@ -701,6 +719,7 @@ void begin() {
     Serial.println("[portal] not configured (copy portal_config.example.h to portal_config.h); client is off");
     return;
   }
+  if (https()) mbedtls_platform_set_calloc_free(tlsCalloc, tlsFree);
   Serial.printf("[portal] polling %s every %u s\n", PORTAL_URL, (unsigned)(POLL_MS / 1000));
   // Core 0 with Wi-Fi and the web server; stack is generous because mbedTLS handshakes run in it.
   xTaskCreatePinnedToCore(task, "portal", 16 * 1024, nullptr, 1, nullptr, 0);

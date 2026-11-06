@@ -38,9 +38,11 @@ If uploads fail with "No serial data received", close the Arduino IDE Serial Mon
 - **Alarms:** set them in the portal. At the alarm time the screen turns pink and pulses, and the sound repeats until you touch the screen (or press **BOOT**). It stops by itself after 5 minutes. The sound is the file picked in the portal from `/sounds` (mp3, m4a, aac, flac, ogg/opus, wav). No pick, no card, a missing file, or a file that won't decode all fall back to the built-in beep (kept in the internal flash, so it works without a card). Try it without waiting: type `ring` (or `ring <file name>`) in the serial monitor at 115200 baud.
 - **Screen upside down?** Set `FLIP_180` in `display.cpp`.
 
-## Known issue: HTTPS doesn't work yet
+## HTTPS
 
-TLS can't allocate its buffers: the serial log says `TLS: SSL - Memory allocation failed (free heap 47460, largest block 31732)`. mbedTLS in this core keeps two fixed 16 KB buffers (plus handshake state) in internal RAM and needs about 33 KB in one piece. So the clock only talks to a plain `http://` portal for now (for example `npm run dev` on the LAN). A deployed `https://…workers.dev` portal needs this solved first.
+A deployed `https://…workers.dev` portal works: certificates are checked against the built-in Mozilla CA bundle, and the TLS connection is kept alive between the 10 s polls (the first handshake takes ~2 s on weak Wi-Fi, later polls ~60 ms). The clock needs NTP to have synced first, so it waits before the first HTTPS request.
+
+This took a workaround. This Arduino-ESP32 core builds mbedTLS with `CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC`, so its two fixed 16 KB record buffers must sit in internal RAM, and the largest free internal block is only ~31 KB (`TLS: SSL - Memory allocation failed`). `portal_client.cpp` installs an allocation hook with `mbedtls_platform_set_calloc_free` that puts every mbedTLS allocation of 1 KB or more in PSRAM; small ones stay internal. With it, internal heap stays around 32–47 KB free during polling (check `min heap` in the `[portal] poll (...)` log line). If you ever rebuild the core with `CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC` the hook becomes redundant but harmless.
 
 ## Pins (from Waveshare's demo code)
 
