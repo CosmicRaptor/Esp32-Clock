@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="robots" content="noindex">
+<title>Faces · Bhoomi's clock</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='88'>🐼</text></svg>">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/faces.css">
+</head>
+<body>
+<main class="wide">
+
+<!-- ============ list ============ -->
+<section id="listView" hidden>
+  <header class="top">
+    <div>
+      <a class="back" href="/">← Clock</a>
+      <h1>Faces</h1>
+    </div>
+    <button class="btn primary" id="newFace">+ New face</button>
+  </header>
+
+  <p class="active" id="active"></p>
+
+  <ul class="faces" id="faces"></ul>
+  <p class="hint center" id="facesEmpty" hidden>No faces yet. Make one with <b>+ New face</b>: pick a background, add a panda, and let it snow.</p>
+  <p class="hint" id="facesHint">The clock shows the <b>pinned</b> face if there is one. Otherwise it goes down the list and takes the first face whose rules fit right now (so put the special ones first), then the <b>fallback</b>, then its built-in face.</p>
+</section>
+
+<!-- ============ editor ============ -->
+<section id="editView" hidden>
+  <header class="top">
+    <div>
+      <button class="back linklike" id="editBack" type="button">← Faces</button>
+      <h1 id="editTitle">New face</h1>
+    </div>
+    <div class="actions tight">
+      <button class="btn ghost" id="editRevert" type="button" hidden>Revert</button>
+      <button class="btn primary" id="editSave" type="button">Save</button>
+    </div>
+  </header>
+
+  <div class="editor-grid">
+    <div class="col-stage">
+      <div class="stage-wrap">
+        <div class="stage" id="stageBox">
+          <canvas id="stage" width="640" height="480" tabindex="0" aria-label="Preview of the clock face. Drag things to move them; arrow keys nudge the selected one."></canvas>
+          <div class="stage-empty" id="stageEmpty" hidden>Choose a background to start</div>
+        </div>
+        <div class="stage-bar">
+          <button class="btn ghost small" id="playBtn" type="button" aria-pressed="true">⏸ Pause</button>
+          <span class="hint" id="stageHint">Drag to move · arrow keys nudge</span>
+        </div>
+      </div>
+
+      <div class="card meter-card" id="meterCard">
+        <div class="row">
+          <h2>Redraw budget</h2>
+          <span class="meta" id="meterText">…</span>
+        </div>
+        <div class="meter" id="meter" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Share of the clock's animation budget used">
+          <i id="meterFill"></i><b id="meterMark"></b>
+        </div>
+        <ul class="problems" id="problems"></ul>
+        <details class="where" id="meterDetails">
+          <summary>What costs the most</summary>
+          <ul id="meterItems"></ul>
+          <p class="hint" id="meterMem"></p>
+        </details>
+      </div>
+    </div>
+
+    <div class="col-side">
+      <div class="card">
+        <label class="lbl first" for="fName">Name</label>
+        <input id="fName" maxlength="30" placeholder="Paris at sunset">
+      </div>
+
+      <div class="card">
+        <h2>Things on the face</h2>
+        <ul class="elements" id="elements"></ul>
+        <div class="actions left">
+          <button class="btn ghost small" id="addLayer" type="button">+ Sprite</button>
+          <button class="btn ghost small" id="addParticles" type="button">+ Particles</button>
+          <button class="btn ghost small" id="addIcon" type="button">+ Icon</button>
+        </div>
+      </div>
+
+      <div class="card" id="inspector" aria-live="polite"></div>
+
+      <div class="card" id="imagesCard">
+        <div class="row">
+          <h2>Images</h2>
+          <span class="meta" id="imagesMeta"></span>
+        </div>
+        <p class="hint first">Upload PNGs. A background is cropped to 320×240. Sprites keep their see-through parts and are shrunk to at most 160×160. Click a sprite below to put it on the face.</p>
+        <div class="actions left">
+          <label class="btn ghost small" tabindex="0" role="button" id="bgChoose">Choose background<input type="file" id="bgPick" accept="image/*" hidden></label>
+          <label class="btn ghost small" tabindex="0" role="button" id="spChoose">Add sprites<input type="file" id="spPick" accept="image/*" multiple hidden></label>
+          <label class="inline-field" title="For an animated sprite sheet: how many equal frames sit side by side in the PNG">
+            <span>frames across</span><input type="number" id="spFrames" min="1" max="16" value="1">
+          </label>
+        </div>
+        <ul class="library" id="library"></ul>
+      </div>
+
+      <div class="card" id="whenCard">
+        <h2>When</h2>
+        <p class="hint first" id="whenSummary"></p>
+        <div id="whenBody"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="/face-motion.js"></script>
+<script src="/face-rules.js"></script>
+<script src="/face-assets.js"></script>
+<script src="/faces.js"></script>
+</body>
+</html>

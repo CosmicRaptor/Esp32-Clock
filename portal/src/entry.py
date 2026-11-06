@@ -343,6 +343,8 @@ class Default(WorkerEntrypoint):
 
         if path == "/api/face-check" and method == "POST":
             data = await read_json(request)
+            if isinstance(data, dict) and not str(data.get("name") or "").strip():
+                data = {**data, "name": "Untitled"}  # a missing name is for Save to complain about, not the meter
             try:
                 _, report = model.check_face(data, await self.asset_metas(model.draft_hashes(data)), "0" * 12)
             except Invalid as err:
@@ -483,13 +485,15 @@ class Default(WorkerEntrypoint):
         it must never make a save fail."""
         try:
             listing = await self.env.CLOCK.list(js_obj({"prefix": META_PREFIX}))
-            hashes = [str(k.name).removeprefix(META_PREFIX) for k in listing.keys]
+            if hasattr(listing, "to_py"):
+                listing = listing.to_py()
+            hashes = [k["name"].removeprefix(META_PREFIX) for k in listing["keys"]]  # (not listing.keys: that's a method)
             metas, state = await asyncio.gather(self.asset_metas(hashes), self.load_state())
             docs = await asyncio.gather(*(self.load_face(e["id"]) for e in state["faces"]["list"]))
             for h in model.unreferenced_assets(metas, [f for f in docs if f], time.time()):
                 await asyncio.gather(*(self.env.CLOCK.delete(prefix + h) for prefix in (ASSET_PREFIX, PNG_PREFIX, META_PREFIX)))
-        except Exception:
-            pass
+        except Exception as e:
+            print("collect_assets failed:", repr(e))  # shows in the Worker's logs
 
     # ---------- clock ----------
 
