@@ -4,3 +4,4 @@ build/
 *.elf
 *.map
 .vscode/
+portal_config.h

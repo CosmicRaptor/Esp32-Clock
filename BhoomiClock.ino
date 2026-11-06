@@ -4,6 +4,7 @@
 // - Time zone picked on the setup page, changeable later at http://bhoomi-clock.local
 // - NTP time, shown in local time
 // - Photos and sounds uploaded to the microSD card from the same page
+// - Cloud admin portal (portal/): message, photo and alarms, polled over HTTPS as protobuf
 //
 // Build & flash: ./build.sh flash
 
@@ -12,6 +13,7 @@
 
 #include "app_lock.h"
 #include "display.h"
+#include "portal_client.h"
 #include "settings.h"
 #include "storage.h"
 #include "ui.h"
@@ -49,6 +51,7 @@ void setup() {
   storage::begin();
   wifisetup::begin(AP_NAME, onWifi);
   web::begin();  // after Wi-Fi: opening a socket before the TCP/IP stack is up crashes
+  portal::begin();  // own task; idles until Wi-Fi is online (and, for https, NTP has synced)
 }
 
 void loop() {

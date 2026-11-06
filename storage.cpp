@@ -13,6 +13,7 @@ constexpr int PIN_D0 = 16;
 constexpr int PIN_D3 = 21;  // held high to keep the card in SD (not SPI) mode
 
 bool isMounted = false;
+volatile uint32_t gen = 0;
 
 }  // namespace
 
@@ -38,12 +39,15 @@ bool begin() {
   for (const char *d : {"/photos", "/sounds"})
     if (!SD_MMC.exists(d)) SD_MMC.mkdir(d);
   isMounted = true;
+  gen = gen + 1;
   Serial.printf("[sd] mounted: %llu MB, %llu MB used\n", SD_MMC.totalBytes() >> 20,
                 SD_MMC.usedBytes() >> 20);
   return true;
 }
 
 bool mounted() { return isMounted; }
+uint32_t generation() { return gen; }
+void touch() { gen = gen + 1; }
 uint64_t totalBytes() { return isMounted ? SD_MMC.totalBytes() : 0; }
 uint64_t usedBytes() { return isMounted ? SD_MMC.usedBytes() : 0; }
 

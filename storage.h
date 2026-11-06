@@ -12,6 +12,11 @@ bool mounted();
 uint64_t totalBytes();
 uint64_t usedBytes();
 
+// Bumped whenever the card is (re)mounted or a file is added/removed through the web page, so the
+// portal client knows when to re-send the /sounds list. Safe to read from any task.
+uint32_t generation();
+void touch();
+
 bool validFolder(const String &folder);   // "photos" or "sounds"
 String cleanName(const String &name);     // safe FAT file name, "" if nothing usable
 String folderPath(const String &folder);  // "/photos"

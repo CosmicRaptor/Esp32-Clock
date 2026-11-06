@@ -1,8 +1,14 @@
 #include "ui.h"
 
+#include <esp_heap_caps.h>
+#include <jpeg_decoder.h>  // ESP-IDF esp_jpeg (TJpgDec): baseline JPEG -> RGB565
 #include <lvgl.h>
 #include <time.h>
 
+#include "app_lock.h"
+
+#include "display.h"
+#include "portal_client.h"
 #include "settings.h"
 #include "web.h"
 
@@ -26,14 +32,19 @@ constexpr uint32_t SPLASH_MS = 2500;  // "I'm online!" before switching to the c
 
 String ap;
 lv_font_t *bigFont = nullptr;
+lv_font_t *photoFont = nullptr;
 
 lv_obj_t *scr;
 // "join my network" view
 lv_obj_t *setupView, *hint;
 // spinner + message view (waking / joining / online splash)
 lv_obj_t *msgView, *spinner, *bigIcon, *msgTitle, *msgBody;
-// clock view
+// clock view (no photo)
 lv_obj_t *clockView, *dateLabel, *timeLabel, *footLabel;
+// clock view over the photo: full-screen image, dark bar at the bottom with time + date
+lv_obj_t *photoView, *photoImg, *photoTime, *photoDate, *photoFoot;
+// the message card, floating above whichever clock view is showing
+lv_obj_t *noteCard, *noteLabel;
 
 wifisetup::Phase phase = Phase::JoiningSaved;
 uint32_t onlineAt = 0;
@@ -149,18 +160,71 @@ void buildClock() {
   footLabel = label(clockView, &lv_font_montserrat_14, MUTE);
 }
 
+// ---------- photo view: the portal's photo with the time on a dark bar ----------
+void buildPhoto() {
+  photoView = lv_obj_create(scr);
+  lv_obj_remove_style_all(photoView);
+  lv_obj_set_size(photoView, lv_pct(100), lv_pct(100));
+  lv_obj_remove_flag(photoView, LV_OBJ_FLAG_SCROLLABLE);
+
+  photoImg = lv_image_create(photoView);
+  lv_obj_set_size(photoImg, display::WIDTH, display::HEIGHT);
+  lv_obj_align(photoImg, LV_ALIGN_TOP_LEFT, 0, 0);
+  lv_image_set_inner_align(photoImg, LV_IMAGE_ALIGN_CENTER);
+
+  lv_obj_t *bar = box(photoView, LV_FLEX_FLOW_ROW);
+  lv_obj_set_size(bar, lv_pct(100), 78);
+  lv_obj_align(bar, LV_ALIGN_BOTTOM_MID, 0, 0);
+  lv_obj_set_style_bg_color(bar, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(bar, LV_OPA_60, 0);
+  lv_obj_set_style_pad_hor(bar, 14, 0);
+  lv_obj_set_style_pad_column(bar, 12, 0);
+  lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+  photoTime = lv_label_create(bar);
+  lv_obj_set_style_text_font(photoTime, photoFont ? photoFont : &lv_font_montserrat_48, 0);
+  lv_obj_set_style_text_color(photoTime, lv_color_white(), 0);
+  lv_label_set_long_mode(photoTime, LV_LABEL_LONG_CLIP);
+
+  lv_obj_t *col = box(bar, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_size(col, 132, LV_SIZE_CONTENT);
+  lv_obj_set_style_pad_row(col, 2, 0);
+  lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+  photoDate = label(col, &lv_font_montserrat_16, lv_color_white(), LV_TEXT_ALIGN_RIGHT);
+  photoFoot = label(col, &lv_font_montserrat_14, lv_color_hex(0xFFB3C0), LV_TEXT_ALIGN_RIGHT);
+}
+
+void buildNote() {
+  noteCard = lv_obj_create(scr);
+  lv_obj_remove_style_all(noteCard);
+  lv_obj_set_size(noteCard, 296, LV_SIZE_CONTENT);
+  lv_obj_align(noteCard, LV_ALIGN_TOP_MID, 0, 12);
+  lv_obj_remove_flag(noteCard, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_bg_color(noteCard, lv_color_white(), 0);
+  lv_obj_set_style_bg_opa(noteCard, LV_OPA_90, 0);
+  lv_obj_set_style_radius(noteCard, 14, 0);
+  lv_obj_set_style_pad_all(noteCard, 12, 0);
+  noteLabel = label(noteCard, &lv_font_montserrat_16, INK);
+  lv_obj_add_flag(noteCard, LV_OBJ_FLAG_HIDDEN);
+}
+
 void updateFooter() {
   const tz::Zone *z = settings::timezone();
+  bool warn = true;
   if (phase == Phase::Reconnecting) {
     lv_obj_set_style_text_color(footLabel, ACCENT, 0);
     lv_label_set_text(footLabel, LV_SYMBOL_WARNING "  Wi-Fi lost, reconnecting...");
+    lv_label_set_text(photoFoot, LV_SYMBOL_WARNING " Wi-Fi lost");
   } else if (!z) {
     lv_obj_set_style_text_color(footLabel, ACCENT, 0);
     lv_label_set_text_fmt(footLabel, "Set the time zone at %s.local", web::HOSTNAME);
+    lv_label_set_text(photoFoot, "Set time zone");
   } else {
+    warn = false;
     lv_obj_set_style_text_color(footLabel, MUTE, 0);
     lv_label_set_text_fmt(footLabel, "%s  " LV_SYMBOL_WIFI "  %s.local", z->city, web::HOSTNAME);
   }
+  show(photoFoot, warn);  // over the photo only problems are worth the space
 }
 
 void updateClock() {
@@ -172,6 +236,9 @@ void updateClock() {
     lv_label_set_text(dateLabel, "");
     lv_obj_set_style_text_font(timeLabel, &lv_font_montserrat_20, 0);
     lv_label_set_text(timeLabel, "Getting the time...");
+    lv_label_set_text(photoDate, "");
+    lv_obj_set_style_text_font(photoTime, &lv_font_montserrat_20, 0);
+    lv_label_set_text(photoTime, "Getting the time...");
     lastMin = -1;
   } else {
     time_t now = time(nullptr);
@@ -187,6 +254,9 @@ void updateClock() {
       strftime(wday, sizeof wday, "%A", &t);
       strftime(month, sizeof month, "%B", &t);
       lv_label_set_text_fmt(dateLabel, "%s, %d %s", wday, t.tm_mday, month);
+      lv_obj_set_style_text_font(photoTime, photoFont ? photoFont : &lv_font_montserrat_48, 0);
+      lv_label_set_text(photoTime, buf);
+      lv_label_set_text_fmt(photoDate, "%s\n%d %s", wday, t.tm_mday, month);
     }
   }
   if (settings::timezone() != lastZone || phase != lastPhase) updateFooter();
@@ -194,18 +264,154 @@ void updateClock() {
   lastPhase = phase;
 }
 
-enum class View { Setup, Msg, Clock };
+// ---------- portal data (stub: serial logs until the clock face is designed) ----------
+uint32_t seenPortalRev = 0;
+
+enum class View { Setup, Msg, Clock, Photo };
 View current = View::Msg;
+bool inClock() { return current == View::Clock || current == View::Photo; }
+void showView(View v);
+
+// The decoded photo: 320x240 RGB565 in PSRAM, wrapped for LVGL. Two slots so the new picture is
+// ready before the old one is released.
+struct Decoded {
+  lv_image_dsc_t dsc;
+  uint8_t *px = nullptr;
+};
+Decoded slots[2];
+int slotInUse = -1;
+char shownPhotoId[13] = "";  // id of the photo on screen ("" = none)
+
+// Decodes the portal's JPEG once; LVGL then just blits the result. Called with app::Lock held.
+bool decodePhoto(const uint8_t *jpg, size_t n, const char *id) {
+  esp_jpeg_image_cfg_t cfg = {};
+  cfg.indata = (uint8_t *)jpg;
+  cfg.indata_size = n;
+  cfg.out_format = JPEG_IMAGE_FORMAT_RGB565;
+  cfg.out_scale = JPEG_IMAGE_SCALE_0;
+  esp_jpeg_image_output_t info = {};
+  if (esp_jpeg_get_image_info(&cfg, &info) != ESP_OK || !info.width || !info.height) {
+    Serial.printf("[ui] photo %s: not a decodable JPEG\n", id);
+    return false;
+  }
+  int slot = slotInUse == 0 ? 1 : 0;
+  free(slots[slot].px);
+  slots[slot].px = (uint8_t *)heap_caps_malloc(info.output_len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!slots[slot].px) {
+    Serial.printf("[ui] photo %s: no memory for %u bytes\n", id, (unsigned)info.output_len);
+    return false;
+  }
+  cfg.outbuf = slots[slot].px;
+  cfg.outbuf_size = info.output_len;
+  uint32_t t0 = millis();
+  if (esp_jpeg_decode(&cfg, &info) != ESP_OK) {
+    Serial.printf("[ui] photo %s: decode failed\n", id);
+    free(slots[slot].px);
+    slots[slot].px = nullptr;
+    return false;
+  }
+  lv_image_dsc_t &d = slots[slot].dsc;
+  memset(&d, 0, sizeof d);
+  d.header.magic = LV_IMAGE_HEADER_MAGIC;
+  d.header.cf = LV_COLOR_FORMAT_RGB565;
+  d.header.w = info.width;
+  d.header.h = info.height;
+  d.header.stride = info.width * 2;
+  d.data_size = info.output_len;
+  d.data = slots[slot].px;
+  lv_image_set_src(photoImg, &d);
+  int old = slotInUse;
+  slotInUse = slot;
+  if (old >= 0) {
+    free(slots[old].px);
+    slots[old].px = nullptr;
+  }
+  strlcpy(shownPhotoId, id, sizeof shownPhotoId);
+  Serial.printf("[ui] photo %s: %ux%u decoded in %u ms\n", id, info.width, info.height,
+                (unsigned)(millis() - t0));
+  return true;
+}
+
+void removePhoto() {
+  if (slotInUse < 0) return;
+  lv_image_set_src(photoImg, nullptr);
+  free(slots[slotInUse].px);
+  slots[slotInUse].px = nullptr;
+  slotInUse = -1;
+  shownPhotoId[0] = 0;
+}
+
+char noteShown[481] = "";   // the text on the card
+uint32_t noteShownAt = 0;   // when it last (re)appeared: the card shows for the first 20 s of every minute
+
+void applyPortal() {
+  size_t n = 0;
+  const uint8_t *jpg = portal::photo(&n);
+  const char *note = portal::note();
+
+  bool hadPhoto = slotInUse >= 0;
+  if (jpg && n) {
+    if (strcmp(shownPhotoId, portal::photoId()) != 0) decodePhoto(jpg, n, portal::photoId());
+  } else {
+    removePhoto();
+  }
+  if ((slotInUse >= 0) != hadPhoto && inClock()) showView(View::Clock);  // switch faces
+
+  if (strcmp(noteShown, note ? note : "") != 0) {
+    strlcpy(noteShown, note ? note : "", sizeof noteShown);
+    lv_label_set_text(noteLabel, noteShown);
+    noteShownAt = millis();
+  }
+
+  Serial.printf("[ui] portal update: note=%s%s%s, photo=%s (%u bytes), %u alarm(s)\n", note ? "\"" : "none",
+                note ? note : "", note ? "\"" : "", jpg ? portal::photoId() : "none", (unsigned)n,
+                (unsigned)portal::state().alarms_count);
+}
+
+// The card is up for the first 20 s of each minute, so the photo isn't covered all day.
+void updateNote() {
+  bool want = noteShown[0] && inClock() && (millis() - noteShownAt) % 60000 < 20000;
+  if (want == !lv_obj_has_flag(noteCard, LV_OBJ_FLAG_HIDDEN)) return;
+  show(noteCard, want);
+}
+
+bool alarmMatches(const portal::Alarm &a, const struct tm &t) {
+  if (a.hour != (uint32_t)t.tm_hour || a.minute != (uint32_t)t.tm_min) return false;
+  if (a.days) return a.days & (1u << t.tm_wday);
+  return a.has_date && a.date.year == (uint32_t)t.tm_year + 1900 && a.date.month == (uint32_t)t.tm_mon + 1 &&
+         a.date.day == (uint32_t)t.tm_mday;
+}
+
+void checkAlarms() {
+  static time_t lastMinute = 0;
+  if (!timeValid() || !portal::haveState()) return;
+  time_t now = time(nullptr);
+  if (now / 60 == lastMinute) return;
+  lastMinute = now / 60;
+  struct tm t;
+  localtime_r(&now, &t);
+  const portal::State &s = portal::state();
+  for (pb_size_t i = 0; i < s.alarms_count; i++) {
+    if (!alarmMatches(s.alarms[i], t)) continue;
+    // TODO(alarm): play /sounds/<sound> (or the built-in beep) and show the label.
+    Serial.printf("[alarm] RING %s %02u:%02u \"%s\" sound=%s\n", s.alarms[i].id, (unsigned)s.alarms[i].hour,
+                  (unsigned)s.alarms[i].minute, s.alarms[i].label,
+                  s.alarms[i].sound[0] ? s.alarms[i].sound : "(beep)");
+  }
+}
 
 void showView(View v) {
+  if (v == View::Clock && slotInUse >= 0) v = View::Photo;  // "Clock" = whichever face applies
   current = v;
   show(setupView, v == View::Setup);
   show(msgView, v == View::Msg);
   show(clockView, v == View::Clock);
-  if (v == View::Clock) {
+  show(photoView, v == View::Photo);
+  if (inClock()) {
     updateFooter();
     updateClock();
   }
+  updateNote();
 }
 
 void showMsg(bool busy, const char *title, const String &body) {
@@ -221,6 +427,7 @@ void showMsg(bool busy, const char *title, const String &body) {
 void begin(const char *apName) {
   ap = apName;
   bigFont = lv_tiny_ttf_create_data(montserrat_medium_ttf, montserrat_medium_ttf_len, 92);
+  photoFont = lv_tiny_ttf_create_data(montserrat_medium_ttf, montserrat_medium_ttf_len, 56);
 
   scr = lv_screen_active();
   lv_obj_set_style_bg_color(scr, BG, 0);
@@ -228,6 +435,8 @@ void begin(const char *apName) {
   buildSetup();
   buildMsg();
   buildClock();
+  buildPhoto();
+  buildNote();  // last, so it floats above everything
   showMsg(true, "Waking up...", "");
 }
 
@@ -258,7 +467,7 @@ void showWifi(const wifisetup::Status &s) {
       else showMsg(true, "Reconnecting...", s.ssid);
       break;
     case Phase::Online:
-      if (current == View::Clock) {  // came back from a blip: no fanfare
+      if (inClock()) {  // came back from a blip: no fanfare
         updateFooter();
       } else {
         showMsg(false, "I'm online!", s.ssid);
@@ -270,13 +479,19 @@ void showWifi(const wifisetup::Status &s) {
 
 void loop() {
   static uint32_t last = 0;
+  if (portal::revision() != seenPortalRev) {
+    seenPortalRev = portal::revision();
+    applyPortal();
+  }
+  checkAlarms();
   if (onlineAt && millis() - onlineAt > SPLASH_MS) {
     onlineAt = 0;
     if (phase == Phase::Online) showView(View::Clock);
   }
-  if (current == View::Clock && millis() - last >= 250) {
+  if (inClock() && millis() - last >= 250) {
     last = millis();
     updateClock();
+    updateNote();
   }
 }
 

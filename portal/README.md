@@ -38,7 +38,7 @@ For extra protection, put [Cloudflare Access](https://developers.cloudflare.com/
 
 ## Clock API
 
-The messages are defined in [`proto/clock.proto`](../proto/clock.proto). The firmware uses the nanopb code in `proto/nanopb/`. Every request sends `Authorization: Bearer <DEVICE_TOKEN>`.
+The messages are defined in [`proto/clock.proto`](../proto/clock.proto). The firmware uses the nanopb code in `clock.pb.{c,h}` at the sketch root. Every request sends `Authorization: Bearer <DEVICE_TOKEN>`.
 
 **`GET /api/device/state?tz=Asia/Kolkata&fw=0.4.0&rssi=-71`** returns a `DeviceState` (`application/x-protobuf`). Poll it every 30–60 s. Send the last `ETag` as `If-None-Match` to get a bare `304` when nothing changed. The query parameters are optional. They power the "Clock online" line, the time zone label on alarms, and the weak Wi-Fi hint. Add `&format=json` to read the response with curl.
 
@@ -64,4 +64,4 @@ This is what the page uses. Requests need the session cookie from `POST /api/log
 
 - KV's free tier allows 1,000 writes a day. Check-ins write at most once every 10 minutes, so a clock polling all day uses about 150 of them.
 - Python packages the Worker imports go in `pyproject.toml`. `pywrangler` vendors them into `python_modules/` (gitignored) and pins them in `pylock.toml`. `protoc`'s version must not be newer than the vendored `protobuf`: `protoc` 36.x pairs with `protobuf` 7.36.x.
-- `proto/nanopb/` is generated with nanopb 0.4.9.1. The firmware needs the matching Nanopb Arduino library.
+- `clock.pb.{c,h}` (sketch root) are generated with nanopb 0.4.9.1. The firmware needs the matching Nanopb runtime: it isn't in the Arduino Library Manager index, so copy `pb.h pb_common.[ch] pb_decode.[ch] pb_encode.[ch]` from the upstream `0.4.9.1` tag into `~/Documents/Arduino/libraries/Nanopb/` (with a `library.properties`).

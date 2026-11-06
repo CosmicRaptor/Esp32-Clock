@@ -183,6 +183,7 @@ void handleDelete() {
   if (!argPath(path, name)) return;
   if (!SD_MMC.exists(path)) return sendError(404, "not found");
   if (!SD_MMC.remove(path)) return sendError(500, "could not delete");
+  storage::touch();
   Serial.printf("[sd] deleted %s\n", path.c_str());
   sendJson("{\"ok\":true}");
 }
@@ -272,6 +273,7 @@ void handleUploadData() {
       if (!flushBuf()) return abortUpload("write failed (card full?)");
       up.file.close();
       if (!SD_MMC.rename(up.tmpPath, up.finalPath)) return abortUpload("could not save file");
+      storage::touch();
       uint32_t ms = millis() - up.started;
       Serial.printf("[sd] saved %s (%u bytes, %u ms, %.0f KB/s)\n", up.finalPath.c_str(),
                     (unsigned)up.total, (unsigned)ms, ms ? up.total / 1.024 / ms : 0.0);

@@ -13,7 +13,9 @@ Wi-Fi/NTP desk clock for the **Waveshare ESP32-S3-Touch-LCD-2.8** (ST7789 240×3
 
 ## Build & flash
 
-Needs the Arduino IDE (its bundled `arduino-cli` is used), the `esp32:esp32` core 3.x, and the `lvgl@9.2.2` library.
+Needs the Arduino IDE (its bundled `arduino-cli` is used), the `esp32:esp32` core 3.x, the `lvgl@9.2.2` library, and the Nanopb 0.4.9.1 runtime in `~/Documents/Arduino/libraries/Nanopb/` (not in the Library Manager index; see `portal/README.md`, "Notes").
+
+To talk to the cloud portal, copy `portal_config.example.h` to `portal_config.h` (gitignored) and set `PORTAL_URL` and `PORTAL_DEVICE_TOKEN`. Without it the sketch still builds and the portal client stays off.
 
 ```bash
 ./build.sh          # compile
@@ -52,6 +54,8 @@ If uploads fail with "No serial data received", close the Arduino IDE Serial Mon
 | `web.*` | HTTP server (own task) and mDNS (`bhoomi-clock.local`); file list/upload/download/delete |
 | `page_html.h` | the single page: Wi-Fi + time zone (setup) or time zone + photos & sounds (settings) |
 | `storage.*` | microSD mount (never formats), folder and file-name rules |
+| `portal_client.*` | cloud portal client (own task): polls the state over HTTPS/protobuf with ETag, downloads the photo, PUTs the `/sounds` list. Keeps a copy of the last state in internal flash (`/state.pb`, FFat) and the photo on the SD card (`/portal/photo.jpg`), restored at boot |
+| `clock.pb.*` | generated nanopb code (`proto/generate.sh`) |
 | `app_lock.h` | the lock shared by the main loop and the web task |
 | `timezones.*` | curated IANA → POSIX TZ table |
 | `settings.*` | saved time zone (NVS) |
