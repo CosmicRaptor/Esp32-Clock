@@ -70,9 +70,9 @@ class AssetFileTests(unittest.TestCase):
         self.assertEqual(model.check_sprite_file(sprite_bytes(24, 22)), (24, 22))
 
     def test_the_browsers_encoder_output_is_accepted(self):
-        """tests/vectors/sprite_3x2.bin is what public/face-assets.js makes (tests/js/face-assets.test.js pins it)."""
-        with open(os.path.join(os.path.dirname(__file__), "vectors", "sprite_3x2.bin"), "rb") as f:
-            self.assertEqual(model.check_sprite_file(f.read()), (3, 2))
+        """tests/vectors/sprite_3x2.hex is what public/face-assets.js makes (tests/js/face-assets.test.js pins it)."""
+        with open(os.path.join(os.path.dirname(__file__), "vectors", "sprite_3x2.hex")) as f:
+            self.assertEqual(model.check_sprite_file(bytes.fromhex(f.read().strip())), (3, 2))
 
     def test_sprite_wrong_length(self):
         with self.assertRaises(Invalid):

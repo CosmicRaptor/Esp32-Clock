@@ -30,7 +30,7 @@ test('the encoder\'s output is the fixture the Python side validates', () => {
     255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255,
     255, 255, 255, 128, 0, 0, 0, 0, 0x88, 0xcc, 0xff, 7,
   ]);
-  const fixture = fs.readFileSync(path.join(__dirname, '..', 'vectors', 'sprite_3x2.bin'));
+  const fixture = Buffer.from(fs.readFileSync(path.join(__dirname, '..', 'vectors', 'sprite_3x2.hex'), 'utf8').trim(), 'hex');
   assert.deepEqual([...A.encodeSprite(rgba, 3, 2)], [...fixture]);
 });
 
