@@ -17,7 +17,7 @@ Wi-Fi/NTP desk clock for the **Waveshare ESP32-S3-Touch-LCD-2.8** (ST7789 240×3
 
 Needs the Arduino IDE (its bundled `arduino-cli` is used), the `esp32:esp32` core 3.x, the `lvgl@9.2.2` and `ESP32-audioI2S-master@3.4.7` libraries (`arduino-cli lib install ESP32-audioI2S-master@3.4.7`), and the Nanopb 0.4.9.1 runtime in `~/Documents/Arduino/libraries/Nanopb/` (not in the Library Manager index; see `portal/README.md`, "Notes").
 
-To talk to the cloud portal, copy `portal_config.example.h` to `portal_config.h` (gitignored) and set `PORTAL_URL` and `PORTAL_DEVICE_TOKEN`. Without it the sketch still builds and the portal client stays off.
+To talk to the cloud portal, copy `portal_config.example.h` to `portal_config.h` (gitignored) and set `PORTAL_URL`, `PORTAL_DEVICE_TOKEN` and the Cloudflare Access service token (`PORTAL_ACCESS_CLIENT_ID` / `PORTAL_ACCESS_CLIENT_SECRET`). Without a URL the sketch still builds and the portal client stays off. The keys are only the defaults: the settings page can replace them (see below), so an expired key never needs a reflash.
 
 ```bash
 ./build.sh          # compile
@@ -34,6 +34,7 @@ If uploads fail with "No serial data received", close the Arduino IDE Serial Mon
 - **Saved network unreachable at power-on:** the setup hotspot comes back after about 20 s. The clock keeps retrying the saved network every minute.
 - **Forget Wi-Fi:** hold **BOOT** for 5 s.
 - **Change the time zone:** open http://bhoomi-clock.local (or the clock's IP) from any device on the same Wi-Fi.
+- **Replace an expired key:** same page, **Cloud connection** card. It shows whether the clock reaches the portal, and says when Cloudflare Access turns it away (service token expired) or the device token is rejected. Under **Update keys**, paste the new Access Client ID / Secret or device token. They're saved on the clock (NVS) and used right away. The page never shows a saved key again, only its first or last 4 characters. **Go back to the built-in keys** forgets them.
 - **Add photos/sounds:** same page, "Photos & sounds" section. Files go to `/photos` and `/sounds` on the card. The card must be FAT32, and the firmware never formats it. Uploads are slow on a weak signal (about 50 KB/s at −90 dBm), so resized photos (~10–40 KB) are quick but big sound files take a while.
 - **Alarms:** set them in the portal. At the alarm time the screen turns pink and pulses, and the sound repeats until you touch the screen (or press **BOOT**). It stops by itself after 5 minutes. The sound is the file picked in the portal from `/sounds` (mp3, m4a, aac, flac, ogg/opus, wav). No pick, no card, a missing file, or a file that won't decode all fall back to the built-in beep (kept in the internal flash, so it works without a card). Try it without waiting: type `ring` (or `ring <file name>`) in the serial monitor at 115200 baud.
 - **Screen upside down?** Set `FLIP_180` in `display.cpp`.
@@ -61,7 +62,7 @@ This took a workaround. This Arduino-ESP32 core builds mbedTLS with `CONFIG_MBED
 |---|---|
 | `BhoomiClock.ino` | setup/loop wiring, NTP |
 | `wifi_setup.*` | non-blocking join / captive portal + DNS / credential storage |
-| `web.*` | HTTP server (own task) and mDNS (`bhoomi-clock.local`); file list/upload/download/delete |
+| `web.*` | HTTP server (own task) and mDNS (`bhoomi-clock.local`); file list/upload/download/delete; cloud keys (`/portal`) |
 | `page_html.h` | the single page: Wi-Fi + time zone (setup) or time zone + photos & sounds (settings) |
 | `storage.*` | microSD mount (never formats), folder and file-name rules |
 | `portal_client.*` | cloud portal client (own task): polls the state every 10 s over one kept-alive connection (protobuf, ETag; it carries what's playing), downloads the photo and the 64×64 covers, PUTs the `/sounds` list. Keeps a copy of the last state in internal flash (`/state.pb`, FFat) and the photo on the SD card (`/portal/photo.jpg`), restored at boot |

@@ -2,6 +2,7 @@
 
 #include <FFat.h>
 #include <HTTPClient.h>
+#include <Preferences.h>
 #include <SD_MMC.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -77,6 +78,24 @@ String etag;
 bool gotTimeWarn = false;
 bool quiet = false;  // don't log routine polls (the 10 s heartbeat would drown the serial monitor)
 
+// ---- keys (guarded by app::Lock) ----
+// The device token and the Cloudflare Access service token expire or get rotated, so they can be
+// changed from the LAN settings page. A value saved there (NVS namespace "portal") wins over the
+// built-in one from portal_config.h; saving "" goes back to the built-in one. Values never leave
+// the clock except in the request headers: the settings page only ever sees the last few characters.
+const char *const KEY_NVS[KEY_COUNT] = {"token", "cf_id", "cf_secret"};
+const char *const KEY_JSON[KEY_COUNT] = {"token", "accessId", "accessSecret"};
+const char *const KEY_BUILTIN[KEY_COUNT] = {PORTAL_DEVICE_TOKEN, PORTAL_ACCESS_CLIENT_ID, PORTAL_ACCESS_CLIENT_SECRET};
+constexpr size_t KEY_MAX = 200;
+String keyVal[KEY_COUNT];
+bool keyCustom[KEY_COUNT] = {};
+uint32_t keysRev = 1;  // bumped on every change; the task takes a fresh copy
+int lastCode = 0;      // the last state poll: HTTP status, <0 = no connection, 0 = none yet
+uint32_t lastAt = 0;   // millis() of it
+
+// ---- task-private copy of the keys, used for every request ----
+String active[KEY_COUNT];
+
 bool https() { return strncmp(PORTAL_URL, "https://", 8) == 0; }
 
 String urlEncode(const char *s) {
@@ -113,10 +132,10 @@ struct Conn {
     String url = String(PORTAL_URL) + path;
     bool ok = https() ? http.begin(secure, url) : http.begin(plain, url);
     if (!ok) return false;
-    http.addHeader("Authorization", String("Bearer ") + PORTAL_DEVICE_TOKEN);
-    if (PORTAL_ACCESS_CLIENT_ID[0]) {  // Cloudflare Access service token: lets the clock past the login page
-      http.addHeader("CF-Access-Client-Id", PORTAL_ACCESS_CLIENT_ID);
-      http.addHeader("CF-Access-Client-Secret", PORTAL_ACCESS_CLIENT_SECRET);
+    http.addHeader("Authorization", "Bearer " + active[KEY_TOKEN]);
+    if (active[KEY_ACCESS_ID].length()) {  // Cloudflare Access service token: lets the clock past the login page
+      http.addHeader("CF-Access-Client-Id", active[KEY_ACCESS_ID]);
+      http.addHeader("CF-Access-Client-Secret", active[KEY_ACCESS_SECRET]);
     }
     return true;
   }
@@ -331,6 +350,11 @@ Poll fetchState(Conn &c) {
     if (const tz::Zone *z = settings::timezone()) q += "&tz=" + urlEncode(z->id);
   }
   int code = c.get(q, etag, true);
+  {
+    app::Lock lock;
+    lastCode = code;
+    lastAt = millis() | 1;
+  }
   if (code == HTTP_CODE_NOT_MODIFIED) {
     c.finish();
     {
@@ -342,9 +366,9 @@ Poll fetchState(Conn &c) {
   }
   if (code != HTTP_CODE_OK) {
     Serial.printf("[portal] state: HTTP %d%s\n", code, code < 0 ? (" " + c.http.errorToString(code)).c_str() : "");
-    if (code == 401) Serial.println("[portal] the device token was rejected; check portal_config.h");
+    if (code == 401) Serial.println("[portal] the device token was rejected; update it on the settings page");
     if (code == 302 || code == 403)  // Access sends anything it doesn't let through to its login page
-      Serial.println("[portal] Cloudflare Access refused the clock; check PORTAL_ACCESS_CLIENT_ID/SECRET in portal_config.h");
+      Serial.println("[portal] Cloudflare Access refused the clock (service token expired?); update it on the settings page");
     if (code == 301) Serial.println("[portal] the portal is HTTPS only; PORTAL_URL must start with https://");
     if (code < 0 && https()) {  // say why a TLS connection failed (certificate, memory, ...)
       char why[100] = "";
@@ -641,7 +665,14 @@ void syncCovers(Conn &c) {
 
 // ---------- the task ----------
 
+bool noTokenWarn = false;
+
 bool ready() {
+  if (active[KEY_TOKEN].isEmpty()) {
+    if (!noTokenWarn) Serial.println("[portal] no device token: set one on the settings page");
+    noTokenWarn = true;
+    return false;
+  }
   if (WiFi.status() != WL_CONNECTED) return false;
   {
     app::Lock lock;
@@ -661,9 +692,27 @@ void task(void *) {
   int photoTries = 0;
   uint32_t photoRetryAt = 0;  // 0 = whenever the state says there's a new photo
   uint32_t lastLog = 0;
+  uint32_t haveRev = 0;  // keysRev of `active`
   Conn c;  // kept for good: the socket stays open between polls
   for (;;) {
     vTaskDelay(pdMS_TO_TICKS(500));
+    {
+      app::Lock lock;
+      if (haveRev != keysRev) {
+        bool first = haveRev == 0;
+        haveRev = keysRev;
+        for (int k = 0; k < KEY_COUNT; k++) active[k] = keyVal[k];
+        noTokenWarn = false;
+        if (!first) {  // new keys from the settings page: try them right away, on a fresh connection
+          c.close();
+          etag = "";
+          nextAt = 0;
+          backoff = BACKOFF_MIN_MS;
+          lastLog = 0;
+          Serial.println("[portal] keys changed on the settings page; reconnecting");
+        }
+      }
+    }
     if (!ready()) continue;
     if (nextAt && (int32_t)(millis() - nextAt) < 0) {
       // Between polls, still pick up a changed /sounds folder promptly.
@@ -702,9 +751,24 @@ void task(void *) {
   }
 }
 
+void loadKeys() {
+  Preferences prefs;
+  prefs.begin("portal", false);  // read-write: creates the namespace, so a read-only open doesn't log an error
+  for (int k = 0; k < KEY_COUNT; k++) {
+    String saved = prefs.getString(KEY_NVS[k], "");
+    keyCustom[k] = saved.length() > 0;
+    keyVal[k] = keyCustom[k] ? saved : String(KEY_BUILTIN[k]);
+  }
+  prefs.end();
+  Serial.print("[portal] keys:");
+  for (int k = 0; k < KEY_COUNT; k++)
+    Serial.printf(" %s=%s", KEY_JSON[k], keyVal[k].isEmpty() ? "none" : keyCustom[k] ? "settings" : "built-in");
+  Serial.println();
+}
+
 }  // namespace
 
-bool configured() { return PORTAL_URL[0] && PORTAL_DEVICE_TOKEN[0]; }
+bool configured() { return PORTAL_URL[0] != 0; }
 bool haveState() { return have; }
 const State &state() { return cur; }
 const char *note() { return have && cur.has_note && cur.note.text[0] ? cur.note.text : nullptr; }
@@ -725,10 +789,74 @@ const uint8_t *cover(int side, size_t *size) {
 const char *coverId(int side) { return coverIdStr[side ? 1 : 0]; }
 uint32_t nowPlayingRevision() { return npRev; }
 
+// ---- keys (the LAN settings page; app::Lock held by the caller) ----
+
+const char *keyProblem(Key k, const String &v) {
+  if (v.length() > KEY_MAX) return "That's too long.";
+  for (size_t i = 0; i < v.length(); i++)
+    if (v[i] <= ' ' || v[i] > '~' || v[i] == '"' || v[i] == '\\') return "That has spaces or odd characters in it.";
+  bool looksLikeId = v.endsWith(".access");
+  if (k == KEY_ACCESS_ID && v.length() && !looksLikeId) return "A Client ID ends in \".access\".";
+  if (k != KEY_ACCESS_ID && looksLikeId) return "That looks like the Client ID, not this one.";
+  return nullptr;
+}
+
+bool setKey(Key k, const String &value, String *error) {
+  if (k < 0 || k >= KEY_COUNT) return false;
+  if (const char *why = keyProblem(k, value)) {
+    if (error) *error = why;
+    return false;
+  }
+  Preferences prefs;
+  prefs.begin("portal", false);
+  bool ok = value.isEmpty() ? (prefs.remove(KEY_NVS[k]) || !prefs.isKey(KEY_NVS[k]))
+                            : prefs.putString(KEY_NVS[k], value) == value.length();
+  prefs.end();
+  if (!ok) {
+    if (error) *error = "Couldn't save it on the clock.";
+    return false;
+  }
+  keyCustom[k] = value.length() > 0;
+  keyVal[k] = keyCustom[k] ? value : String(KEY_BUILTIN[k]);
+  keysRev++;
+  lastCode = 0;  // "connecting" until the next poll with the new key answers, not the old key's result
+  lastAt = 0;
+  Serial.printf("[portal] %s %s from the settings page\n", KEY_JSON[k], keyCustom[k] ? "changed" : "reset to built-in");
+  return true;
+}
+
+String keysJson() {
+  const char *state = "waiting";
+  if (!PORTAL_URL[0]) state = "off";
+  else if (keyVal[KEY_TOKEN].isEmpty()) state = "nokey";
+  else if (lastCode == 200 || lastCode == 304) state = "ok";
+  else if (lastCode == 302 || lastCode == 403) state = "access";
+  else if (lastCode == 401) state = "token";
+  else if (lastCode == 301) state = "https";
+  else if (lastCode < 0) state = "offline";
+  else if (lastCode > 0) state = "error";
+  String out = String("{\"url\":\"") + PORTAL_URL + "\",\"state\":\"" + state + "\",\"code\":" + lastCode +
+               ",\"ago\":" + (lastAt ? String((millis() - lastAt) / 1000) : String("null")) +
+               ",\"okAgo\":" + (okAt ? String((millis() - okAt) / 1000) : String("null")) + ",\"keys\":{";
+  for (int k = 0; k < KEY_COUNT; k++) {
+    const String &v = keyVal[k];
+    // 4 characters, so you can tell which key is in use (the start of a Client ID, which always ends
+    // in ".access"; the end of the others); nothing at all for short values
+    String hint = v.length() < 16      ? String()
+                  : k == KEY_ACCESS_ID ? v.substring(0, 4) + "\u2026"
+                                       : String("\u2026") + v.substring(v.length() - 4);
+    out += String(k ? "," : "") + "\"" + KEY_JSON[k] + "\":{\"set\":" + (v.length() ? "true" : "false") +
+           ",\"custom\":" + (keyCustom[k] ? "true" : "false") + ",\"builtin\":" + (KEY_BUILTIN[k][0] ? "true" : "false") +
+           ",\"hint\":\"" + hint + "\"}";
+  }
+  return out + "}}";
+}
+
 void begin() {
   loadSaved();  // before anything else, so the face has content even if the portal is unreachable
+  loadKeys();
   if (!configured()) {
-    Serial.println("[portal] not configured (copy portal_config.example.h to portal_config.h); client is off");
+    Serial.println("[portal] no PORTAL_URL (copy portal_config.example.h to portal_config.h); client is off");
     return;
   }
   if (https()) mbedtls_platform_set_calloc_free(tlsCalloc, tlsFree);

@@ -4,6 +4,7 @@
 // The one page the clock serves. /info tells it which mode it's in:
 //  - "setup":    on the Bhoomi-Clock hotspot -> Wi-Fi picker + time zone, "Connect"
 //  - "settings": on the home network         -> time zone ("Save") + photos & sounds on the SD card
+//                                               + cloud connection status and its keys (write-only)
 // Networks, zones and files are fetched as JSON and rendered with textContent (no HTML escaping).
 // Photos are decoded and resized in the browser (fit inside 320x240, JPEG) before upload.
 static const char PAGE_HTML[] PROGMEM = R"HTML(<!doctype html>
@@ -55,6 +56,13 @@ select{appearance:none;-webkit-appearance:none}
 .x{position:absolute;top:4px;right:4px;width:26px;height:26px;border-radius:13px;border:0;background:rgba(0,0,0,.55);color:#fff;font-size:15px;line-height:26px;padding:0;cursor:pointer}
 .snd .x{position:static;background:none;color:var(--mute);font-size:18px}
 .play{border:0;background:var(--soft);color:var(--accent);width:32px;height:32px;border-radius:16px;font-size:13px;cursor:pointer;flex:none}
+.dot{display:inline-block;width:9px;height:9px;border-radius:5px;background:var(--mute);margin-right:6px}
+.dot.ok{background:var(--ok)}.dot.err{background:var(--err)}
+details{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}
+summary{cursor:pointer;color:var(--accent);font-size:15px}
+.k{margin-top:12px}.k .lbl{display:flex;justify-content:space-between}
+.k .lbl i{font-style:normal;text-transform:none;letter-spacing:0}
+#keysMsg{margin-top:10px;min-height:1.2em;text-align:center}
 [hidden]{display:none!important}
 </style></head><body><main>
 <h1 id="title">Hello! &#x1F570;</h1>
@@ -99,6 +107,29 @@ select{appearance:none;-webkit-appearance:none}
     <div class="sec"><span class="lbl">Sounds</span><span class="meta" id="sCount"></span></div>
     <ul id="sounds"></ul>
   </div>
+</div>
+
+<div class="card" id="cloud" hidden>
+  <div class="row"><span class="lbl">Cloud connection</span><span class="meta" id="cloudAgo"></span></div>
+  <div style="margin-top:8px"><span class="dot" id="cloudDot"></span><span id="cloudState">Checking…</span></div>
+  <div class="note" id="cloudHelp"></div>
+  <details id="keysBox">
+    <summary>Update keys</summary>
+    <form id="keysForm" autocomplete="off">
+    <p class="note">The clock uses these to reach its cloud page. When one expires, paste the new one here. Fill in only what changed; saved keys are never shown again.</p>
+    <div class="k"><label class="lbl" for="kId">Access Client ID <i id="hId"></i></label>
+      <input id="kId" autocapitalize="none" spellcheck="false" maxlength="200" placeholder="….access"></div>
+    <div class="k"><label class="lbl" for="kSecret">Access Client Secret <i id="hSecret"></i></label>
+      <div class="pw"><input id="kSecret" type="password" maxlength="200" spellcheck="false">
+      <button type="button" class="link" data-show="kSecret">Show</button></div></div>
+    <div class="k"><label class="lbl" for="kToken">Device token <i id="hToken"></i></label>
+      <div class="pw"><input id="kToken" type="password" maxlength="200" spellcheck="false">
+      <button type="button" class="link" data-show="kToken">Show</button></div></div>
+    <button class="go" id="keysGo" style="margin-top:14px">Save keys</button>
+    <div id="keysMsg"></div>
+    <div style="text-align:center"><button type="button" class="link" id="keysReset">Go back to the built-in keys</button></div>
+    </form>
+  </details>
 </div>
 </main>
 <script>
@@ -325,6 +356,59 @@ $('pick').onchange=e=>{enqueue(e.target.files);e.target.value='';};
 // a file dropped anywhere else shouldn't navigate away from the page
 ['dragover','drop'].forEach(t=>window.addEventListener(t,e=>e.preventDefault()));
 
+// ---------------- cloud connection (settings mode) ----------------
+const CLOUD={
+  ok:['ok','Connected.',''],
+  waiting:['','Connecting…',''],
+  access:['err','Cloudflare Access is turning the clock away.','The Access service token has probably expired or been revoked. Enter a new Client ID and Client Secret under "Update keys".'],
+  token:['err','The cloud page doesn\'t accept the clock\'s device token.','Enter the current device token under "Update keys".'],
+  nokey:['err','No device token yet.','Enter it under "Update keys".'],
+  offline:['err','Can\'t reach the cloud page right now.','Usually a Wi-Fi or internet problem. The clock keeps trying on its own.'],
+  https:['err','The cloud page address is wrong (it must start with https://).','This one needs a firmware update.'],
+  error:['err','The cloud page answered with an error.','The clock keeps trying on its own.'],
+  off:['','Not set up on this clock.',''],
+};
+function ago(s){if(s===null||s===undefined)return '';if(s<60)return s+' s ago';if(s<3600)return Math.floor(s/60)+' min ago';
+  if(s<172800)return Math.floor(s/3600)+' h ago';return Math.floor(s/86400)+' days ago';}
+function keyHint(k){if(!k.set)return 'not set';return (k.custom?'saved here':'built-in')+(k.hint?' · '+k.hint:'');}
+let cloudTimer=null;
+async function loadCloud(soon){
+  clearTimeout(cloudTimer);
+  try{
+    const j=await (await fetch('/portal')).json();
+    const c=CLOUD[j.state]||CLOUD.error;
+    $('cloudDot').className='dot '+c[0];
+    $('cloudState').textContent=c[1]+(j.state!=='ok'&&j.code?' ('+j.code+')':'');
+    $('cloudHelp').textContent=c[2]+(j.state!=='ok'&&j.okAgo!==null?' Last connected '+ago(j.okAgo)+'.':'');
+    $('cloudAgo').textContent=j.ago!==null?'checked '+ago(j.ago):'';
+    $('hId').textContent=keyHint(j.keys.accessId);$('hSecret').textContent=keyHint(j.keys.accessSecret);$('hToken').textContent=keyHint(j.keys.token);
+    $('keysReset').hidden=!(j.keys.token.custom||j.keys.accessId.custom||j.keys.accessSecret.custom);
+    if(j.state==='access'||j.state==='token'||j.state==='nokey')$('keysBox').open=true;
+  }catch(e){$('cloudState').textContent='Couldn\'t ask the clock.';$('cloudDot').className='dot';}
+  cloudTimer=setTimeout(()=>loadCloud(false),soon?2000:10000);
+}
+function keysSay(t,c){const m=$('keysMsg');m.textContent=t;m.className=c||'';}
+async function saveKeys(body){
+  $('keysGo').disabled=true;keysSay('Saving…');
+  try{
+    const r=await fetch('/portal',{method:'POST',headers:{'X-Clock':'1'},body});
+    const j=await r.json();if(!r.ok||j.ok===false)throw new Error(j.error||'Could not save.');
+    ['kId','kSecret','kToken'].forEach(i=>$(i).value='');
+    keysSay('Saved! The clock is reconnecting with them…','ok');
+    loadCloud(true);
+  }catch(e){keysSay(e.message||'Could not save.','err');}
+  $('keysGo').disabled=false;
+}
+$('keysForm').onsubmit=e=>{e.preventDefault();
+  const b=new URLSearchParams();
+  [['kId','accessId'],['kSecret','accessSecret'],['kToken','token']].forEach(([i,n])=>{const v=$(i).value.trim();if(v)b.append(n,v);});
+  if(!b.toString()){keysSay('Fill in the key that changed.','err');return;}
+  if(b.has('accessId')!==b.has('accessSecret')&&!confirm('Usually the Client ID and Client Secret change together. Save just the one?'))return;
+  saveKeys(b);
+};
+$('keysReset').onclick=()=>{if(confirm('Forget the keys saved here and use the ones the clock came with?'))saveKeys(new URLSearchParams({reset:'1'}));};
+document.querySelectorAll('[data-show]').forEach(b=>b.onclick=()=>{const p=$(b.dataset.show);const s=p.type==='password';p.type=s?'text':'password';b.textContent=s?'Hide':'Show';});
+
 // ---------------- start ----------------
 (async()=>{
   let info={mode:'setup',tz:''};
@@ -335,6 +419,7 @@ $('pick').onchange=e=>{enqueue(e.target.files);e.target.value='';};
     $('sub').textContent=info.clock?'The clock currently reads '+info.clock+'.':'Adjust how your clock shows the time.';
     $('wifiList').hidden=true;$('wifiCreds').hidden=true;$('go').textContent='Save time zone';
     $('files').hidden=false;refreshFiles();
+    $('cloud').hidden=false;loadCloud(false);
   }else{
     loadNets(false);
   }

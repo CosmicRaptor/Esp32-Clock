@@ -9,6 +9,7 @@
 
 #include "app_lock.h"
 #include "page_html.h"
+#include "portal_client.h"
 #include "settings.h"
 #include "storage.h"
 #include "wifi_setup.h"
@@ -100,6 +101,44 @@ void handleTz() {
   bool ok = settings::setTimezone(server.arg("tz"));
   if (ok) sendJson("{\"ok\":true}");
   else sendError(400, "unknown time zone");
+}
+
+// ---------- cloud portal keys ----------
+// The device token and the Cloudflare Access service token expire or get rotated; these let them be
+// replaced from the settings page without a reflash. Home network only. The keys are write-only:
+// GET /portal returns the connection state and the last few characters of each key, never a value.
+// Changes need an X-Clock header, which a plain form or a fetch from another site can't send without
+// a CORS preflight (that this server never answers), so a web page she happens to open can't change them.
+
+void handlePortalGet() {
+  if (wifisetup::portalActive()) return sendError(409, "not available during setup");
+  app::Lock lock;
+  sendJson(portal::keysJson());
+}
+
+void handlePortalSet() {
+  if (wifisetup::portalActive()) return sendError(409, "not available during setup");
+  if (server.header("X-Clock") != "1") return sendError(403, "missing X-Clock header");
+  static const char *const ARGS[portal::KEY_COUNT] = {"token", "accessId", "accessSecret"};
+  app::Lock lock;
+  bool reset = server.arg("reset") == "1";  // every key back to the built-in one
+  String val[portal::KEY_COUNT];
+  bool use[portal::KEY_COUNT] = {};
+  int n = 0;
+  for (int k = 0; k < portal::KEY_COUNT; k++) {  // check everything first: all or nothing
+    val[k] = reset ? String() : server.arg(ARGS[k]);
+    val[k].trim();
+    use[k] = reset || val[k].length();  // a field left blank means "keep it"
+    if (!use[k]) continue;
+    n++;
+    if (const char *why = portal::keyProblem((portal::Key)k, val[k])) return sendError(400, why);
+  }
+  if (!n) return sendError(400, "Nothing to save: fill in the key that changed.");
+  for (int k = 0; k < portal::KEY_COUNT; k++) {
+    String why;
+    if (use[k] && !portal::setKey((portal::Key)k, val[k], &why)) return sendError(500, why);
+  }
+  sendJson(portal::keysJson());
 }
 
 // ---------- files on the SD card ----------
@@ -318,6 +357,10 @@ void begin() {
   server.on("/file", HTTP_GET, handleFile);
   server.on("/delete", HTTP_POST, handleDelete);
   server.on("/upload", HTTP_POST, handleUploadDone, handleUploadData);
+  server.on("/portal", HTTP_GET, handlePortalGet);
+  server.on("/portal", HTTP_POST, handlePortalSet);
+  static const char *headers[] = {"X-Clock"};
+  server.collectHeaders(headers, 1);
   server.onNotFound(handleNotFound);
   // Core 0 (with Wi-Fi); the main loop and LVGL run on core 1.
   xTaskCreatePinnedToCore(task, "web", 12 * 1024, nullptr, 1, nullptr, 0);

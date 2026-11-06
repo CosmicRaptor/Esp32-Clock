@@ -10,7 +10,8 @@
 //   - downloads GET /api/device/image/<id> when photo.id changes (retried on 404 / failure)
 //   - downloads GET /api/device/art/<id>, the 64x64 covers for the now-playing strip
 //   - PUTs the /sounds file list at boot and whenever the card's files change
-// Configure it in portal_config.h (see portal_config.example.h).
+// Configure it in portal_config.h (see portal_config.example.h); the keys can also be changed on the
+// LAN settings page (setKey).
 //
 // Reading the result: take app::Lock first (ui::loop() already runs under it). Everything returned
 // here points at the client's own memory and stays valid only until the lock is released; a new
@@ -44,5 +45,17 @@ const NowPlaying &nowPlaying();              // all zero (= both sides OFF) unti
 const uint8_t *cover(int side, size_t *size);  // that side's 64x64 baseline JPEG, or nullptr (none / not downloaded yet)
 const char *coverId(int side);               // art_id of the JPEG cover() returns, "" when none
 uint32_t nowPlayingRevision();               // changes when the answer or a cover changes
+
+// ---- keys (the LAN settings page; take app::Lock first) ----
+// The device token and the Cloudflare Access service token start out as portal_config.h's values;
+// the settings page can replace them (saved in NVS) so an expired key never needs a reflash.
+enum Key { KEY_TOKEN, KEY_ACCESS_ID, KEY_ACCESS_SECRET, KEY_COUNT };
+// Why `value` can't be used for key k (a human sentence), or nullptr if it's fine. "" is fine (= built-in).
+const char *keyProblem(Key k, const String &value);
+// "" goes back to the built-in value. On success the client reconnects with it at once.
+bool setKey(Key k, const String &value, String *error = nullptr);
+// {"url","state":"ok|access|token|https|offline|error|waiting|nokey|off","code","ago","okAgo",
+//  "keys":{"token"|"accessId"|"accessSecret":{"set","custom","builtin","hint"}}}. Never the key values.
+String keysJson();
 
 }  // namespace portal
