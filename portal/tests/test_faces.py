@@ -197,6 +197,12 @@ class CleanFaceTests(unittest.TestCase):
         with self.assertRaises(Invalid):
             clean(layers=[dict(sheet, motion=[{"type": "frames", "frames": 3, "fps": 6}])])   # 320 % 3 != 0
 
+    def test_a_sprite_sheet_cannot_pulse(self):
+        sheet = layer(sprite=SHEET, motion=[{"type": "frames", "frames": 4, "fps": 6},
+                                            {"type": "pulse", "period": 1000, "phase": 0, "min": 90, "max": 110}])
+        with self.assertRaises(Invalid):
+            clean(layers=[sheet])
+
     def test_particle_limits(self):
         with self.assertRaises(Invalid):
             clean(particles=[emitter() for _ in range(model.MAX_EMITTERS + 1)])

@@ -8,6 +8,7 @@
 #include "app_lock.h"
 
 #include "display.h"
+#include "face_view.h"
 #include "portal_client.h"
 #include "settings.h"
 #include "sound.h"
@@ -30,6 +31,7 @@ const lv_color_t OK = lv_color_hex(0x3A8F5C);
 const lv_color_t ERR = lv_color_hex(0xC0392B);
 
 constexpr uint32_t SPLASH_MS = 2500;  // "I'm online!" before switching to the clock
+constexpr uint32_t FACE_TICK_MS = 66;  // portal faces animate at 15 ticks a second (portal's ANIM_FPS: the budget assumes it)
 
 String ap;
 lv_font_t *bigFont = nullptr;
@@ -268,9 +270,10 @@ void updateClock() {
 // ---------- portal data (stub: serial logs until the clock face is designed) ----------
 uint32_t seenPortalRev = 0;
 
-enum class View { Setup, Msg, Clock, Photo };
+enum class View { Setup, Msg, Clock, Photo, Face };
 View current = View::Msg;
-bool inClock() { return current == View::Clock || current == View::Photo; }
+bool inClock() { return current == View::Clock || current == View::Photo || current == View::Face; }
+bool faceShown = false;  // a portal face is built and is what "the clock" means right now (see refreshFace())
 bool npVisible = false;  // the now-playing strip is on screen (see below)
 void showView(View v);
 
@@ -374,7 +377,7 @@ void applyPortal() {
 void updateNote() {
   // over the photo the strip sits at the top, so the card goes below it while both are up
   static int noteY = -1;
-  int y = current == View::Photo && npVisible ? 62 : 12;
+  int y = (current == View::Photo || current == View::Face) && npVisible ? 62 : 12;
   if (y != noteY) {  // only when it moves: re-aligning invalidates the area every time
     noteY = y;
     lv_obj_align(noteCard, LV_ALIGN_TOP_MID, 0, y);
@@ -460,9 +463,11 @@ void buildStrip() {
 
 // Moves the strip to the face that is showing and restyles it for it.
 void placeStrip() {
-  bool onPhoto = current == View::Photo;
-  lv_obj_t *parent = onPhoto ? photoView : clockView;
+  bool onFace = current == View::Face;
+  bool onPhoto = current == View::Photo || onFace;  // over a picture: the dark pill at the top
+  lv_obj_t *parent = onFace ? faceview::root() : onPhoto ? photoView : clockView;
   if (lv_obj_get_parent(npStrip) != parent) lv_obj_set_parent(npStrip, parent);
+  if (onFace) lv_obj_move_foreground(npStrip);  // above the face's own objects
   int w, padH;
   if (onPhoto) {
     w = 304;
@@ -693,13 +698,47 @@ void checkAlarms() {
   }
 }
 
+// Which portal face is on screen. The clock picks it itself from the faces' rules and its own local time
+// (portal::chooseFace), so this runs when a face arrives or changes and once a minute (an hour can end).
+char faceShownId[13] = "", faceShownRev[13] = "";
+uint32_t seenFacesRev = 0;
+int faceCheckedMin = -1;
+
+void refreshFace() {
+  if (!timeValid()) return;
+  time_t now = time(nullptr);
+  struct tm t;
+  localtime_r(&now, &t);
+  faceCheckedMin = t.tm_min;
+  bool ready = false;
+  const portal::Face *f = portal::chooseFace(t, &ready);
+  bool changed = false;
+  if (!f) {
+    if (!ready || !faceShown) return;  // the one we want is still on its way: keep what's showing
+    faceview::clear();                 // no face fits any more: back to the clock's own
+    faceShown = false;
+    faceShownId[0] = faceShownRev[0] = 0;
+    changed = true;
+    Serial.println("[ui] no portal face applies: the built-in clock");
+  } else if (!faceShown || strcmp(f->id, faceShownId) != 0 || strcmp(f->rev, faceShownRev) != 0) {
+    if (!faceview::show(*f)) return;  // can't be built: keep what's showing, and try again next minute
+    faceShown = true;
+    strlcpy(faceShownId, f->id, sizeof faceShownId);
+    strlcpy(faceShownRev, f->rev, sizeof faceShownRev);
+    changed = true;
+  }
+  if (changed && inClock()) showView(View::Clock);
+}
+
 void showView(View v) {
-  if (v == View::Clock && slotInUse >= 0) v = View::Photo;  // "Clock" = whichever face applies
+  // "Clock" = whichever face applies: a portal face, else the photo, else the plain clock
+  if (v == View::Clock) v = faceShown ? View::Face : slotInUse >= 0 ? View::Photo : View::Clock;
   current = v;
   show(setupView, v == View::Setup);
   show(msgView, v == View::Msg);
   show(clockView, v == View::Clock);
   show(photoView, v == View::Photo);
+  show(faceview::root(), v == View::Face);
   if (inClock()) {
     placeStrip();
     updateFooter();
@@ -731,6 +770,7 @@ void begin(const char *apName) {
   buildMsg();
   buildClock();
   buildPhoto();
+  faceview::begin(scr);
   buildStrip();
   buildNote();
   buildAlarm();  // last, so it floats above everything
@@ -782,7 +822,7 @@ void showWifi(const wifisetup::Status &s) {
 }
 
 void loop() {
-  static uint32_t last = 0;
+  static uint32_t last = 0, lastFaceTick = 0;
   if (portal::revision() != seenPortalRev) {
     seenPortalRev = portal::revision();
     applyPortal();
@@ -791,6 +831,10 @@ void loop() {
     seenNpRev = portal::nowPlayingRevision();
     applyNowPlaying();
     updateNowPlaying();
+  }
+  if (portal::facesRevision() != seenFacesRev) {
+    seenFacesRev = portal::facesRevision();
+    refreshFace();
   }
   checkAlarms();
   updateAlarm();
@@ -803,6 +847,17 @@ void loop() {
     updateClock();
     updateNowPlaying();
     updateNote();
+    time_t now = time(nullptr);
+    struct tm t;
+    localtime_r(&now, &t);
+    if (timeValid() && t.tm_min != faceCheckedMin) refreshFace();
+  }
+  if (current == View::Face && millis() - lastFaceTick >= FACE_TICK_MS) {  // the face's own, faster animation tick
+    lastFaceTick = millis();
+    time_t now = time(nullptr);
+    struct tm t;
+    localtime_r(&now, &t);
+    faceview::tick(t);
   }
 }
 

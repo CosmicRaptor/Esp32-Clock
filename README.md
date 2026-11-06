@@ -11,6 +11,7 @@ Wi-Fi/NTP desk clock for the **Waveshare ESP32-S3-Touch-LCD-2.8** (ST7789 240×3
 - [x] Photos & sounds on the microSD card. Drag and drop them on the settings page. Photos are resized in the browser to fit 320×240 (JPEG, EXIF rotation applied), and sounds upload as-is.
 - [x] Alarms from the portal: full-screen alarm with the label, the chosen sound from `/sounds` (or a built-in beep) on repeat, and a touch anywhere stops it. No snooze yet.
 - [x] Spotify now playing: a small strip on the clock face, your song on the left and hers on the right (64×64 cover, title, artist). Both accounts are connected in the portal; the clock never sees Spotify.
+- [x] Clock faces from the portal: layered, animated scenes (background, bobbing sprites, snow and petals, the time and date wherever the face puts them). The clock chooses by the faces' rules and its own time (the portal's pinned face wins). Written but **not yet run on the board**: see "Faces" below.
 - [ ] Clock face design polish
 
 ## Build & flash
@@ -39,6 +40,18 @@ If uploads fail with "No serial data received", close the Arduino IDE Serial Mon
 - **Alarms:** set them in the portal. At the alarm time the screen turns pink and pulses, and the sound repeats until you touch the screen (or press **BOOT**). It stops by itself after 5 minutes. The sound is the file picked in the portal from `/sounds` (mp3, m4a, aac, flac, ogg/opus, wav). No pick, no card, a missing file, or a file that won't decode all fall back to the built-in beep (kept in the internal flash, so it works without a card). Try it without waiting: type `ring` (or `ring <file name>`) in the serial monitor at 115200 baud.
 - **Screen upside down?** Set `FLIP_180` in `display.cpp`.
 
+## Faces
+
+The portal's Faces page designs them (see `portal/README.md`, "Faces"). On the clock:
+
+- `portal_client.cpp` fetches each face listed in the state (`GET /api/device/face/<id>`, when its `rev` is new) and the images it uses (`GET /api/device/asset/<hash>`) into PSRAM: a background JPEG and LVGL `RGB565A8` sprite files, which need no decoding. At most 5 MB of images are kept; images no face uses any more are dropped. Faces and images are fetched in the background at about 1 per second after a change (the face that applies right now first), with the usual 10 s heartbeat in between. Nothing is saved across a power cut: after a reboot the faces download again once the clock is online (the built-in clock or the photo shows meanwhile).
+- `face_rules.h` chooses the face: the pinned one, else the first whose `when` fits the local date and time, else the default, else the built-in clock/photo. `ui.cpp` re-chooses when a face arrives and once a minute. A face that isn't completely downloaded isn't shown: the previous one stays.
+- `face_view.cpp` builds the chosen face out of LVGL objects: the background decoded once (320×240 RGB565), one image per sprite copy and per particle (the sprite data is used where it is, only copied once out of the download cache), a clipping box per particle area, and Montserrat labels (Tiny TTF at the slot's size) for the time and date, with a shadow label behind. Every 66 ms (15 ticks a second, what the portal's redraw budget assumes) `tick()` moves what moves, changing only what changed.
+- `face_motion.h` is the motion and particle maths: no LVGL, the same formulas as the portal's `public/face-motion.js` (see `portal/README.md`, "Motions" and "Particles"). `tools/check_face_motion.sh` compiles it on the computer and compares its numbers with the JS (poses with stagger and wrapping, the PRNG, particle positions); `tools/check_face_rules.sh` runs the portal's shared rule vectors through `face_rules.h`.
+- The now-playing strip and the message card float above a face like above the photo. The Wi-Fi-lost / set-time-zone hint of the plain clock isn't drawn on a face.
+
+Not checked on the board yet: `./build.sh` compiles it and the host checks above pass, but nobody has seen it run. Things to look at first: that a sprite sheet shows one frame at a time (`lv_image` offset inside a smaller box), that pulsing sprites scale about their centre, and how the redraw budget in `portal/src/model.py` (`BUDGET_PX`) compares with the real frame rate.
+
 ## HTTPS
 
 A deployed `https://…workers.dev` portal works: certificates are checked against the built-in Mozilla CA bundle, and the TLS connection is kept alive between the 10 s polls (the first handshake takes ~2 s on weak Wi-Fi, later polls ~60 ms). The clock needs NTP to have synced first, so it waits before the first HTTPS request.
@@ -65,7 +78,7 @@ This took a workaround. This Arduino-ESP32 core builds mbedTLS with `CONFIG_MBED
 | `web.*` | HTTP server (own task) and mDNS (`bhoomi-clock.local`); file list/upload/download/delete; cloud keys (`/portal`) |
 | `page_html.h` | the single page: Wi-Fi + time zone (setup) or time zone + photos & sounds (settings) |
 | `storage.*` | microSD mount (never formats), folder and file-name rules |
-| `portal_client.*` | cloud portal client (own task): polls the state every 10 s over one kept-alive connection (protobuf, ETag; it carries what's playing), downloads the photo and the 64×64 covers, PUTs the `/sounds` list. Keeps a copy of the last state in internal flash (`/state.pb`, FFat) and the photo on the SD card (`/portal/photo.jpg`), restored at boot |
+| `portal_client.*` | cloud portal client (own task): polls the state every 10 s over one kept-alive connection (protobuf, ETag; it carries what's playing), downloads the photo, the 64×64 covers and the clock faces with their images, PUTs the `/sounds` list. Keeps a copy of the last state in internal flash (`/state.pb`, FFat) and the photo on the SD card (`/portal/photo.jpg`), restored at boot |
 | `clock.pb.*` | generated nanopb code (`proto/generate.sh`) |
 | `app_lock.h` | the lock shared by the main loop and the web task |
 | `timezones.*` | curated IANA → POSIX TZ table |
@@ -74,6 +87,7 @@ This took a workaround. This Arduino-ESP32 core builds mbedTLS with `CONFIG_MBED
 | `sound.*` | alarm audio: ESP32-audioI2S decoder + I2S out, own task; loops a `/sounds` file or the built-in beep (generated into flash on first boot) |
 | `touch.*` | CST328 / CST3530 touch chip (auto-detected) registered as an LVGL pointer device |
 | `ui.*` | LVGL screens: setup (QR), status, clock, alarm overlay |
+| `face_view.*`, `face_motion.h`, `face_rules.h` | the portal's clock faces: the LVGL renderer, the motion and particle maths, and the `when` rules; `tools/` checks them against the portal's JS |
 | `font_montserrat_ttf.c` | Montserrat Medium (OFL), rendered by LVGL Tiny TTF for the big digits |
 | `lv_conf.h` | LVGL config. LVGL's memory pool lives in PSRAM: with the C heap, each new big clock digit (a ~4 KB glyph bitmap) used up internal RAM until Wi-Fi starved |
 | `proto/` | `clock.proto`: the clock ↔ portal protobuf schema, plus the generated nanopb code (`proto/generate.sh`) |

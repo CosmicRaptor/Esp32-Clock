@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "app_lock.h"
+#include "face_rules.h"
 #include "settings.h"
 #include "storage.h"
 #include "wifi_setup.h"
@@ -663,6 +664,292 @@ void syncCovers(Conn &c) {
   }
 }
 
+// ---------- clock faces ----------
+// The state lists the faces (id + rev). Each face is fetched when its rev is new, then the images it uses (a face
+// is "ready" once all of them are here). Everything lives in PSRAM: a face is under 5 KB, a sprite is 3 bytes a
+// pixel, and the portal limits a face to 1.5 MB of images. Images no face uses any more are dropped.
+
+constexpr int MAX_FACES = 12;
+constexpr int MAX_ASSETS = 128;
+constexpr size_t MAX_ASSET_FILE = 300 * 1024;
+constexpr size_t MAX_ASSET_TOTAL = 5 * 1024 * 1024;
+constexpr uint32_t FACES_MORE_MS = 1000;        // poll again this soon while there is still something to fetch
+constexpr uint32_t FACES_RETRY_MS = 15 * 1000;  // after a 404 (KV still propagating) or a bad download
+constexpr uint32_t FACES_PASS_MS = 3000;        // work on faces for at most this long per poll, so the heartbeat goes on
+
+struct FaceEntry {
+  char id[13];
+  char rev[13];  // the rev the state wants; `face->rev` is the one we hold (older until the new one arrives)
+  Face *face;    // nullptr until fetched
+};
+struct Asset {
+  char hash[17];
+  uint8_t *buf;
+  size_t len;
+};
+FaceEntry faceList[MAX_FACES];
+int faceN = 0;
+Asset assets[MAX_ASSETS];
+int assetN = 0;
+size_t assetBytes = 0;
+uint32_t facesRev = 0;
+uint32_t facesRetryAt = 0;  // task-private
+
+bool validHash(const char *h) {
+  if (strlen(h) != 16) return false;
+  for (int i = 0; i < 16; i++)
+    if (!isxdigit((unsigned char)h[i])) return false;
+  return true;
+}
+
+const Asset *findAsset(const char *hash) {
+  for (int i = 0; i < assetN; i++)
+    if (strcmp(assets[i].hash, hash) == 0) return &assets[i];
+  return nullptr;
+}
+
+// Calls fn(ref, isBackground) for every image a face uses.
+template <typename F>
+void eachImage(const Face &f, F fn) {
+  if (f.has_background) fn(f.background, true);
+  if (f.has_icon && f.icon.has_sprite) fn(f.icon.sprite, false);
+  for (pb_size_t i = 0; i < f.layers_count; i++)
+    if (f.layers[i].has_sprite) fn(f.layers[i].sprite, false);
+  for (pb_size_t i = 0; i < f.emitters_count; i++)
+    for (pb_size_t k = 0; k < f.emitters[i].sprites_count; k++) fn(f.emitters[i].sprites[k], false);
+}
+
+bool faceReady(const Face &f) {
+  bool ok = f.has_background && f.has_time;
+  eachImage(f, [&](const bhoomi_clock_v1_SpriteRef &r, bool) { ok = ok && findAsset(r.hash); });
+  return ok;
+}
+
+const FaceEntry *chooseEntry(const struct tm &t) {
+  auto byId = [](const char *id) -> const FaceEntry * {
+    for (int i = 0; id[0] && i < faceN; i++)
+      if (strcmp(faceList[i].id, id) == 0) return &faceList[i];
+    return nullptr;
+  };
+  if (const FaceEntry *e = byId(cur.pinned_face)) return e;
+  for (int i = 0; i < faceN; i++)
+    if (faceList[i].face && faceList[i].face->has_when && facerules::matches(faceList[i].face->when, t)) return &faceList[i];
+  return byId(cur.default_face);
+}
+
+// Frees the images no held face uses. Lock held.
+void dropUnusedAssets() {
+  for (int i = assetN - 1; i >= 0; i--) {
+    bool used = false;
+    for (int k = 0; k < faceN && !used; k++)
+      if (faceList[k].face) eachImage(*faceList[k].face, [&](const bhoomi_clock_v1_SpriteRef &r, bool) { used = used || strcmp(r.hash, assets[i].hash) == 0; });
+    if (used) continue;
+    assetBytes -= assets[i].len;
+    free(assets[i].buf);
+    assets[i] = assets[--assetN];
+    facesRev++;
+  }
+}
+
+// Makes faceList match the state's list. Lock held.
+void reconcileFaces() {
+  FaceEntry next[MAX_FACES];
+  int n = 0;
+  for (pb_size_t i = 0; i < cur.faces_count && n < MAX_FACES; i++) {
+    const auto &ref = cur.faces[i];
+    if (!validId(ref.id) || !validId(ref.rev)) continue;
+    FaceEntry e = {};
+    strlcpy(e.id, ref.id, sizeof e.id);
+    strlcpy(e.rev, ref.rev, sizeof e.rev);
+    for (int k = 0; k < faceN; k++)
+      if (strcmp(faceList[k].id, e.id) == 0) {
+        e.face = faceList[k].face;
+        faceList[k].face = nullptr;  // moved
+      }
+    next[n++] = e;
+  }
+  bool changed = n != faceN;
+  for (int k = 0; k < faceN; k++)
+    if (faceList[k].face) {  // faces that are gone from the list
+      free(faceList[k].face);
+      changed = true;
+    }
+  for (int i = 0; !changed && i < n; i++) changed = strcmp(next[i].id, faceList[i].id) != 0 || strcmp(next[i].rev, faceList[i].rev) != 0;
+  memcpy(faceList, next, sizeof(FaceEntry) * n);
+  faceN = n;
+  if (changed) facesRev++;
+  dropUnusedAssets();
+}
+
+enum class Got { Ok, NotYet, Failed };
+
+Got fetchFace(Conn &c, const char *id, const char *rev) {
+  uint8_t *body = bigAlloc(bhoomi_clock_v1_Face_size + 64);
+  Face *f = (Face *)bigAlloc(sizeof(Face));
+  if (!body || !f) {
+    free(body);
+    free(f);
+    return Got::Failed;
+  }
+  int code = c.get(String("/api/device/face/") + id);
+  Got result = Got::Failed;
+  bool clean = false;
+  if (code == HTTP_CODE_NOT_FOUND) {
+    result = Got::NotYet;
+  } else if (code == HTTP_CODE_OK) {
+    BufSink sink(body, bhoomi_clock_v1_Face_size + 64);
+    int got = c.http.writeToStream(&sink);
+    memset(f, 0, sizeof(Face));
+    pb_istream_t in = pb_istream_from_buffer(body, sink.len);
+    if (got < 0 || sink.overflow) {
+      Serial.printf("[faces] %s: bad body\n", id);
+    } else if (!pb_decode(&in, &bhoomi_clock_v1_Face_msg, f)) {
+      Serial.printf("[faces] %s: decode failed: %s\n", id, PB_GET_ERROR(&in));
+      clean = true;
+    } else if (strcmp(f->id, id) != 0 || !f->has_background || !f->has_time) {
+      Serial.printf("[faces] %s: not a usable face\n", id);
+      clean = true;
+    } else {
+      app::Lock lock;
+      for (int i = 0; i < faceN; i++)
+        if (strcmp(faceList[i].id, id) == 0) {
+          free(faceList[i].face);
+          faceList[i].face = f;
+          f = nullptr;
+          facesRev++;
+          result = Got::Ok;
+        }
+      clean = true;
+      Serial.printf("[faces] %s rev %s: fetched (%u bytes)\n", id, rev, (unsigned)sink.len);
+    }
+  } else {
+    Serial.printf("[faces] %s: HTTP %d\n", id, code);
+  }
+  if (clean) c.finish();
+  else c.close();
+  free(body);
+  free(f);
+  return result;
+}
+
+Got fetchAsset(Conn &c, const bhoomi_clock_v1_SpriteRef &r, bool background) {
+  if (!validHash(r.hash) || r.size < 12 || r.size > MAX_ASSET_FILE || assetBytes + r.size > MAX_ASSET_TOTAL || assetN >= MAX_ASSETS) {
+    Serial.printf("[faces] image %s: refused (size %u, %u cached)\n", r.hash, (unsigned)r.size, (unsigned)assetBytes);
+    return Got::Failed;
+  }
+  uint8_t *buf = bigAlloc(r.size);
+  if (!buf) return Got::Failed;
+  uint32_t t0 = millis();
+  int code = c.get(String("/api/device/asset/") + r.hash);
+  Got result = Got::Failed;
+  bool clean = false;
+  if (code == HTTP_CODE_NOT_FOUND) {
+    result = Got::NotYet;
+  } else if (code != HTTP_CODE_OK) {
+    Serial.printf("[faces] image %s: HTTP %d\n", r.hash, code);
+  } else {
+    BufSink sink(buf, r.size);
+    int got = c.http.writeToStream(&sink);
+    bool good = got >= 0 && !sink.overflow && sink.len == r.size;
+    if (good && background) good = buf[0] == 0xFF && buf[1] == 0xD8;
+    // a sprite: the 12-byte LVGL header (magic 0x19, RGB565A8 = 0x14, w, h, stride = 2w), then 3 bytes a pixel
+    if (good && !background) {
+      uint32_t w = buf[4] | (buf[5] << 8), h = buf[6] | (buf[7] << 8);
+      good = buf[0] == 0x19 && buf[1] == 0x14 && w == r.w && h == r.h && r.size == 12 + 3 * w * h;
+    }
+    if (!good) {
+      Serial.printf("[faces] image %s: incomplete or wrong (%d of %u bytes)\n", r.hash, got, (unsigned)r.size);
+    } else {
+      app::Lock lock;
+      Asset &a = assets[assetN++];
+      strlcpy(a.hash, r.hash, sizeof a.hash);
+      a.buf = buf;
+      a.len = r.size;
+      assetBytes += r.size;
+      buf = nullptr;
+      facesRev++;
+      result = Got::Ok;
+      Serial.printf("[faces] image %s: %u bytes in %u ms\n", r.hash, (unsigned)r.size, (unsigned)(millis() - t0));
+    }
+    clean = got >= 0 && !sink.overflow;
+  }
+  if (clean) c.finish();
+  else c.close();
+  free(buf);
+  return result;
+}
+
+// One pass of work: match the list to the state, fetch what is missing (the face on screen first), within a time
+// budget. Returns true if there is more to do right away.
+bool syncFaces(Conn &c) {
+  struct tm t;
+  bool haveTime = false;
+  {
+    app::Lock lock;
+    reconcileFaces();
+    time_t now = time(nullptr);
+    if (timeValid()) {
+      localtime_r(&now, &t);
+      haveTime = true;
+    }
+  }
+  if (facesRetryAt && (int32_t)(millis() - facesRetryAt) < 0) return false;
+  uint32_t started = millis();
+  bool failed = false;
+
+  // 1. the faces themselves
+  for (int i = 0; i < MAX_FACES && !failed; i++) {
+    char id[13], rev[13];
+    {
+      app::Lock lock;
+      if (i >= faceN || (faceList[i].face && strcmp(faceList[i].face->rev, faceList[i].rev) == 0)) continue;
+      strlcpy(id, faceList[i].id, sizeof id);
+      strlcpy(rev, faceList[i].rev, sizeof rev);
+    }
+    if (millis() - started > FACES_PASS_MS) return true;
+    failed = fetchFace(c, id, rev) != Got::Ok;
+  }
+
+  // 2. their images: the chosen face first, then the rest in order
+  for (int pass = 0; pass < 2 && !failed; pass++) {
+    for (int i = 0; i < MAX_FACES && !failed; i++) {
+      bhoomi_clock_v1_SpriteRef need = {};
+      bool background = false, found = false;
+      {
+        app::Lock lock;
+        if (i >= faceN || !faceList[i].face) continue;
+        const FaceEntry *first = haveTime ? chooseEntry(t) : nullptr;
+        if ((pass == 0) != (first == &faceList[i])) continue;
+        eachImage(*faceList[i].face, [&](const bhoomi_clock_v1_SpriteRef &r, bool bg) {
+          if (!found && !findAsset(r.hash)) {
+            need = r;
+            background = bg;
+            found = true;
+          }
+        });
+      }
+      while (found && !failed) {
+        if (millis() - started > FACES_PASS_MS) return true;
+        failed = fetchAsset(c, need, background) != Got::Ok;
+        if (failed) break;
+        found = false;
+        app::Lock lock;
+        if (i >= faceN || !faceList[i].face) break;
+        eachImage(*faceList[i].face, [&](const bhoomi_clock_v1_SpriteRef &r, bool bg) {
+          if (!found && !findAsset(r.hash)) {
+            need = r;
+            background = bg;
+            found = true;
+          }
+        });
+      }
+    }
+  }
+  if (failed) facesRetryAt = (millis() + FACES_RETRY_MS) | 1;  // 404s while KV propagates, or a bad download: not too often
+  else facesRetryAt = 0;
+  return false;
+}
+
 // ---------- the task ----------
 
 bool noTokenWarn = false;
@@ -745,6 +1032,7 @@ void task(void *) {
         }
       }
       syncCovers(c);
+      if (syncFaces(c)) wait = FACES_MORE_MS;  // more faces or images to fetch: don't wait out the whole interval
       syncSounds(c);
     }
     nextAt = (millis() + wait) | 1;  // after the work above: on a weak signal it can take seconds
@@ -788,6 +1076,18 @@ const uint8_t *cover(int side, size_t *size) {
 }
 const char *coverId(int side) { return coverIdStr[side ? 1 : 0]; }
 uint32_t nowPlayingRevision() { return npRev; }
+
+const Face *chooseFace(const struct tm &t, bool *ready) {
+  const FaceEntry *e = chooseEntry(t);
+  if (ready) *ready = !e || (e->face && faceReady(*e->face));
+  return e && e->face && faceReady(*e->face) ? e->face : nullptr;
+}
+const uint8_t *asset(const char *hash, size_t *len) {
+  const Asset *a = findAsset(hash);
+  if (len) *len = a ? a->len : 0;
+  return a ? a->buf : nullptr;
+}
+uint32_t facesRevision() { return facesRev; }
 
 // ---- keys (the LAN settings page; app::Lock held by the caller) ----
 

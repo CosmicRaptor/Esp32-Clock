@@ -116,7 +116,7 @@ Everything is checked in `model.py` (`clean_face`, `face_report`), on every save
 |---|---|
 | faces | 12 |
 | sprite layers | 8, each up to 12 copies, 24 sprites in all (the icon counts) |
-| motions | 3 per layer, 1 `frames` |
+| motions | 3 per layer, 1 `frames`, and a `frames` layer can't also `pulse` (the clock would show the neighbouring frames of the sheet when it scales) |
 | particle effects | 3, each 1-3 sprites (at most 48×48 px) and 1-40 particles, 60 in all |
 | sprite size | 160×160 (one frame); the icon 64×64 |
 | memory on the clock | 1.5 MB per face: the decoded background (150 KB) plus every sprite file |
@@ -190,7 +190,7 @@ The PRNG, `r1..r6` and the choice of sprite are exact. The sines and cosines can
 
 ### Faces on the clock
 
-What the clock needs to do, when its renderer comes: poll `/api/device/state` as before; for each `FaceRef`, fetch `/api/device/face/<id>` when its `rev` is new (keep the faces in RAM or on the card, a face is at most about 5 KB on the wire); every minute, and whenever the state or the clock changes, pick the face with the four rules above from the local date and time; when the picked face changes (or its `rev`), fetch its assets (`SpriteRef.hash`), draw it and run the motions. A face the clock can't fully fetch (404 right after an edit) is not shown: keep the previous one and retry.
+How the firmware does it (`face_view.cpp`, `face_motion.h`, `face_rules.h`, `portal_client.cpp`; see the main README, "Faces"): it polls `/api/device/state` as before; for each `FaceRef` it fetches `/api/device/face/<id>` when the `rev` is new, then the images; it picks the face with the four rules above from the local date and time (when a face arrives, and once a minute); when the picked face changes it builds it and runs the motions. A face that isn't completely downloaded (404 right after an edit) is not shown: the previous one stays, and the clock retries.
 
 ## Spotify
 

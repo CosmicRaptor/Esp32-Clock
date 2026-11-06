@@ -495,6 +495,8 @@ def _clean_layer(d, assets, where, limit):
     motions = [_clean_motion(m, f"{where}, motion {i + 1}", meta["w"]) for i, m in enumerate(motions)]
     if sum(m["type"] == "frames" for m in motions) > 1:
         raise Invalid(f"{where}: only one frames motion per layer.")
+    if any(m["type"] == "frames" for m in motions) and any(m["type"] == "pulse" for m in motions):
+        raise Invalid(f"{where}: a sprite sheet can't pulse (the clock would show its neighbouring frames when it scales).")
     fw = meta["w"] // next((m["frames"] for m in motions if m["type"] == "frames"), 1)
     if fw > limit or meta["h"] > limit:
         raise Invalid(f"{where}: the sprite is {fw}x{meta['h']}; here the limit is {limit}x{limit}.")

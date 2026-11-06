@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include <time.h>
 
 #include "clock.pb.h"
 
@@ -9,6 +10,8 @@
 //     The state carries the note, alarms, photo id and what the two people are playing on Spotify
 //   - downloads GET /api/device/image/<id> when photo.id changes (retried on 404 / failure)
 //   - downloads GET /api/device/art/<id>, the 64x64 covers for the now-playing strip
+//   - downloads the clock faces (GET /api/device/face/<id>) and the images they use (GET /api/device/asset/<hash>)
+//     into PSRAM, and picks the face to show from their `when` rules (portal/README.md, "Faces")
 //   - PUTs the /sounds file list at boot and whenever the card's files change
 // Configure it in portal_config.h (see portal_config.example.h); the keys can also be changed on the
 // LAN settings page (setKey).
@@ -18,12 +21,13 @@
 // state or photo is swapped in under the same lock.
 namespace portal {
 
-constexpr const char *FW_VERSION = "0.6.0";  // sent as ?fw=
+constexpr const char *FW_VERSION = "0.7.0";  // sent as ?fw=
 
 using State = bhoomi_clock_v1_DeviceState;  // .has_note/.note.text, .has_photo/.photo, .alarms[0..alarms_count)
 using Alarm = bhoomi_clock_v1_Alarm;
 using NowPlaying = bhoomi_clock_v1_NowPlaying;  // .left / .right: what the two people are listening to
 using Listener = bhoomi_clock_v1_Listener;      // .status (OFF/PLAYING/PAUSED), .title, .artist, .art_id
+using Face = bhoomi_clock_v1_Face;              // a clock face: background, layers, emitters, time/date slots, when
 
 void begin();  // start the task; call after Wi-Fi is initialised. No-op if not configured.
 
@@ -45,6 +49,17 @@ const NowPlaying &nowPlaying();              // all zero (= both sides OFF) unti
 const uint8_t *cover(int side, size_t *size);  // that side's 64x64 baseline JPEG, or nullptr (none / not downloaded yet)
 const char *coverId(int side);               // art_id of the JPEG cover() returns, "" when none
 uint32_t nowPlayingRevision();               // changes when the answer or a cover changes
+
+// ---- clock faces (same locking rule as above) ----
+// The face to show at local time `t`, chosen like the portal's "On the clock right now" line: the pinned face, else the
+// first face (in the portal's order) whose `when` fits, else the default face. nullptr = the clock's own face.
+// *ready is false while the chosen face (or one of its images) hasn't arrived yet: keep showing what you have.
+// A face that isn't downloaded yet can't be tested against its rules, so it is skipped until it is.
+const Face *chooseFace(const struct tm &t, bool *ready);
+// A downloaded face image by hash (a 320x240 JPEG, or an LVGL RGB565A8 sprite file), or nullptr. The client may free it
+// when no face uses it any more, so copy what you need.
+const uint8_t *asset(const char *hash, size_t *len);
+uint32_t facesRevision();  // changes when a face or an image arrives, changes or goes
 
 // ---- keys (the LAN settings page; take app::Lock first) ----
 // The device token and the Cloudflare Access service token start out as portal_config.h's values;
