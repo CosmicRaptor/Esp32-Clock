@@ -8,6 +8,13 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <esp_heap_caps.h>
+#include <esp_ota_ops.h>
+#include <esp_app_desc.h>
+#include <esp_system.h>
+#include <esp_timer.h>
+#include <mbedtls/sha256.h>
+#include "ota_health.h"
+#include "sound.h"
 #include <mbedtls/platform.h>
 #include <pb_decode.h>
 #include <pb_encode.h>
@@ -1020,6 +1027,121 @@ void syncWeather(Conn &c) {
   if (weatherPending.isEmpty()) weatherState = next;
 }
 
+// Firmware is streamed directly into the inactive slot; never buffered in RAM or FFat.
+class OtaSink : public Stream {
+ public:
+  esp_ota_handle_t handle;
+  size_t count = 0, expected;
+  bool failed = false;
+  mbedtls_sha256_context sha;
+  OtaSink(esp_ota_handle_t h, size_t size) : handle(h), expected(size) {
+    mbedtls_sha256_init(&sha); mbedtls_sha256_starts(&sha, 0);
+  }
+  ~OtaSink() { mbedtls_sha256_free(&sha); }
+  size_t write(uint8_t b) override { return write(&b, 1); }
+  size_t write(const uint8_t *p, size_t n) override {
+    if (failed || n > expected - count || esp_ota_write(handle, p, n) != ESP_OK) { failed = true; return 0; }
+    mbedtls_sha256_update(&sha, p, n); count += n; return n;
+  }
+  int available() override { return 0; }
+  int read() override { return -1; }
+  int peek() override { return -1; }
+};
+
+uint32_t managementAt = 0, diagnosticAt = 0, diagnosticInterval = 3600;
+int otaCode = 0;
+String failedRelease;
+
+String runningHash() {
+  uint8_t hash[32]; char hex[65];
+  if (esp_partition_get_sha256(esp_ota_get_running_partition(), hash) != ESP_OK) return "";
+  // This hash is the ESP image digest, not the whole upload hash; used for device identity only.
+  for (int i = 0; i < 32; i++) snprintf(hex + i * 2, 3, "%02x", hash[i]);
+  return hex;
+}
+
+void manage(Conn &c) {
+  uint32_t now = millis();
+  if (managementAt && (int32_t)(now - managementAt) < 0) return;
+  managementAt = (now + 60000) | 1;
+  Preferences prefs;
+  if (!prefs.begin("clock-ota", false)) return;
+  String installed = prefs.getString("installed", "");
+  // A pending release survived in NVS but is not running: the bootloader rolled it back.
+  String attempted = prefs.getString("attempted", "");
+  String target = prefs.getString("target", "");
+  if (attempted.length() && target != runningHash()) {
+    failedRelease = attempted;
+    prefs.putString("failed", failedRelease);
+    prefs.remove("attempted");
+  } else if (attempted.length() && !otahealth::pending()) {
+    installed = attempted; prefs.putString("installed", installed); prefs.remove("attempted"); diagnosticAt = 0;
+  }
+  failedRelease = prefs.getString("failed", "");
+  int code = c.get("/api/device/management");
+  bhoomi_clock_v1_Management cfg = bhoomi_clock_v1_Management_init_zero;
+  uint8_t buffer[128]; BufSink sink(buffer, sizeof(buffer));
+  bool got = false;
+  if (code == 200 && c.http.writeToStream(&sink) >= 0 && !sink.overflow) {
+    auto in = pb_istream_from_buffer(buffer, sink.len);
+    got = pb_decode(&in, bhoomi_clock_v1_Management_fields, &cfg);
+  }
+  c.close();
+  if (got) {
+    uint32_t interval = cfg.diagnostic_interval;
+    if (interval == 0 || interval == 300 || interval == 900 || interval == 1800 || interval == 3600 || interval == 21600) {
+      if (interval != diagnosticInterval) diagnosticAt = 0;
+      diagnosticInterval = interval;
+    }
+  }
+  if (diagnosticInterval && (!diagnosticAt || (int32_t)(now - diagnosticAt) >= 0)) {
+    diagnosticAt = (now + diagnosticInterval * 1000) | 1;
+    String body = "{\"installed\":\"" + installed + "\",\"ota_state\":" + String(otahealth::pending() ? 1 : 0) + ",\"firmware\":\"" + String(FW_VERSION) + "\",\"running\":\"" + runningHash() +
+      "\",\"failed\":\"" + failedRelease + "\",\"uptime\":" + String((uint32_t)(esp_timer_get_time() / 1000000)) +
+      ",\"heap\":" + String(ESP.getFreeHeap()) + ",\"min_heap\":" + String(ESP.getMinFreeHeap()) +
+      ",\"largest_block\":" + String(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)) +
+      ",\"psram\":" + String(ESP.getFreePsram()) + ",\"reset\":" + String((int)esp_reset_reason()) +
+      ",\"rssi\":" + String(WiFi.RSSI()) + ",\"poll_code\":" + String(lastCode) + ",\"ota_code\":" + String(otaCode) + "}";
+    if (c.open("/api/device/diagnostics")) {
+      c.http.addHeader("Content-Type", "application/json");
+      int sent = c.http.PUT((uint8_t *)body.c_str(), body.length());
+      if (sent != 200) diagnosticAt = (now + 300000) | 1;
+      c.close();
+    }
+  }
+  String release = cfg.release;
+  if (!got || release.length() != 64 || release == installed || release == failedRelease ||
+      otahealth::pending() || attempted.length() || sound::playing()) { prefs.end(); return; }
+  for (char ch : release) if (!isxdigit((unsigned char)ch)) { prefs.end(); return; }
+  const esp_partition_t *slot = esp_ota_get_next_update_partition(nullptr);
+  if (!slot || !cfg.size || cfg.size > slot->size) { otaCode = -10; prefs.end(); return; }
+  Serial.printf("[ota] downloading %u bytes into %s\n", (unsigned)cfg.size, slot->label);
+  code = c.get("/api/device/firmware/" + release);
+  if (code != 200 || c.http.getSize() != (int)cfg.size) { otaCode = code == 200 ? -11 : code; c.close(); prefs.end(); return; }
+  esp_ota_handle_t handle;
+  if (esp_ota_begin(slot, cfg.size, &handle) != ESP_OK) { otaCode = -12; c.close(); prefs.end(); return; }
+  OtaSink image(handle, cfg.size);
+  int read = c.http.writeToStream(&image);
+  c.close();
+  uint8_t digest[32]; char hex[65];
+  mbedtls_sha256_finish(&image.sha, digest);
+  for (int i = 0; i < 32; i++) snprintf(hex + i * 2, 3, "%02x", digest[i]);
+  if (read < 0 || image.failed || image.count != cfg.size || release != hex) {
+    esp_ota_abort(handle); otaCode = -13; prefs.end(); return;
+  }
+  if (esp_ota_end(handle) != ESP_OK) { otaCode = -14; prefs.end(); return; }
+  uint8_t ih[32]; char ihx[65];
+  if (esp_partition_get_sha256(slot, ih) != ESP_OK) { otaCode = -15; prefs.end(); return; }
+  for (int i = 0; i < 32; i++) snprintf(ihx + i * 2, 3, "%02x", ih[i]);
+  if (sound::playing()) { otaCode = -17; prefs.end(); return; }
+  // Persist the candidate before selecting it, so a rolled-back image is never retried forever.
+  bool saved = prefs.putString("attempted", release) && prefs.putString("target", ihx);
+  prefs.end();
+  if (!saved || esp_ota_set_boot_partition(slot) != ESP_OK) { otaCode = -16; return; }
+  Serial.println("[ota] verified firmware; rebooting into trial image");
+  delay(200); ESP.restart();
+}
+
 void task(void *) {
   uint32_t nextAt = 0;  // millis() deadline; 0 = as soon as we're ready
   uint32_t backoff = BACKOFF_MIN_MS;
@@ -1049,6 +1171,7 @@ void task(void *) {
     }
     if (!ready()) continue;
     // Own deadline, even while the state heartbeat is backing off.
+    manage(c);
     if (weatherDue()) syncWeather(c);
     if (nextAt && (int32_t)(millis() - nextAt) < 0) {
       // Between polls, still pick up a changed /sounds folder promptly.
@@ -1201,6 +1324,8 @@ String keysJson() {
   }
   return out + "}}";
 }
+
+bool healthy() { app::Lock lock; return lastCode == 200 || lastCode == 304; }
 
 void weatherText(char *out, size_t cap) {
   out[0] = 0;

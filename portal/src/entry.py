@@ -52,6 +52,13 @@ Behind those, static files in public/ are the admin page, and the rest is the JS
     GET    /api/device/art/<id>     64x64 baseline JPEG cover, proxied from Spotify's CDN (id = Listener.art_id)
     GET    /api/device/face/<id>    a Face (ETag = its rev; &format=json to read it)
     GET    /api/device/asset/<hash> a face's background JPEG or sprite file (content-addressed: never changes)
+    GET    /api/device/management  update approval + diagnostic interval (Management protobuf)
+    GET    /api/device/firmware/<sha256> approved/content-addressed application firmware
+    PUT    /api/device/diagnostics allowlisted health snapshot; at most one stored per five minutes
+    GET    /api/management         admin release/settings/diagnostics overview
+    PUT    /api/management/settings  diagnostic interval
+    PUT    /api/management/firmware  upload candidate application binary
+    POST   /api/management/install  approve exact candidate; DELETE cancels future discovery
 
   /api/device/state is the clock's one heartbeat, polled every ~10 s. Besides the portal's own state it carries
   `nowplaying` (asked from Spotify on each call), and its ETag covers both, so a new song is a new 200.
@@ -71,6 +78,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import re
 import time
 from urllib.parse import parse_qs, urlencode, urlparse
 
@@ -84,6 +92,8 @@ import model
 import spotify
 import wire
 import weather
+import management
+import clock_pb2 as pb
 from model import Invalid
 
 FACE_PREFIX, ASSET_PREFIX, PNG_PREFIX, META_PREFIX = "face:", "asset:", "assetpng:", "assetmeta:"
@@ -263,6 +273,33 @@ class Default(WorkerEntrypoint):
 
         if not auth.check_session(password, auth.read_cookie(request.headers.get("cookie"))):
             raise HttpError(401, "Please log in.")
+
+        if path == "/api/management" and method == "GET":
+            return json_response({"settings": await self.kv_json("management:settings") or {"interval": 3600},
+                                  "release": await self.kv_json("management:release"),
+                                  "approved": await self.kv_json("management:approved"),
+                                  "diagnostics": await self.kv_json("management:diagnostics")})
+        if path == "/api/management/settings" and method == "PUT":
+            cfg = management.settings(await read_json(request))
+            await self.env.CLOCK.put("management:settings", json.dumps(cfg))
+            return json_response(cfg)
+        if path == "/api/management/firmware" and method == "PUT":
+            data = bytes(await request.bytes())
+            release = management.firmware(data)
+            # Content-addressed: publishing a new candidate never changes an approved binary.
+            await self.env.CLOCK.put("firmware:" + release["release"], base64.b64encode(data).decode())
+            await self.env.CLOCK.put("management:release", json.dumps(release))
+            return json_response(release)
+        if path == "/api/management/install" and method == "POST":
+            requested = await read_json(request)
+            release = await self.kv_json("management:release")
+            if not isinstance(requested, dict) or not release or requested.get("release") != release["release"]:
+                raise Invalid("Refresh and select the uploaded release.")
+            await self.env.CLOCK.put("management:approved", json.dumps(release))
+            return json_response(release)
+        if path == "/api/management/install" and method == "DELETE":
+            await self.env.CLOCK.delete("management:approved")
+            return json_response({"ok": True})
 
         if path == "/api/weather/cities" and method == "GET":
             q = parse_qs(url.query).get("q", [""])[0].strip()
@@ -533,6 +570,29 @@ class Default(WorkerEntrypoint):
         if not auth.same_secret(token, auth.bearer(request.headers.get("authorization"))):
             raise HttpError(401, "Bad device token.")
         method = request.method
+
+        if path == "/api/device/management" and method == "GET":
+            cfg = await self.kv_json("management:settings") or {"interval": 3600}
+            release = await self.kv_json("management:approved") or {}
+            out = pb.Management(diagnostic_interval=cfg["interval"], release=release.get("release", ""), size=release.get("size", 0))
+            return Response(out.SerializeToString(), headers={"content-type": wire.CONTENT_TYPE, "cache-control": "no-store"})
+        if path.startswith("/api/device/firmware/") and method == "GET":
+            h = path.removeprefix("/api/device/firmware/")
+            if not re.fullmatch(r"[0-9a-f]{64}", h):
+                raise HttpError(404, "Unknown firmware.")
+            raw = await self.env.CLOCK.get("firmware:" + h)
+            if missing(raw):
+                raise HttpError(404, "Firmware is still propagating; retry later.")
+            return binary_response(base64.b64decode(str(raw)), "application/octet-stream")
+        if path == "/api/device/diagnostics" and method == "PUT":
+            data = management.report(await read_json(request))
+            old = await self.kv_json("management:diagnostics")
+            now = int(time.time())
+            if not management.report_due(old, data, now):
+                return json_response({"retry": 300}, status=429)
+            data["at"] = now
+            await self.env.CLOCK.put("management:diagnostics", json.dumps(data))
+            return json_response({"ok": True})
 
         if path == "/api/device/weather/location" and method == "PUT":
             q = {k: v[0] for k, v in parse_qs(url.query).items()}

@@ -372,3 +372,13 @@ class Weather(_message.Message):
     observed_at: int
     city: str
     def __init__(self, available: _Optional[bool] = ..., temperature_c: _Optional[int] = ..., code: _Optional[int] = ..., is_day: _Optional[bool] = ..., observed_at: _Optional[int] = ..., city: _Optional[str] = ...) -> None: ...
+
+class Management(_message.Message):
+    __slots__ = ("diagnostic_interval", "release", "size")
+    DIAGNOSTIC_INTERVAL_FIELD_NUMBER: _ClassVar[int]
+    RELEASE_FIELD_NUMBER: _ClassVar[int]
+    SIZE_FIELD_NUMBER: _ClassVar[int]
+    diagnostic_interval: int
+    release: str
+    size: int
+    def __init__(self, diagnostic_interval: _Optional[int] = ..., release: _Optional[str] = ..., size: _Optional[int] = ...) -> None: ...

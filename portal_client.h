@@ -21,7 +21,9 @@
 // state or photo is swapped in under the same lock.
 namespace portal {
 
-constexpr const char *FW_VERSION = "0.8.0";  // sent as ?fw=
+bool healthy();
+
+constexpr const char *FW_VERSION = "0.9.1";  // sent as ?fw=
 
 using State = bhoomi_clock_v1_DeviceState;  // .has_note/.note.text, .has_photo/.photo, .alarms[0..alarms_count)
 using Alarm = bhoomi_clock_v1_Alarm;

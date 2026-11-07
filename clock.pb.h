@@ -279,6 +279,13 @@ typedef struct _bhoomi_clock_v1_Weather {
     char city[321];
 } bhoomi_clock_v1_Weather;
 
+/* Independent management poll; does not invalidate the main state cache. */
+typedef struct _bhoomi_clock_v1_Management {
+    uint32_t diagnostic_interval; /* seconds; 0 disables reports */
+    char release[65]; /* SHA-256 of approved firmware; empty means no update */
+    uint32_t size;
+} bhoomi_clock_v1_Management;
+
 
 #ifdef __cplusplus
 extern "C" {
@@ -331,6 +338,7 @@ extern "C" {
 
 
 
+
 /* Initializer values for message structs */
 #define bhoomi_clock_v1_DeviceState_init_default {0, false, bhoomi_clock_v1_Note_init_default, false, bhoomi_clock_v1_Photo_init_default, 0, {bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default}, false, bhoomi_clock_v1_NowPlaying_init_default, 0, {bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default}, "", ""}
 #define bhoomi_clock_v1_Note_init_default        {"", 0}
@@ -352,6 +360,7 @@ extern "C" {
 #define bhoomi_clock_v1_NowPlayingSlot_init_default {0, 0, 0, 0, 0, 0, 0, 0, 0}
 #define bhoomi_clock_v1_Face_init_default        {"", "", false, bhoomi_clock_v1_SpriteRef_init_default, false, bhoomi_clock_v1_TextSlot_init_default, false, bhoomi_clock_v1_TextSlot_init_default, false, bhoomi_clock_v1_Layer_init_default, 0, {bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default}, 0, {bhoomi_clock_v1_Emitter_init_default, bhoomi_clock_v1_Emitter_init_default, bhoomi_clock_v1_Emitter_init_default}, false, bhoomi_clock_v1_When_init_default, false, bhoomi_clock_v1_NowPlayingSlot_init_default}
 #define bhoomi_clock_v1_Weather_init_default     {0, 0, 0, 0, 0, ""}
+#define bhoomi_clock_v1_Management_init_default  {0, "", 0}
 #define bhoomi_clock_v1_DeviceState_init_zero    {0, false, bhoomi_clock_v1_Note_init_zero, false, bhoomi_clock_v1_Photo_init_zero, 0, {bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero}, false, bhoomi_clock_v1_NowPlaying_init_zero, 0, {bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero}, "", ""}
 #define bhoomi_clock_v1_Note_init_zero           {"", 0}
 #define bhoomi_clock_v1_Photo_init_zero          {"", 0, 0}
@@ -372,6 +381,7 @@ extern "C" {
 #define bhoomi_clock_v1_NowPlayingSlot_init_zero {0, 0, 0, 0, 0, 0, 0, 0, 0}
 #define bhoomi_clock_v1_Face_init_zero           {"", "", false, bhoomi_clock_v1_SpriteRef_init_zero, false, bhoomi_clock_v1_TextSlot_init_zero, false, bhoomi_clock_v1_TextSlot_init_zero, false, bhoomi_clock_v1_Layer_init_zero, 0, {bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero}, 0, {bhoomi_clock_v1_Emitter_init_zero, bhoomi_clock_v1_Emitter_init_zero, bhoomi_clock_v1_Emitter_init_zero}, false, bhoomi_clock_v1_When_init_zero, false, bhoomi_clock_v1_NowPlayingSlot_init_zero}
 #define bhoomi_clock_v1_Weather_init_zero        {0, 0, 0, 0, 0, ""}
+#define bhoomi_clock_v1_Management_init_zero     {0, "", 0}
 
 /* Field tags (for use in manual encoding/decoding) */
 #define bhoomi_clock_v1_Note_text_tag            1
@@ -490,6 +500,9 @@ extern "C" {
 #define bhoomi_clock_v1_Weather_is_day_tag       4
 #define bhoomi_clock_v1_Weather_observed_at_tag  5
 #define bhoomi_clock_v1_Weather_city_tag         6
+#define bhoomi_clock_v1_Management_diagnostic_interval_tag 1
+#define bhoomi_clock_v1_Management_release_tag   2
+#define bhoomi_clock_v1_Management_size_tag      3
 
 /* Struct field encoding specification for nanopb */
 #define bhoomi_clock_v1_DeviceState_FIELDLIST(X, a) \
@@ -711,6 +724,13 @@ X(a, STATIC,   SINGULAR, STRING,   city,              6)
 #define bhoomi_clock_v1_Weather_CALLBACK NULL
 #define bhoomi_clock_v1_Weather_DEFAULT NULL
 
+#define bhoomi_clock_v1_Management_FIELDLIST(X, a) \
+X(a, STATIC,   SINGULAR, UINT32,   diagnostic_interval,   1) \
+X(a, STATIC,   SINGULAR, STRING,   release,           2) \
+X(a, STATIC,   SINGULAR, UINT32,   size,              3)
+#define bhoomi_clock_v1_Management_CALLBACK NULL
+#define bhoomi_clock_v1_Management_DEFAULT NULL
+
 extern const pb_msgdesc_t bhoomi_clock_v1_DeviceState_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_Note_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_Photo_msg;
@@ -731,6 +751,7 @@ extern const pb_msgdesc_t bhoomi_clock_v1_When_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_NowPlayingSlot_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_Face_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_Weather_msg;
+extern const pb_msgdesc_t bhoomi_clock_v1_Management_msg;
 
 /* Defines for backwards compatibility with code written before nanopb-0.4.0 */
 #define bhoomi_clock_v1_DeviceState_fields &bhoomi_clock_v1_DeviceState_msg
@@ -753,6 +774,7 @@ extern const pb_msgdesc_t bhoomi_clock_v1_Weather_msg;
 #define bhoomi_clock_v1_NowPlayingSlot_fields &bhoomi_clock_v1_NowPlayingSlot_msg
 #define bhoomi_clock_v1_Face_fields &bhoomi_clock_v1_Face_msg
 #define bhoomi_clock_v1_Weather_fields &bhoomi_clock_v1_Weather_msg
+#define bhoomi_clock_v1_Management_fields &bhoomi_clock_v1_Management_msg
 
 /* Maximum encoded size of messages (where known) */
 #define BHOOMI_CLOCK_V1_CLOCK_PB_H_MAX_SIZE      bhoomi_clock_v1_DeviceState_size
@@ -765,6 +787,7 @@ extern const pb_msgdesc_t bhoomi_clock_v1_Weather_msg;
 #define bhoomi_clock_v1_Keyframe_size            12
 #define bhoomi_clock_v1_Layer_size               480
 #define bhoomi_clock_v1_Listener_size            168
+#define bhoomi_clock_v1_Management_size          78
 #define bhoomi_clock_v1_Motion_size              120
 #define bhoomi_clock_v1_Note_size                494
 #define bhoomi_clock_v1_NowPlayingSlot_size      46

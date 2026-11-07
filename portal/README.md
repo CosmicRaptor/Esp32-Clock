@@ -237,3 +237,22 @@ This is what the pages use. Requests need the session cookie from `POST /api/log
 - KV's free tier allows 1,000 writes a day. Check-ins write at most once every 10 minutes (and the isolate remembers the last one, so most polls don't even read), so a clock polling all day uses about 150 of them. Spotify tokens are written only when one is refreshed (hourly per person). Each 10 s poll reads KV twice (state, Spotify), about 17,000 reads a day against the free tier's 100,000.
 - Python packages the Worker imports go in `pyproject.toml`. `pywrangler` vendors them into `python_modules/` (gitignored) and pins them in `pylock.toml`. `protoc`'s version must not be newer than the vendored `protobuf`: `protoc` 36.x pairs with `protobuf` 7.36.x.
 - `clock.pb.{c,h}` (sketch root) are generated with nanopb 0.4.9.1. The firmware needs the matching Nanopb runtime: it isn't in the Arduino Library Manager index, so copy `pb.h pb_common.[ch] pb_decode.[ch] pb_encode.[ch]` from the upstream `0.4.9.1` tag into `~/Documents/Arduino/libraries/Nanopb/` (with a `library.properties`).
+
+## Firmware and clock diagnostics
+
+The main admin page's **Clock health & firmware** card uploads a candidate application `.bin`, explicitly requests its installation, cancels future discovery, and configures diagnostic reports (hourly by default, minimum five minutes, or off). It displays the latest report and its server receipt time. Refresh the page for new data. Firmware headers must identify an ESP32-S3 application; the device additionally validates the complete image and SHA-256.
+
+Admin routes (existing session and Access checks apply):
+
+- `GET /api/management`: settings, latest uploaded release, approved release and latest diagnostics.
+- `PUT /api/management/settings`: JSON `{"interval":3600}`. Supported seconds: 0, 300, 900, 1800, 3600, 21600.
+- `PUT /api/management/firmware`: raw application binary, at most 6 MB. Returns `{release: SHA256, size}`; does not approve it.
+- `POST /api/management/install`: JSON `{"release":"<uploaded SHA256>"}` approves the exact candidate. `DELETE` clears approval.
+
+Device routes (existing bearer token and Access checks apply):
+
+- `GET /api/device/management`: uncached `Management` protobuf with interval, approved digest and size. Independent one-minute poll; no state schema changes.
+- `GET /api/device/firmware/<sha256>`: immutable raw firmware, with Content-Length. A propagation-time 404 is retried later.
+- `PUT /api/device/diagnostics`: allowlisted JSON snapshot; receipt time is assigned by the server. Routine reports within five minutes of the last stored snapshot return 429; firmware/update transitions are allowed after one minute. Unknown fields are discarded.
+
+KV stores base64 firmware under `firmware:<sha256>`, plus `management:release`, `management:approved`, `management:settings`, and `management:diagnostics`. Each upload stores its immutable binary before publishing metadata. Firmware releases are retained for recovery; there is currently no release garbage collection. Five-minute diagnostics add at most about 288 writes/day for one clock, alongside existing check-ins, weather and token writes. Do not add per-poll writes. See the firmware README for rollback behavior and error codes.

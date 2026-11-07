@@ -275,3 +275,10 @@ message Weather {
   int64 observed_at = 5;         // original observation time, even when serving stale data
   string city = 6;
 }
+
+// Independent management poll; does not invalidate the main state cache.
+message Management {
+  uint32 diagnostic_interval = 1; // seconds; 0 disables reports
+  string release = 2; // SHA-256 of approved firmware; empty means no update
+  uint32 size = 3;
+}

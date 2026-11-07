@@ -13,6 +13,7 @@
 #include <time.h>
 
 #include "app_lock.h"
+#include "ota_health.h"
 #include "display.h"
 #include "portal_client.h"
 #include "settings.h"
@@ -41,6 +42,7 @@ static void onWifi(const wifisetup::Status &s) {
 }
 
 void setup() {
+  otahealth::begin();
   Serial.begin(115200);
   Serial.println();
   Serial.println("=== Bhoomi clock booting ===");
@@ -79,6 +81,7 @@ static void serialCommands() {
 
 void loop() {
   serialCommands();
+  otahealth::tick();
   {
     app::Lock lock;  // the web task takes this too; see app_lock.h
     wifisetup::loop();

@@ -1,5 +1,7 @@
 # Handoff: Bhoomi's Clock
 
+**2026-11-07 OTA update:** custom two-slot 6 MB layout installed by USB; authenticated OTA and adjustable diagnostics deployed. A real OTA transfer passed startup health checks, and a deliberately rejected trial was confirmed to roll back to the previous app with the failed digest remembered. Final normal firmware 0.9.1 was delivered over OTA and passed startup health checks; it uses 2,988,306 bytes (47% of a 6 MB slot); no rejection-test code remains in the source. Portal checks: 160 Python + 68 JS tests and the local HTTP management checks pass. Portal deployment: `3a42f0c9-11a3-49c3-be96-dfba5ba7a446`. See the release workflow at the end. The older status below is historical.
+
 *Written 2026-11-07, when `main` was at `e03f3ad` (pushed to origin, the same code deployed to the portal and flashed on the board).*
 
 Start with `AGENTS.md` (rules and commands), then this file (state and what's next). `README.md` and `portal/README.md` hold the details.
@@ -54,33 +56,12 @@ Portal version `ae172a85-d5c5-4b09-b01e-10f5e31ec32d` is deployed. The current w
 
 ## What's next, in priority order
 
-### Must do before the clock is given away (all need USB)
+### Remaining work before the clock is given away
 
-1. **OTA firmware updates.** None exist today. Once the clock is at Bhoomi's place, any bug fix would mean getting it back. Rough plan:
-   - Add new fields to `DeviceState` (firmware version, URL, SHA-256).
-   - Serve the image from the portal (from KV, or R2 if it's too big for a KV value).
-   - Install it with `esp_https_ota` into the other app slot. The current scheme already has two 3 MB slots.
-   - Add a fallback: check whether this Arduino core's bootloader has app rollback enabled. If it doesn't, add an app-level boot health check that switches back to the previous slot.
-   - Ideally the image is signed, or at least its hash is checked, with the hash delivered over the authenticated state.
-2. **Room in the app partition.** It's ~94% full (≈2.97 MB of 3.0 MB), and OTA will add code.
-   - Switch to a custom `partitions.csv` with two 6 MB app slots, a ~3.9 MB FFat and a coredump partition. A draft from the design discussion is in the box below.
-   - This can only be flashed over USB, and it wipes FFat. The built-in beep regenerates itself on first boot, and `/state.pb` simply re-syncs.
-   - **Do this before OTA ships.** A partition table can never be changed safely over OTA.
-   - Also: about 800 KB of the app is `ESP32-audioI2S`'s decoders (AAC, Vorbis, Opus, FLAC, MP3). Converting every sound to MP3 on upload and replacing the library with a small MP3+WAV player in `sound.cpp` would save about 750 KB.
+1. **OTA and diagnostics are implemented** (firmware 0.9.1). See the main README's “Firmware updates and diagnostics” and the portal README's API section. The USB baseline installs the custom two-slot 6 MB layout; future app releases can be uploaded and approved remotely. Bootloader rollback is enabled, with Arduino's early auto-confirmation deferred until the main loop and authenticated cloud pass startup checks. Reports default to hourly with remotely selectable 5 min–6 hour intervals or off.
+2. **App partition space is resolved.** `partitions.csv` has two 6 MB app slots, ~3.9 MB FFat and coredump. `build.sh` exports application binaries in `build/`, checks the actual 6 MB slot limit, and uploads those exact artifacts. The initial migration was authorized and performed over USB, preserving Wi-Fi NVS and SD files.
 3. **Confirm the faces work on the board** (see the checklist above), then tune the budget constants from real measurements.
 4. **Test at Bhoomi's place, or with her router's signal level.** At −90 dBm or worse, every remote feature gets flaky. Consider a Wi-Fi extender near the clock.
-
-```
-# Name,    Type, SubType,  Offset,   Size
-nvs,       data, nvs,      0x9000,   0x5000
-otadata,   data, ota,      0xe000,   0x2000
-app0,      app,  ota_0,    0x10000,  0x600000
-app1,      app,  ota_1,    0x610000, 0x600000
-ffat,      data, fat,      0xC10000, 0x3E0000
-coredump,  data, coredump, 0xFF0000, 0x10000
-```
-
-Check how the esp32 Arduino core picks up a sketch-folder `partitions.csv` and its size limit before relying on this. `build.sh` currently passes `PartitionScheme=app3M_fat9M_16MB`.
 
 ### Should do
 
@@ -119,3 +100,9 @@ Check how the esp32 Arduino core picks up a sketch-folder `partitions.csv` and i
 - The Nanopb runtime isn't in the Arduino Library Manager. It's copied by hand into `~/Documents/Arduino/libraries/Nanopb/`.
 - `protoc`'s version must not be newer than the `protobuf` package the Worker vendors.
 - Spotify's development-mode app only works for users listed in its dashboard, and OAuth redirects locally need `127.0.0.1`, not `localhost`.
+
+## OTA release workflow (2026-11-07)
+
+The admin password is saved in gitignored `portal/.dev.vars` (mode 600), not in this document. `tools/firmware_release.py` uses it plus the existing Access service credentials from `portal_config.h`. `upload` publishes `build/BhoomiClock.ino.bin`; `install <sha256>` explicitly approves it; `status`, `cancel`, and `interval <seconds>` manage it. A Git push alone does not install firmware. Uploaded firmware is retained in content-addressed KV keys. Reports are latest snapshots rather than a log archive.
+
+The physical screen still needs the user's visual check after future updates. Serial confirms initialization and the health gate, not pixel correctness. Keep all existing pre-deployment and pre-flash authorization rules.

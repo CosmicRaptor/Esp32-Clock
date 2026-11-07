@@ -66,6 +66,9 @@ PB_BIND(bhoomi_clock_v1_Face, bhoomi_clock_v1_Face, 2)
 PB_BIND(bhoomi_clock_v1_Weather, bhoomi_clock_v1_Weather, 2)
 
 
+PB_BIND(bhoomi_clock_v1_Management, bhoomi_clock_v1_Management, AUTO)
+
+
 
 
 

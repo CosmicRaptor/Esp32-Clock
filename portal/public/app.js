@@ -127,6 +127,7 @@ async function load() {
   $('app').hidden = false;
   loadSpotify();
   window.loadWeatherSettings();
+  window.loadManagement();
 }
 
 function setState(s) {
@@ -612,6 +613,7 @@ async function loadSpotify() {
         toast('Disconnected');
         loadSpotify();
   window.loadWeatherSettings();
+  window.loadManagement();
       });
       li.append(b);
     }

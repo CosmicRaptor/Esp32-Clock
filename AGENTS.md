@@ -43,13 +43,17 @@ cd portal && npm test         # portal unit tests (Python + JS)
 
 ## Hard constraints
 
-- **The app partition is ~94% full** (≈2.97 MB of 3 MB, `PartitionScheme=app3M_fat9M_16MB`). Report the size from `./build.sh` in every firmware change, and don't add big libraries. Fixing this is planned (see `HANDOFF.md`). It needs a USB flash and wipes FFat, so never change the partition scheme without the user's agreement.
+- **The app uses custom two-slot 6 MB partitions** (`partitions.csv`, `PartitionScheme=custom`). Report the size from `./build.sh` in every firmware change. Changing the layout needs USB and resets FFat; never change it without the user's agreement.
 - **Internal RAM is tight**, about 31 KB free while polling. Put anything big in PSRAM: `heap_caps_malloc(..., MALLOC_CAP_SPIRAM)`. LVGL's pool is already in PSRAM, and mbedTLS allocations of 1 KB or more go there through the hook in `portal_client.cpp` (see "HTTPS" in `README.md`). Watch `min heap` in the `[portal] poll (...)` log line.
 - **Tasks and locking:** the main loop drives LVGL, the web server and the portal client run as their own FreeRTOS tasks, and audio has its own task. Take the lock in `app_lock.h` before touching LVGL objects or shared state from any task other than the loop.
 - **Weak Wi-Fi at the destination.** Every network path must time out, back off and keep the last good state. The clock must keep telling time and ringing alarms offline. Alarms and face rules are evaluated **on the clock** in its local time, never by the server.
 - **Keep the protobuf schema backward compatible.** Only add fields with new numbers, and never renumber or reuse one. Change `proto/clock.options` limits together with `portal/src/model.py`, then run `proto/generate.sh`, `./build.sh` and `npm test`.
 - **Faces must look the same in the portal preview and on the clock.** `face_motion.h` mirrors `portal/public/face-motion.js` and `face_rules.h` mirrors `portal/public/face-rules.js` and `model.py`. Change both sides together and run both `tools/check_face_*.sh`.
 - The screen redraws over 40 MHz SPI. The portal's redraw budget (`BUDGET_PX`, `ANIM_FPS` in `portal/src/model.py`) assumes 15 animation ticks a second. Don't raise the frame rate without re-measuring.
+
+## Local release access
+
+`portal/.dev.vars` contains the admin password (gitignored, mode 600). Use `tools/firmware_release.py` for authenticated release uploads, explicit installation, interval settings and status. It reads existing Access credentials from `portal_config.h`; never print either file. Do not put credentials in docs or commits.
 
 ## Working with the user
 

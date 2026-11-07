@@ -50,6 +50,20 @@
     <p class="hint center" id="pvNote">Rough preview, since the clock face isn't final yet.</p>
   </div>
 
+<div class="card" id="managementCard">
+  <h2>Clock health &amp; firmware</h2>
+  <label>Diagnostic reports <select id="diagnosticInterval"><option value="0">Off</option><option value="300">Every 5 minutes</option><option value="900">Every 15 minutes</option><option value="1800">Every 30 minutes</option><option value="3600" selected>Hourly</option><option value="21600">Every 6 hours</option></select></label>
+  <button class="btn" id="saveDiagnostics">Save interval</button>
+  <p id="clockHealthSummary" class="hint">Waiting for a report…</p>
+  <details><summary>Diagnostic details</summary>
+  <pre id="clockDiagnostics" style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px">Waiting for a report…</pre></details>
+  <label>Application firmware (.bin) <input type="file" id="firmwareFile" accept=".bin"></label>
+  <button class="btn" id="uploadFirmware">Upload candidate</button>
+  <p id="firmwareCandidate" style="overflow-wrap:anywhere"></p>
+  <button class="btn primary" id="installFirmware" disabled>Install uploaded firmware</button>
+  <button class="btn ghost" id="cancelFirmware">Cancel pending install</button>
+  <p id="managementResult" role="status"></p>
+</div>
 <div class="card" id="weatherCard">
   <h2>Weather</h2>
   <p id="weatherCurrent" role="status">Loading city…</p>
@@ -176,6 +190,7 @@
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="/weather-settings.js"></script>
+<script src="/management.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>
