@@ -1,4 +1,5 @@
 #include "portal_client.h"
+#include "face_weather.h"
 #include <math.h>
 
 #include <FFat.h>
@@ -195,6 +196,36 @@ class BufSink : public Stream {
   size_t cap, len = 0;
   bool overflow = false;
 };
+
+// HTTPClient's body loop uses delay(0), which need not run the idle task. Short read
+// waits plus a real task delay keep TLS/image transfers cooperative on weak Wi-Fi.
+// Keep HTTPClient's chunk decoding and enforce an overall body deadline as well.
+int writeResponse(Conn &c, Stream &destination) {
+  class YieldingSink : public Stream {
+   public:
+    explicit YieldingSink(Stream &out) : out(out), started(millis()) {}
+    size_t write(uint8_t b) override { return write(&b, 1); }
+    size_t write(const uint8_t *p, size_t n) override {
+      vTaskDelay(1);
+      if (millis() - started >= IO_TIMEOUT_MS) { setWriteError(); return 0; }
+      size_t wrote = out.write(p, n);
+      if (out.getWriteError()) setWriteError();
+      return wrote;
+    }
+    int available() override { return 0; }
+    int read() override { return -1; }
+    int peek() override { return -1; }
+   private:
+    Stream &out;
+    uint32_t started;
+  } sink(destination);
+  Stream *socket = c.http.getStreamPtr();
+  if (!socket) return -1;
+  socket->setTimeout(100);
+  int result = c.http.writeToStream(&sink);
+  socket->setTimeout(IO_TIMEOUT_MS);
+  return result;
+}
 
 uint8_t *bigAlloc(size_t n) {
   void *p = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -400,7 +431,7 @@ Poll fetchState(Conn &c) {
     return Poll::Failed;
   }
   BufSink sink(body, cap);
-  int got = c.http.writeToStream(&sink);
+  int got = writeResponse(c, sink);
   String newTag = c.http.header("ETag");
   if (got >= 0 && !sink.overflow) c.finish();
   else c.close();
@@ -489,7 +520,7 @@ Photo syncPhoto(Conn &c) {
     Serial.printf("[portal] photo %s: HTTP %d\n", id, code);
   } else {
     BufSink sink(buf, size);
-    int got = c.http.writeToStream(&sink);
+    int got = writeResponse(c, sink);
     if (got < 0 || sink.overflow || sink.len != size) {
       Serial.printf("[portal] photo %s: incomplete (%d of %u bytes, overflow=%d)\n", id, got, (unsigned)size,
                     sink.overflow);
@@ -649,7 +680,7 @@ void syncCovers(Conn &c) {
     bool ok = false;
     if (code == HTTP_CODE_OK) {
       BufSink sink(buf, MAX_COVER_BYTES);
-      int got = c.http.writeToStream(&sink);
+      int got = writeResponse(c, sink);
       if (got >= 0 && !sink.overflow && sink.len > 4 && buf[0] == 0xFF && buf[1] == 0xD8) {
         c.finish();
         app::Lock lock;
@@ -725,6 +756,13 @@ void eachImage(const Face &f, F fn) {
     if (f.layers[i].has_sprite) fn(f.layers[i].sprite, false);
   for (pb_size_t i = 0; i < f.emitters_count; i++)
     for (pb_size_t k = 0; k < f.emitters[i].sprites_count; k++) fn(f.emitters[i].sprites[k], false);
+  for (const auto *v : {f.has_cloudy ? &f.cloudy : nullptr, f.has_rain ? &f.rain : nullptr}) {
+    if (!v) continue;
+    if (v->has_background) fn(v->background, true);
+    for (pb_size_t i = 0; i < v->layers_count; i++) if (v->layers[i].has_sprite) fn(v->layers[i].sprite, false);
+    for (pb_size_t i = 0; i < v->emitters_count; i++)
+      for (pb_size_t k = 0; k < v->emitters[i].sprites_count; k++) fn(v->emitters[i].sprites[k], false);
+  }
 }
 
 bool faceReady(const Face &f) {
@@ -806,7 +844,7 @@ Got fetchFace(Conn &c, const char *id, const char *rev) {
     result = Got::NotYet;
   } else if (code == HTTP_CODE_OK) {
     BufSink sink(body, bhoomi_clock_v1_Face_size + 64);
-    int got = c.http.writeToStream(&sink);
+    int got = writeResponse(c, sink);
     memset(f, 0, sizeof(Face));
     pb_istream_t in = pb_istream_from_buffer(body, sink.len);
     if (got < 0 || sink.overflow) {
@@ -857,7 +895,7 @@ Got fetchAsset(Conn &c, const bhoomi_clock_v1_SpriteRef &r, bool background) {
     Serial.printf("[faces] image %s: HTTP %d\n", r.hash, code);
   } else {
     BufSink sink(buf, r.size);
-    int got = c.http.writeToStream(&sink);
+    int got = writeResponse(c, sink);
     bool good = got >= 0 && !sink.overflow && sink.len == r.size;
     if (good && background) good = buf[0] == 0xFF && buf[1] == 0xD8;
     // a sprite: the 12-byte LVGL header (magic 0x19, RGB565A8 = 0x14, w, h, stride = 2w), then 3 bytes a pixel
@@ -1017,7 +1055,7 @@ void syncWeather(Conn &c) {
   if (code != 200) { c.close(); return; }
   uint8_t body[bhoomi_clock_v1_Weather_size + 32];
   BufSink sink(body, sizeof body);
-  int got = c.http.writeToStream(&sink);
+  int got = writeResponse(c, sink);
   if (got < 0 || sink.overflow) { c.close(); return; }
   c.finish();
   bhoomi_clock_v1_Weather next = bhoomi_clock_v1_Weather_init_zero;
@@ -1082,7 +1120,7 @@ void manage(Conn &c) {
   bhoomi_clock_v1_Management cfg = bhoomi_clock_v1_Management_init_zero;
   uint8_t buffer[128]; BufSink sink(buffer, sizeof(buffer));
   bool got = false;
-  if (code == 200 && c.http.writeToStream(&sink) >= 0 && !sink.overflow) {
+  if (code == 200 && writeResponse(c, sink) >= 0 && !sink.overflow) {
     auto in = pb_istream_from_buffer(buffer, sink.len);
     got = pb_decode(&in, bhoomi_clock_v1_Management_fields, &cfg);
   }
@@ -1326,6 +1364,12 @@ String keysJson() {
 }
 
 bool healthy() { app::Lock lock; return lastCode == 200 || lastCode == 304; }
+
+int weatherFaceGroup() {
+  time_t now = time(nullptr);
+  if (!weatherState.available || weatherPending.length() || now < weatherState.observed_at || now - weatherState.observed_at > 3 * 3600) return faceweather::BASE;
+  return faceweather::group(weatherState.code);
+}
 
 void weatherText(char *out, size_t cap) {
   out[0] = 0;

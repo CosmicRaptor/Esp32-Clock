@@ -1,5 +1,17 @@
 # Handoff: Bhoomi's Clock
 
+## Weather face variations — deployed and flashed, 7 November 2026
+
+All nine panda faces now have default, cloudy/foggy and stormy rain scenes in production. Eighteen edited backgrounds and transparent rain/lightning sprites are under `portal/public/panda-collection/`. The Faces editor previews them; setup upgrades existing face IDs in place while preserving base edits, schedules, order and pin. The larger renderer copy is in PSRAM. Added protobuf fields are backward compatible, and code 97 is now accepted as a thunderstorm.
+
+Aryan requested lightning **every second at new random sky positions**. This uses `scatter.period=1000`, a matching one-second blink/fade, and per-scene sky bounds; the café/bedroom use their windows. `face-motion.js` and `face_motion.h` agree on reseeding at each cycle. Weather classification agrees in Python, JS and C++.
+
+All 27 browser-converted combinations passed the real model checks; maximum estimated animation budget is under 8%. Checks: **167 Python + 71 JS tests**, 291 C++/JS motion lines and 23 rule cases pass. Firmware **0.10.0** is **2,990,666 bytes (47% of a 6 MB slot)**, with 83,168 bytes global RAM. Portal deployment: `57165159-e0df-4ecf-bb28-7a466a25f85d`. All nine live faces were upgraded in place; schedules, fallback, order and pin were preserved. No extra portal page was added. Local review remains at `http://127.0.0.1:8790/weather-review`; its files are outside the deployed public directory.
+
+USB flashing and hash verification succeeded. Serial polling remained healthy for several minutes on weak Wi-Fi; Aryan confirmed the physical screen looks right. During asset fetching we found an idle-task watchdog starvation path in HTTPClient's body loop. Small buffered responses now use cooperative yielding, 100 ms socket read waits and a 15-second overall body deadline; stalled transfers retain the previous state. The large OTA image stream keeps its separate transfer handling. A host test exercises the actual helper's yielding, deadline and write-error behavior.
+
+The old approved 0.9.1 OTA digest was cancelled before USB flashing to avoid a downgrade. The optional release-library upload was blocked by automatic approval review and was not retried; the stored library release remains 0.9.1 with no pending approval. No secrets or firmware binaries belong in this commit. Artwork and maintenance details: [portal/ARTWORK.md](portal/ARTWORK.md).
+
 **2026-11-07 OTA update:** custom two-slot 6 MB layout installed by USB; authenticated OTA and adjustable diagnostics deployed. A real OTA transfer passed startup health checks, and a deliberately rejected trial was confirmed to roll back to the previous app with the failed digest remembered. Final normal firmware 0.9.1 was delivered over OTA and passed startup health checks; it uses 2,988,306 bytes (47% of a 6 MB slot); no rejection-test code remains in the source. Portal checks: 160 Python + 68 JS tests and the local HTTP management checks pass. Portal deployment: `3a42f0c9-11a3-49c3-be96-dfba5ba7a446`. See the release workflow at the end. The older status below is historical.
 
 *Written 2026-11-07, when `main` was at `e03f3ad` (pushed to origin, the same code deployed to the portal and flashed on the board).*

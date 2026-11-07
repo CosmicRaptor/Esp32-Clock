@@ -58,13 +58,16 @@
 
   // A scattered layer's copy `copy` has three draws of its own: r[0], r[1] pick its place in the area, r[2] (ms) is how
   // far into their cycles its motions are. The same PRNG as the particles', seeded with the layer's scatter seed.
-  function scatterDraws(layer, copy) { return draws(layer.scatter.seed, copy, 3); }
+  function scatterDraws(layer, copy, t = 0) {
+    const cycle = layer.scatter.period ? Math.floor(Math.max(0,t) / layer.scatter.period) : 0;
+    return draws((layer.scatter.seed ^ Math.imul(cycle, 0x9e3779b1)) >>> 0, copy, 3);
+  }
 
   // Where copy `copy` of a layer sits before its motions: in a row (x, y plus copy * stagger), or, scattered, at a
   // random place so that the whole frame (fw x fh) lies inside the area. Floats: round at the very end.
-  function copyOrigin(layer, copy, fw, fh) {
+  function copyOrigin(layer, copy, fw, fh, t = 0) {
     if (layer.scatter) {
-      const a = layer.scatter.area, r = scatterDraws(layer, copy);
+      const a = layer.scatter.area, r = scatterDraws(layer, copy, t);
       return { x: a.x + r[0] / 65536 * (a.w - fw), y: a.y + r[1] / 65536 * (a.h - fh) };
     }
     return { x: layer.x + copy * layer.stagger.x, y: layer.y + copy * layer.stagger.y };
@@ -73,7 +76,7 @@
   // How a layer's copy `copy` looks at time t. Returns an offset from its place, an opacity (0-100), a scale in
   // percent about the sprite's centre and, for a sprite sheet, the frame number.
   function layerPose(layer, copy, t) {
-    const ti = t + (layer.scatter ? scatterDraws(layer, copy)[2] : copy * ((layer.stagger && layer.stagger.phase) || 0));
+    const ti = t + (layer.scatter ? (layer.scatter.period ? 0 : scatterDraws(layer, copy)[2]) : copy * ((layer.stagger && layer.stagger.phase) || 0));
     const pose = { dx: 0, dy: 0, opacity: 100, scale: layer.scale || 100, frame: 0 };
     for (const m of layer.motion || []) {
       const p = m.period, tm = ti + (m.phase || 0);
@@ -106,7 +109,7 @@
   function layerPlacement(layer, sprite, copy, t) {
     const pose = layerPose(layer, copy, t);
     const n = frameCount(layer), fw = sprite.w / n, fh = sprite.h;
-    const o = copyOrigin(layer, copy, fw, fh);
+    const o = copyOrigin(layer, copy, fw, fh, t);
     const cx = o.x + pose.dx + fw / 2;
     const cy = o.y + pose.dy + fh / 2;
     const w = round(fw * pose.scale / 100), h = round(fh * pose.scale / 100);

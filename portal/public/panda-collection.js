@@ -5,6 +5,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
   const sprites = { petal: 18, snowflake: 10, steam: 32, 'shooting-star': 44, leaf: 15, twinkle: 14 };
+  const weatherSprites = {'rain-drop':14, lightning:42};
   const entries = [
     ['01', 'Paris blossoms/beret', 12, 15, 'petal', 195, 28, 40, '#28151c'],
     ['02', 'Snowy sleeping panda', 5, 7, 'snowflake', 194, 25, 40, '#fff4ee'],
@@ -41,7 +42,29 @@
     if (e.accent === 'shooting-star') f.layers.push({name:'Shooting star',sprite:refs[e.accent],x:140,y:5,copies:1,scale:100,stagger:{x:0,y:0,phase:0},scatter:null,motion:[
       {type:'path',period:6500,dx:-105,dy:60,mode:'loop',phase:0},
       {type:'fade',period:6500,phase:0,keys:[{at:0,v:0},{at:80,v:100},{at:300,v:0},{at:999,v:0}]}]});
+    if (refs[e.key+'-cloudy'] && refs[e.key+'-rain'] && refs['rain-drop'] && refs.lightning) f.weather = weather(e, f, refs);
     return f;
   }
-  return {sprites,entries,build};
+  function weather(e, f, refs) {
+    const indoor = e.key==='03'||e.key==='07';
+    const area = e.key==='03'?{x:193,y:5,w:122,h:100}:e.key==='07'?{x:294,y:0,w:26,h:150}:{x:0,y:0,w:320,h:240};
+    const particles = e.key==='03'?JSON.parse(JSON.stringify(f.particles)):[];
+    const rain = {kind:'fall',sprites:[refs['rain-drop']],count:indoor?9:28,area,speed_min:100,speed_max:150,sway:0,period:4000,phase:0,depth:'front',seed:Number(e.key)*317};
+    const phase=0;
+    const skies={
+      '01':{x:110,y:54,w:155,h:65},'02':{x:145,y:54,w:130,h:100},
+      '03':{x:193,y:5,w:122,h:100},'04':{x:120,y:54,w:165,h:75},
+      '05':{x:168,y:54,w:105,h:102},'06':{x:150,y:54,w:150,h:125},
+      '07':{x:294,y:0,w:24,h:135},'08':{x:160,y:54,w:95,h:95},
+      '09':{x:180,y:54,w:130,h:110},
+    };
+    const bolt = {name:'Dynamic lightning',sprite:refs.lightning,x:e.key==='03'?267:e.key==='07'?292:90,y:indoor?30:57,
+      copies:1,scale:e.key==='07'?65:100,stagger:{x:0,y:0,phase:0},scatter:{area:skies[e.key],seed:Number(e.key)*719,period:1000},
+      motion:[{type:'blink',period:1000,on:250,phase},{type:'fade',period:1000,phase,keys:[{at:0,v:100},{at:200,v:0},{at:999,v:0}]}]};
+    return {
+      cloudy:{background:refs[e.key+'-cloudy'],layers:[],particles,text_color:e.key==='02'||e.key==='08'?'#342c48':''},
+      rain:{background:refs[e.key+'-rain'],layers:[bolt],particles:[...particles,rain],text_color:'#fff4ee'},
+    };
+  }
+  return {sprites,weatherSprites,entries,build,weather};
 });

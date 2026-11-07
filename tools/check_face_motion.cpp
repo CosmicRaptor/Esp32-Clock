@@ -105,4 +105,13 @@ int main() {
       }
     }
   }
+  Layer flash = {};
+  flash.scatter = true; flash.scatter_seed = 719; flash.scatter_period_ms = 1000;
+  flash.scatter_area = {30, 10, 250, 100};
+  flash.motion_count = 1; flash.motion[0] = mo(bhoomi_clock_v1_Motion_Type_BLINK, 1000); flash.motion[0].on_ms = 250;
+  const uint32_t flashTimes[] = {0U, 100U, 999U, 1000U, 1100U, 1999U, 2000U, 123456U, 4294967000U};
+  for (uint32_t t : flashTimes) {
+    double x, y; copyOrigin(flash, 0, 11, 42, x, y, t);
+    printf("flash %u %.3f %.3f %.3f\n", t, x, y, layerPose(flash, 0, t).opacity);
+  }
 }

@@ -51,6 +51,7 @@ inline void draws(uint32_t seed, uint32_t index, uint16_t r[6]) {
 // their cycles its motions are (the same PRNG as the particles', seeded with scatter_seed).
 inline int64_t copyPhase(const Layer &L, int copy) {
   if (L.scatter) {
+    if (L.scatter_period_ms) return 0;
     uint16_t r[6];
     draws(L.scatter_seed, (uint32_t)copy, r);
     return r[2];
@@ -59,10 +60,11 @@ inline int64_t copyPhase(const Layer &L, int copy) {
 }
 
 // Where copy `copy` sits before its motions: in a row, or at a random place with the whole frame inside the area.
-inline void copyOrigin(const Layer &L, int copy, int fw, int fh, double &x, double &y) {
+inline void copyOrigin(const Layer &L, int copy, int fw, int fh, double &x, double &y, uint32_t t = 0) {
   if (L.scatter) {
     uint16_t r[6];
-    draws(L.scatter_seed, (uint32_t)copy, r);
+    uint32_t cycle = L.scatter_period_ms ? t / L.scatter_period_ms : 0;
+    draws(L.scatter_seed ^ (cycle * 0x9e3779b1U), (uint32_t)copy, r);
     x = L.scatter_area.x + r[0] / 65536.0 * ((double)L.scatter_area.w - fw);
     y = L.scatter_area.y + r[1] / 65536.0 * ((double)L.scatter_area.h - fh);
     return;

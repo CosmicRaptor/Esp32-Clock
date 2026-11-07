@@ -196,6 +196,7 @@ message Layer {
   bool scatter = 10;             // true: the copies are not in a row. Copy i sits at a random place inside
   Rect scatter_area = 11;        //   `scatter_area` (a Rect, below), chosen from `scatter_seed`, and its motions start at a
   uint32 scatter_seed = 12;      //   random point of their cycles. x, y and stagger_* are then ignored. See README, "Scatter"
+  uint32 scatter_period_ms = 13; // 0: fixed places; otherwise pick new places each period, without a random time offset
 }
 
 // Particles in a rectangle. Each particle's start values come from a seeded PRNG, so the clock and the portal agree.
@@ -252,6 +253,14 @@ message NowPlayingSlot {
 }
 
 // GET /api/device/face/<id>  (Content-Type: application/x-protobuf; ETag is the face's `rev`)
+message FaceWeatherVariant {
+  SpriteRef background = 1;
+  repeated Layer layers = 2;     // replaces the default moving layers
+  repeated Emitter emitters = 3; // replaces the default particles
+  uint32 text_color = 4;
+  bool override_text = 5;
+}
+
 message Face {
   reserved 3;                    // (was going to be the name: the clock never shows it)
   string id = 1;
@@ -264,6 +273,8 @@ message Face {
   repeated Emitter emitters = 9; // up to 3
   When when = 10;
   NowPlayingSlot nowplaying = 11;  // unset: the clock's usual look (see NowPlayingSlot)
+  FaceWeatherVariant cloudy = 12; // overcast/partly cloudy/fog; default if absent
+  FaceWeatherVariant rain = 13;   // drizzle/rain/showers/thunderstorms; default if absent
 }
 
 // GET /api/device/weather, independently polled every 15 minutes.

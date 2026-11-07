@@ -330,6 +330,10 @@ def draft_hashes(data) -> set:
 
     if isinstance(data, dict):
         take(data.get("background"))
+        if isinstance(data.get("weather"), dict):
+            for variant in data["weather"].values():
+                if isinstance(variant, dict):
+                    found.update(draft_hashes({k: variant.get(k) for k in ("background", "layers", "particles")}))
         for layer in [data.get("icon")] + (data.get("layers") if isinstance(data.get("layers"), list) else []):
             if isinstance(layer, dict):
                 take(layer.get("sprite"))
@@ -521,9 +525,14 @@ def _clean_layer(d, assets, where, limit):
     if scatter is not None:
         scatter = _obj(scatter, f"{where}: scatter")
         area = _obj(scatter.get("area"), f"{where}: scatter area")
+        refresh = _int(scatter.get("period", 0), 0, 60000, f"{where}: scatter refresh")
+        if refresh and refresh < 500:
+            raise Invalid(f"{where}: scatter refresh must be at least 500 ms.")
         scatter = {"area": {"x": _int(area.get("x"), -1000, 1000, f"{where}: scatter x"), "y": _int(area.get("y"), -1000, 1000, f"{where}: scatter y"),
                             "w": _int(area.get("w"), 1, 1000, f"{where}: scatter width"), "h": _int(area.get("h"), 1, 1000, f"{where}: scatter height")},
                    "seed": _int(scatter.get("seed", 1), 0, 2**32 - 1, f"{where}: scatter pattern")}
+        if refresh:
+            scatter["period"] = refresh
     return {
         "name": _clean_name(d.get("name", ""), "layer name", LAYER_NAME_MAX),
         "sprite": sprite,
@@ -652,6 +661,22 @@ def clean_face(data, assets: dict, face_id: str) -> dict:
         "when": _clean_when(d.get("when")),
     }
     used = {bg}
+    variants = d.get("weather")
+    if variants is not None:
+        variants = _obj(variants, "Weather variations")
+        if set(variants) - {"cloudy", "rain"}:
+            raise Invalid("Weather variations can only be cloudy or rain.")
+        face["weather"] = {}
+        for kind, variant in variants.items():
+            variant = _obj(variant, f"The {kind} variation")
+            color = _color(variant.get("text_color"), "Weather text colour", allow_empty=True)
+            scene = {**d, **{k: variant.get(k, []) for k in ("layers", "particles")},
+                     "background": variant.get("background")}
+            scene.pop("weather", None)
+            cleaned = clean_face(scene, assets, face_id)
+            face["weather"][kind] = {"background": cleaned["background"], "layers": cleaned["layers"],
+                                     "particles": cleaned["particles"], "text_color": color}
+            used.update(cleaned["assets"])
     for layer in face["layers"] + ([face["icon"]] if face["icon"] else []):
         used.add(layer["sprite"])
     for p in face["particles"]:
@@ -757,6 +782,9 @@ def _layer_px(layer, fw, fh):
         px = max(px, (fw + math.ceil(step_x)) * (fh + math.ceil(step_y)) * moves)
     if repaint:
         px = max(px, area * scale * scale * repaint)
+    refresh = (layer.get("scatter") or {}).get("period", 0)
+    if refresh:
+        px += 2 * area * min(1.0, tick / refresh)
     if s0 != 1 or any(m["type"] == "pulse" for m in layer["motion"]):
         px *= SCALE_COST
     return min(px, IMAGE_W * IMAGE_H)
@@ -776,12 +804,29 @@ def _emitter_px(p, assets):
     return each * p["count"]
 
 
+def weather_scene(face: dict, kind: str) -> dict:
+    scene = {k: v for k, v in face.items() if k != "weather"}
+    variant = face.get("weather", {}).get(kind)
+    if variant:
+        scene.update({k: variant[k] for k in ("background", "layers", "particles")})
+        if variant["text_color"]:
+            scene["time"] = {**face["time"], "color": variant["text_color"]}
+            if face["date"]:
+                scene["date"] = {**face["date"], "color": variant["text_color"]}
+    return scene
+
+
 def face_report(face: dict) -> dict:
     """What's wrong with a cleaned face, and how heavy it is.
 
     {"errors": [text, ...], "budget": {"px": changed pixels per tick, "limit": BUDGET_PX, "ratio": px/limit,
                                        "items": [{"what": ..., "px": ...}], "bytes": ..., "bytes_limit": ...}}
     """
+    if face.get("weather"):
+        reports = [(kind, face_report(weather_scene(face, kind))) for kind in ("default", *face["weather"])]
+        worst = max(reports, key=lambda pair: pair[1]["budget"]["px"])[1]
+        return {"errors": [f"{kind}: {e}" for kind, r in reports for e in r["errors"]],
+                "budget": worst["budget"], "variations": {kind: r["budget"] for kind, r in reports}}
     assets = face["assets"]
     errors, items = [], []
 

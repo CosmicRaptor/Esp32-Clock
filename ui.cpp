@@ -735,6 +735,7 @@ void checkAlarms() {
 // (portal::chooseFace), so this runs when a face arrives or changes and once a minute (an hour can end).
 char faceShownId[13] = "", faceShownRev[13] = "";
 uint32_t seenFacesRev = 0;
+int faceShownWeather = -1;
 int faceCheckedMin = -1;
 
 void refreshFace() {
@@ -753,9 +754,10 @@ void refreshFace() {
     faceShownId[0] = faceShownRev[0] = 0;
     changed = true;
     Serial.println("[ui] no portal face applies: the built-in clock");
-  } else if (!faceShown || strcmp(f->id, faceShownId) != 0 || strcmp(f->rev, faceShownRev) != 0) {
+  } else if (!faceShown || strcmp(f->id, faceShownId) != 0 || strcmp(f->rev, faceShownRev) != 0 || portal::weatherFaceGroup() != faceShownWeather) {
     if (!faceview::show(*f)) return;  // can't be built: keep what's showing, and try again next minute
     faceShown = true;
+    faceShownWeather = portal::weatherFaceGroup();
     strlcpy(faceShownId, f->id, sizeof faceShownId);
     strlcpy(faceShownRev, f->rev, sizeof faceShownRev);
     changed = true;
@@ -865,7 +867,7 @@ void loop() {
     applyNowPlaying();
     updateNowPlaying();
   }
-  if (portal::facesRevision() != seenFacesRev) {
+  if (portal::facesRevision() != seenFacesRev || (faceShown && portal::weatherFaceGroup() != faceShownWeather)) {
     seenFacesRev = portal::facesRevision();
     refreshFace();
   }

@@ -104,6 +104,7 @@ def _fill_layer(out: pb.Layer, face: dict, layer: dict) -> None:
     if layer.get("scatter"):
         a = layer["scatter"]["area"]
         out.scatter, out.scatter_seed = True, layer["scatter"]["seed"]
+        out.scatter_period_ms = layer["scatter"].get("period", 0)
         out.scatter_area.x, out.scatter_area.y, out.scatter_area.w, out.scatter_area.h = a["x"], a["y"], a["w"], a["h"]
 
 
@@ -133,6 +134,20 @@ def face_message(face: dict) -> pb.Face:
             out.nowplaying.has_bg, out.nowplaying.bg = True, _hex_color(np["bg"])
         out.nowplaying.bg_pct = np["bg_pct"]
         out.nowplaying.title, out.nowplaying.artist = _hex_color(np["title"]), _hex_color(np["artist"])
+    for kind, variant in face.get("weather", {}).items():
+        dest = getattr(out, kind)
+        _fill_sprite(dest.background, face, variant["background"])
+        for layer in variant["layers"]:
+            _fill_layer(dest.layers.add(), face, layer)
+        for p in variant["particles"]:
+            e = dest.emitters.add(kind=_KIND[p["kind"]], count=p["count"], speed_min=p["speed_min"], speed_max=p["speed_max"],
+                                 sway=p["sway"], period_ms=p["period"], phase_ms=p["phase"], front=p["depth"] == "front", seed=p["seed"])
+            for h in p["sprites"]:
+                _fill_sprite(e.sprites.add(), face, h)
+            for key in ("x", "y", "w", "h"):
+                setattr(e.area, key, p["area"][key])
+        if variant["text_color"]:
+            dest.override_text, dest.text_color = True, _hex_color(variant["text_color"])
     when = face["when"]
     out.when.SetInParent()
     if when["hours"]:

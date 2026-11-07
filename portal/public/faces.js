@@ -163,7 +163,9 @@ function renderActive() {
 function budgetClass(r) { return r > 1 ? 'over' : r > 0.6 ? 'mid' : ''; }
 
 function renderList() {
-  $('installPandas').hidden = PandaCollection.entries.every(e => faces.some(f => f.name === e.name));
+  const pandas = PandaCollection.entries.map(e => faces.find(f => f.name === e.name));
+  $('installPandas').hidden = pandas.every(f => f && f.weather && f.weather.cloudy && f.weather.rain);
+  $('installPandas').textContent = pandas.every(Boolean) ? 'Add weather variations to the nine faces' : 'Add the nine panda faces';
   const ul = $('faces');
   ul.textContent = '';
   $('facesEmpty').hidden = faces.length > 0;
@@ -302,6 +304,7 @@ function openEditor(face) {
   draftId = face ? face.id : '';
   savedJson = snapshot();
   sel = { kind: 'bg' };
+  $('weatherPreview').value = 'default';
   lastCheck = null;
   $('listView').hidden = true;
   $('editView').hidden = false;
@@ -1082,6 +1085,8 @@ requestAnimationFrame(frame);
 function sizesOf(hashes) { return hashes.map(h => { const m = spriteInfo(h); return { w: m.w, h: m.h }; }); }
 
 function draw(t) {
+  const previewKind = $('weatherPreview').value === 'auto' ? FaceWeather.current(previewWeather, nowSec()) : $('weatherPreview').value;
+  const scene = FaceWeather.scene(draft, previewKind);
   const sc = stage.width / SCREEN_W;
   ctx.setTransform(sc, 0, 0, sc, 0, 0);
   ctx.imageSmoothingEnabled = true;
@@ -1091,23 +1096,23 @@ function draw(t) {
   ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
   hits = []; areaHits = [];
 
-  const bg = draft.background && drawable(draft.background);
+  const bg = scene.background && drawable(scene.background);
   if (bg) ctx.drawImage(bg, 0, 0, SCREEN_W, SCREEN_H);
 
-  draft.particles.forEach((p, i) => { if (p.depth === 'back') drawParticles(p, i, t); });
-  draft.layers.forEach((l, i) => drawLayer(l, 'layer', i, t));
-  draft.particles.forEach((p, i) => { if (p.depth !== 'back') drawParticles(p, i, t); });
+  scene.particles.forEach((p, i) => { if (p.depth === 'back') drawParticles(p, i, t); });
+  scene.layers.forEach((l, i) => drawLayer(l, 'layer', i, t));
+  scene.particles.forEach((p, i) => { if (p.depth !== 'back') drawParticles(p, i, t); });
 
   const now = clockParts();
-  drawText(draft.time, FaceRules.formatTime(now), 'time');
-  if (draft.date) {
-    let text = FaceRules.formatDate(draft.date.format, now);
+  drawText(scene.time, FaceRules.formatTime(now), 'time');
+  if (scene.date) {
+    let text = FaceRules.formatDate(scene.date.format, now);
     if (previewWeather && Date.now() / 1000 + skew - previewWeather.observed_at <= 10800) {
       const suffix = ` ${previewWeather.emoji} ${previewWeather.temperature_c}°C`;
-      if (textRect(draft.date, text + suffix).w > 316) text = FaceRules.formatDate('short', now);
+      if (textRect(scene.date, text + suffix).w > 316) text = FaceRules.formatDate('short', now);
       text += suffix;
     }
-    const slot = {...draft.date};
+    const slot = {...scene.date};
     const rect = textRect(slot, text);
     slot.x += Math.max(0, Math.min(rect.x, 320 - rect.w)) - rect.x;
     drawText(slot, text, 'date');
@@ -1117,6 +1122,7 @@ function draw(t) {
 
   drawSelection(sc);
 }
+$('weatherPreview').onchange = () => requestDraw();
 
 // A stand-in for the Spotify strip, drawn only while its row is selected (on the clock it appears when somebody plays).
 function drawNowPlaying() {
@@ -1253,6 +1259,7 @@ function pick(p) {
 
 stage.addEventListener('pointerdown', e => {
   if (!draft) return;
+  if ($('weatherPreview').value !== 'default') { toast('Choose Default to edit the base layers. Weather variations are previewed here.'); return; }
   stage.focus({ preventScroll: true });
   const p = logical(e);
   const r = stage.getBoundingClientRect();

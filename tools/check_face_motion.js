@@ -37,3 +37,9 @@ for (const [seed, i] of [[1, 0], [1234, 7], [4294967295, 39]]) {
     }
   }
 });
+
+const flash={scatter:{area:{x:30,y:10,w:250,h:100},seed:719,period:1000},motion:[{type:'blink',period:1000,on:250,phase:0}]};
+for(const t of [0,100,999,1000,1100,1999,2000,123456,4294967000]) {
+  const o=M.copyOrigin(flash,0,11,42,t),p=M.layerPose(flash,0,t);
+  console.log(`flash ${t} ${o.x.toFixed(3)} ${o.y.toFixed(3)} ${p.opacity.toFixed(3)}`);
+}

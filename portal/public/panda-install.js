@@ -39,19 +39,24 @@ async function install(){
       if(sprite)await api(`/api/assets/${r.asset.hash}.png`,{method:'PUT',headers:{'content-type':'image/png'},body:a.png});
     }
     const drafts=PandaCollection.entries.map(e=>PandaCollection.build(e,newRefs));
+    // Keep each existing face ID, base artwork, schedule and Spotify settings when adding weather scenes.
+    const existing=drafts.map(f=>{const matches=overview.faces.filter(old=>old.name===f.name);if(matches.length>1)throw new Error(`More than one face is named ${f.name}; rename one before adding variations.`);return matches[0];});
+    const upgrading=existing.every(Boolean);
+    for(let i=0;i<drafts.length;i++) if(existing[i] && drafts[i].weather) drafts[i]={...existing[i],weather:drafts[i].weather};
     for(const f of drafts){const check=await json('/api/face-check','POST',f);if(!check.ok)throw new Error(`${f.name}: ${check.errors.join(' ')}`);}
-    // Existing collection faces are identified by name + exact background; do not overwrite edited faces.
-    const existing=drafts.map(f=>overview.faces.find(old=>old.name===f.name&&old.background===f.background&&JSON.stringify(old.when)===JSON.stringify(f.when)));
     const needed=existing.filter(f=>!f).length;
     if(overview.faces.length+needed>overview.limits.faces)throw new Error(`This collection needs ${needed} free face slots. Existing faces have been kept.`);
     const ids=[];
     for(let i=0;i<drafts.length;i++){
       statusEl.textContent=`Adding ${drafts[i].name}…`;
-      ids.push(existing[i]?existing[i].id:(await json('/api/faces','POST',drafts[i])).face.id);
+      if(existing[i]) {
+        if(drafts[i].weather) await json(`/api/faces/${existing[i].id}`,'PUT',drafts[i]);
+        ids.push(existing[i].id);
+      } else ids.push((await json('/api/faces','POST',drafts[i])).face.id);
     }
     const latest=await api('/api/faces');
-    await json('/api/face-settings','PUT',{order:[...ids,...latest.faces.map(f=>f.id).filter(id=>!ids.includes(id))],default:ids[7],pinned:''});
-    statusEl.textContent='All nine faces are saved. Daily schedule active; Paris sunset with cat is the fallback.';
+    if(!upgrading) await json('/api/face-settings','PUT',{order:[...ids,...latest.faces.map(f=>f.id).filter(id=>!ids.includes(id))],default:ids[7],pinned:''});
+    statusEl.textContent=upgrading?'Weather variations added to all nine faces. Your schedules and pin are unchanged.':'All nine faces are saved. Daily schedule active; Paris sunset with cat is the fallback.';
     installBtn.textContent='Collection installed';
     await refresh(); showList(); installBtn.hidden=true;
   }catch(e){statusEl.textContent=e.message;installBtn.disabled=false;}
@@ -60,13 +65,17 @@ async function install(){
 installBtn.onclick=async()=>{
   installBtn.disabled=true;
   try {
-    for(const [name,max] of Object.entries(PandaCollection.sprites)) {
+    for(const [name,max] of Object.entries({...PandaCollection.sprites,...PandaCollection.weatherSprites})) {
       statusEl.textContent=`Preparing ${name}…`;
       prepared[name]=await FaceAssets.makeSprite(await trimmed(await source(name)),1,lim,max);
     }
     for(const e of PandaCollection.entries) {
       statusEl.textContent=`Preparing ${e.name}…`;
       prepared[e.key]=await FaceAssets.makeBackground(await source(e.key));
+    }
+    for(const e of PandaCollection.entries) for(const kind of ['cloudy','rain']) {
+      statusEl.textContent=`Preparing ${e.name}: ${kind}…`;
+      prepared[e.key+'-'+kind]=await FaceAssets.makeBackground(await source('weather/'+e.key+'-'+kind));
     }
     await install();
   } catch(e) {statusEl.textContent=e.message;installBtn.disabled=false;}

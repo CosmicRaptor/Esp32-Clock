@@ -203,7 +203,7 @@ class FaceMessageTests(unittest.TestCase):
                   [{"type": "path", "period": 60000, "phase": 59999, "dx": -320, "dy": -240, "mode": "loop"}]
         layer = {"name": "x" * 24, "sprite": self.S1, "x": -1000, "y": -1000, "copies": 12, "stagger": {"x": -320, "y": -240, "phase": -60000},
                  "motion": motions, "scale": 200,
-                 "scatter": {"area": {"x": -1000, "y": -1000, "w": 1000, "h": 1000}, "seed": 2**32 - 1}}
+                 "scatter": {"area": {"x": -1000, "y": -1000, "w": 1000, "h": 1000}, "seed": 2**32 - 1, "period": 60000}}
         emitter = {"kind": "fall", "sprites": [self.S1, self.S2, self.S3], "count": 40, "area": {"x": 1000, "y": 1000, "w": 1000, "h": 1000},
                    "speed_min": 400, "speed_max": 400, "sway": 60, "period": 60000, "phase": 59999, "depth": "front", "seed": 2**32 - 1}
         when = {"hours": {"from": 23, "to": 24}, "months": list(range(1, 13)), "weekdays": list(range(7)),
@@ -216,6 +216,9 @@ class FaceMessageTests(unittest.TestCase):
                     when=when, nowplaying=np)
         face["assets"] = {self.BG: assets[self.BG], self.S1: spr, self.S2: spr, self.S3: spr}
         face["rev"] = "f" * 12
+        face["weather"] = {kind: {"background": self.BG, "layers": [layer] * model.MAX_LAYERS,
+                                 "particles": [emitter] * model.MAX_EMITTERS, "text_color": "#ffffff"}
+                           for kind in ("cloudy", "rain")}
         data = wire.face_message(face).SerializeToString()
         self.assertLessEqual(len(data), nanopb_size("Face"))
         msg = pb.Face.FromString(data)

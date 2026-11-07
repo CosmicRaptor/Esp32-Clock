@@ -23,7 +23,7 @@ namespace portal {
 
 bool healthy();
 
-constexpr const char *FW_VERSION = "0.9.1";  // sent as ?fw=
+constexpr const char *FW_VERSION = "0.10.0";  // sent as ?fw=
 
 using State = bhoomi_clock_v1_DeviceState;  // .has_note/.note.text, .has_photo/.photo, .alarms[0..alarms_count)
 using Alarm = bhoomi_clock_v1_Alarm;
@@ -33,6 +33,7 @@ using Face = bhoomi_clock_v1_Face;              // a clock face: background, lay
 
 // Weather is independent of the 10-second state heartbeat. Take app::Lock first.
 void weatherText(char *out, size_t cap);  // compact icon + Celsius, empty if unavailable/too old
+int weatherFaceGroup(); // 0 default, 1 cloudy/foggy, 2 rain/storm; lock held
 String weatherSettingsJson();
 bool setWeatherLocation(const String &name, double latitude, double longitude);
 

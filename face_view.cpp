@@ -57,7 +57,7 @@ struct Txt {
   char shown[80] = "";
 };
 
-portal::Face face;  // our own copy of the face we're drawing
+portal::Face *faceStored = nullptr;  // PSRAM: includes the optional weather scenes
 bool on = false;
 uint32_t shownAt = 0;
 
@@ -251,7 +251,7 @@ void freeFonts() {
 void updateInst(Inst &I, uint32_t t) {
   Pose p = layerPose(*I.L, I.copy, t);
   double ox, oy;
-  copyOrigin(*I.L, I.copy, I.fw, I.fh, ox, oy);  // in a row, or scattered over an area
+  copyOrigin(*I.L, I.copy, I.fw, I.fh, ox, oy, t);  // in a row, or scattered over an area
   int x = roundHalfUp(ox + p.dx);
   int y = roundHalfUp(oy + p.dy);
   if (x != I.x || y != I.y) {
@@ -313,7 +313,7 @@ void begin(lv_obj_t *parent) {
 
 lv_obj_t *root() { return rootObj; }
 bool active() { return on; }
-const bhoomi_clock_v1_NowPlayingSlot *nowPlayingSlot() { return on && face.has_nowplaying ? &face.nowplaying : nullptr; }
+const bhoomi_clock_v1_NowPlayingSlot *nowPlayingSlot() { return on && faceStored->has_nowplaying ? &faceStored->nowplaying : nullptr; }
 
 void clear() {
   if (content) {  // objects first: they point at the sprites, the fonts and the background
@@ -328,9 +328,29 @@ void clear() {
   timeT = Txt();
   dateT = Txt();
   on = false;
+  heap_caps_free(faceStored); faceStored = nullptr;
 }
 
-bool show(const portal::Face &f) {
+bool show(const portal::Face &original) {
+  struct PendingFace {
+    portal::Face *ptr;
+    ~PendingFace() { heap_caps_free(ptr); }
+  } pending{(portal::Face *)heap_caps_malloc(sizeof(portal::Face), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)};
+  if (!pending.ptr) return false;
+  *pending.ptr = original;
+  auto &next = *pending.ptr;
+  int weather = portal::weatherFaceGroup();
+  const auto *variant = weather == 1 && original.has_cloudy ? &original.cloudy :
+                        weather == 2 && original.has_rain ? &original.rain : nullptr;
+  if (variant) {
+    next.background = variant->background; next.has_background = variant->has_background;
+    next.layers_count = variant->layers_count;
+    memcpy(next.layers, variant->layers, sizeof(next.layers));
+    next.emitters_count = variant->emitters_count;
+    memcpy(next.emitters, variant->emitters, sizeof(next.emitters));
+    if (variant->override_text) { next.time.color = variant->text_color; next.date.color = variant->text_color; }
+  }
+  const portal::Face &f = next;
   if (!rootObj || !f.has_background || !f.has_time) return false;
 
   // 1. Get everything ready without touching what is on screen.
@@ -375,7 +395,7 @@ bool show(const portal::Face &f) {
 
   // 2. Swap.
   clear();
-  face = f;
+  faceStored = pending.ptr; pending.ptr = nullptr;
   bgPx = px;
   for (int i = 0; i < tmpN; i++) sprs[i] = tmp[i];
   sprN = tmpN;
@@ -399,18 +419,18 @@ bool show(const portal::Face &f) {
   lv_obj_set_pos(bg, 0, 0);
 
   // back to front: back emitters, layers, front emitters, time, date, icon
-  for (pb_size_t i = 0; i < face.emitters_count; i++)
-    if (!face.emitters[i].front) addEmitter(face.emitters[i]);
-  for (pb_size_t i = 0; i < face.layers_count; i++) addLayer(face.layers[i]);
-  for (pb_size_t i = 0; i < face.emitters_count; i++)
-    if (face.emitters[i].front) addEmitter(face.emitters[i]);
-  makeText(timeT, face.time, fontTime);
-  if (face.has_date) makeText(dateT, face.date, fontDate);
-  if (face.has_icon) addLayer(face.icon);
+  for (pb_size_t i = 0; i < faceStored->emitters_count; i++)
+    if (!faceStored->emitters[i].front) addEmitter(faceStored->emitters[i]);
+  for (pb_size_t i = 0; i < faceStored->layers_count; i++) addLayer(faceStored->layers[i]);
+  for (pb_size_t i = 0; i < faceStored->emitters_count; i++)
+    if (faceStored->emitters[i].front) addEmitter(faceStored->emitters[i]);
+  makeText(timeT, faceStored->time, fontTime);
+  if (faceStored->has_date) makeText(dateT, faceStored->date, fontDate);
+  if (faceStored->has_icon) addLayer(faceStored->icon);
 
   on = true;
   shownAt = millis();
-  Serial.printf("[face] %s (%s): %d sprite image(s), %d particle(s), %d file(s)\n", face.id, face.rev, instN, partN, sprN);
+  Serial.printf("[face] %s (%s): %d sprite image(s), %d particle(s), %d file(s)\n", faceStored->id, faceStored->rev, instN, partN, sprN);
   time_t now = time(nullptr);  // place everything now, so the first frame isn't a pile of sprites in the corner
   struct tm t;
   localtime_r(&now, &t);
@@ -426,8 +446,8 @@ void tick(const struct tm &now) {
   char buf[80];
   strftime(buf, sizeof buf, "%H:%M", &now);
   setText(timeT, buf);
-  if (face.has_date) {
-    formatDate(buf, sizeof buf, face.date.format, now);
+  if (faceStored->has_date) {
+    formatDate(buf, sizeof buf, faceStored->date.format, now);
     char weather[32];
     portal::weatherText(weather, sizeof weather);
     if (weather[0]) {

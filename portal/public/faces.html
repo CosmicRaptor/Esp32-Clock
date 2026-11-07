@@ -53,6 +53,8 @@
           <div class="stage-empty" id="stageEmpty" hidden>Choose a background to start</div>
         </div>
         <div class="stage-bar">
+          <label class="hint" for="weatherPreview">Weather preview</label>
+          <select id="weatherPreview"><option value="default">Default</option><option value="cloudy">Cloudy / foggy</option><option value="rain">Stormy rain + lightning</option><option value="auto">Current weather</option></select>
           <button class="btn ghost small" id="playBtn" type="button" aria-pressed="true">⏸ Pause</button>
           <span class="hint" id="stageHint">Drag to move · arrow keys nudge</span>
         </div>
@@ -123,10 +125,11 @@
 
 </main>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
-<script src="/face-motion.js"></script>
+<script src="/face-motion.js?v=weather-random-2"></script>
 <script src="/face-rules.js"></script>
+<script src="/face-weather.js"></script>
 <script src="/face-assets.js"></script>
-<script src="/panda-collection.js"></script>
+<script src="/panda-collection.js?v=weather-random-2"></script>
 <script src="/faces.js"></script>
 <script src="/panda-install.js"></script>
 </body>
