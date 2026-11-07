@@ -5,6 +5,7 @@
 #include <limits.h>
 
 #include "display.h"
+#include "weather_icons.h"
 #include "face_motion.h"
 
 extern "C" const uint8_t montserrat_medium_ttf[];
@@ -53,7 +54,7 @@ struct Part {
 struct Txt {
   lv_obj_t *lbl = nullptr, *shadow = nullptr;
   const TextSlot *S = nullptr;
-  char shown[40] = "";
+  char shown[80] = "";
 };
 
 portal::Face face;  // our own copy of the face we're drawing
@@ -190,7 +191,9 @@ void addEmitter(const Emitter &E) {
 
 lv_font_t *makeFont(int size, lv_font_t *share, int shareSize) {
   if (share && shareSize == size) return share;
-  return lv_tiny_ttf_create_data(montserrat_medium_ttf, montserrat_medium_ttf_len, size);
+  lv_font_t *font = lv_tiny_ttf_create_data(montserrat_medium_ttf, montserrat_medium_ttf_len, size);
+  if (font) font->fallback = &weather_icons;
+  return font;
 }
 
 void makeText(Txt &T, const TextSlot &S, const lv_font_t *font) {
@@ -217,6 +220,7 @@ void setText(Txt &T, const char *s) {
   int x = T.S->x;
   if (T.S->align == bhoomi_clock_v1_TextSlot_Align_CENTER) x -= w / 2;
   else if (T.S->align == bhoomi_clock_v1_TextSlot_Align_RIGHT) x -= w;
+  if (&T == &dateT) x = std::max(0, std::min(x, 320 - w));
   lv_obj_set_pos(T.lbl, x, T.S->y);
   if (T.shadow) {
     int off = T.S->size / 24 > 1 ? T.S->size / 24 : 1;
@@ -419,11 +423,20 @@ void tick(const struct tm &now) {
   uint32_t t = millis() - shownAt;
   for (int i = 0; i < instN; i++) updateInst(insts[i], t);
   for (int i = 0; i < partN; i++) updatePart(parts[i], t);
-  char buf[40];
+  char buf[80];
   strftime(buf, sizeof buf, "%H:%M", &now);
   setText(timeT, buf);
   if (face.has_date) {
     formatDate(buf, sizeof buf, face.date.format, now);
+    char weather[32];
+    portal::weatherText(weather, sizeof weather);
+    if (weather[0]) {
+      strlcat(buf, weather, sizeof buf);
+      if (lv_text_get_width(buf, strlen(buf), fontDate, 0) > 316) {
+        strftime(buf, sizeof buf, "%a, %d %b", &now);
+        strlcat(buf, weather, sizeof buf);
+      }
+    }
     setText(dateT, buf);
   }
 }

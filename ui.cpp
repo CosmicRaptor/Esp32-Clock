@@ -10,6 +10,7 @@
 #include "display.h"
 #include "face_view.h"
 #include "portal_client.h"
+#include "weather_icons.h"
 #include "settings.h"
 #include "sound.h"
 #include "web.h"
@@ -157,7 +158,9 @@ void buildClock() {
   lv_obj_set_style_pad_row(clockView, 0, 0);
   lv_obj_set_flex_align(clockView, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-  dateLabel = label(clockView, &lv_font_montserrat_20, MUTE);
+  static lv_font_t dateFont = lv_font_montserrat_20;
+  dateFont.fallback = &weather_icons;
+  dateLabel = label(clockView, &dateFont, MUTE);
   timeLabel = label(clockView, bigFont ? bigFont : &lv_font_montserrat_48, INK);
   lv_label_set_long_mode(timeLabel, LV_LABEL_LONG_CLIP);
   footLabel = label(clockView, &lv_font_montserrat_14, MUTE);
@@ -193,7 +196,9 @@ void buildPhoto() {
   lv_obj_set_size(col, 132, LV_SIZE_CONTENT);
   lv_obj_set_style_pad_row(col, 2, 0);
   lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
-  photoDate = label(col, &lv_font_montserrat_16, lv_color_white(), LV_TEXT_ALIGN_RIGHT);
+  static lv_font_t dateFont = lv_font_montserrat_16;
+  dateFont.fallback = &weather_icons;
+  photoDate = label(col, &dateFont, lv_color_white(), LV_TEXT_ALIGN_RIGHT);
   photoFoot = label(col, &lv_font_montserrat_14, lv_color_hex(0xFFB3C0), LV_TEXT_ALIGN_RIGHT);
 }
 
@@ -256,10 +261,17 @@ void updateClock() {
       char wday[12], month[12];
       strftime(wday, sizeof wday, "%A", &t);
       strftime(month, sizeof month, "%B", &t);
-      lv_label_set_text_fmt(dateLabel, "%s, %d %s", wday, t.tm_mday, month);
+      char weather[32], shortDate[24];
+      portal::weatherText(weather, sizeof weather);
+      strftime(shortDate, sizeof shortDate, "%a, %d %b", &t);
+      if (weather[0]) lv_label_set_text_fmt(dateLabel, "%s%s", shortDate, weather);
+      else lv_label_set_text_fmt(dateLabel, "%s, %d %s", wday, t.tm_mday, month);
       lv_obj_set_style_text_font(photoTime, photoFont ? photoFont : &lv_font_montserrat_48, 0);
       lv_label_set_text(photoTime, buf);
-      lv_label_set_text_fmt(photoDate, "%s\n%d %s", wday, t.tm_mday, month);
+      if (weather[0]) {
+        strftime(shortDate, sizeof shortDate, "%b", &t);
+        lv_label_set_text_fmt(photoDate, "%s\n%d %s%s", wday, t.tm_mday, shortDate, weather);
+      } else lv_label_set_text_fmt(photoDate, "%s\n%d %s", wday, t.tm_mday, month);
     }
   }
   if (settings::timezone() != lastZone || phase != lastPhase) updateFooter();

@@ -74,6 +74,18 @@ The messages are defined in [`proto/clock.proto`](../proto/clock.proto). The fir
 
 **`PUT /api/device/sounds`** takes a `SoundList` body and returns `204`. Send it at boot and whenever the card's `/sounds` folder changes. It fills the alarm sound picker.
 
+### Weather
+
+`GET /api/weather/location` and `PUT /api/weather/location` are session-protected admin routes. PUT takes `{"location":{"name":"Mumbai, Maharashtra, India","latitude":19.076,"longitude":72.8777}}`; `{"location":null}` turns weather off. GET includes `location` and a usable cached `weather` reading, or null; it never refreshes the provider. `GET /api/weather/cities?q=Mumbai` proxies Open-Meteo geocoding for the admin picker. Search and forecast calls have six-second deadlines. Coordinates and city labels are validated in `src/weather.py`.
+
+`GET /api/device/weather` is device-token protected and returns the separate protobuf `Weather` message. The clock polls at boot and every 15 minutes; it does not add weather to the 10-second state heartbeat. `?format=json` returns `{location,weather}`, including the emoji and the original observation timestamp. An unset location or no usable reading sets `available=false`. The selected location is independent of time zone and is shared by the portal and LAN settings page.
+
+`PUT /api/device/weather/location?name=...&latitude=...&longitude=...` lets the authenticated clock forward a LAN settings change; an empty name disables weather. Returns 204. The LAN browser searches the public geocoding endpoint directly, then sends a selected city to the clock’s `POST /weather` (requires `X-Clock: 1`). The clock queues the update outside the LVGL lock and reports pending status with `GET /weather`.
+
+KV keys are `weather:location` and `weather:cache`. The latter holds the location, last attempt time and simplified reading. Cache hits do not fetch the provider or write KV. At expiry, the next device request refreshes it from [Open-Meteo current conditions](https://open-meteo.com/en/docs), at most once per 15 minutes under ordinary single-clock polling (96 cache writes/day). Failed attempts also wait 15 minutes before retrying and preserve the original reading timestamp. After three hours without a usable observation, both server and clock hide weather. A cache for another city is never served. KV is eventually consistent, so concurrent requests in different locations may refresh more than once.
+
+No weather API key, new secret, cron, or additional Python dependency is required. The free Open-Meteo endpoint is used for this personal clock. Weather cards link to Open-Meteo for attribution.
+
 ### Changing the schema
 
 1. Edit `proto/clock.proto`, and `proto/clock.options` if you add strings or lists. Only add fields with new numbers, so older clocks keep working.

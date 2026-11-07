@@ -50,6 +50,21 @@
     <p class="hint center" id="pvNote">Rough preview, since the clock face isn't final yet.</p>
   </div>
 
+<div class="card" id="weatherCard">
+  <h2>Weather</h2>
+  <p id="weatherCurrent" role="status">Loading city…</p>
+  <form id="weatherSearch"><label for="weatherQuery">City</label>
+    <input id="weatherQuery" minlength="2" maxlength="80" placeholder="Search for a city" required>
+    <button class="btn" id="weatherFind">Search</button>
+  </form>
+  <label for="weatherCities">Matching cities</label>
+  <select id="weatherCities" aria-label="Matching cities"></select>
+  <button class="btn primary" id="weatherSave" disabled>Use this city</button>
+  <button class="btn ghost" id="weatherOff">Turn weather off</button>
+  <p class="hint">Weather beside the date · refreshed every 15 minutes.<br>Weather data by <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>.</p>
+  <p id="weatherError" role="alert"></p>
+</div>
+
   <!-- photo -->
   <div class="card" id="photoCard">
     <div class="row">
@@ -160,6 +175,7 @@
 </main>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="/weather-settings.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

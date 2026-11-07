@@ -21,6 +21,7 @@ let settings = { default: '', pinned: '' };
 let budgets = {};                // face id -> budget report
 let limits = { layers: 8, emitters: 3, motions: 3, copies: 12, fade_keys: 4, budget_px: 30000 };
 let device = null;
+let previewWeather = null;
 let skew = 0;                    // server clock minus ours, seconds
 const assetMeta = {};            // hash -> {kind, w, h, bytes}
 const localImg = {};             // hash -> canvas, for what was uploaded in this tab (shown before the server round trip)
@@ -95,6 +96,7 @@ function drawable(h) {
 async function load() {
   let j;
   try { j = await api('/api/faces'); } catch (e) { toast(e.message, true); return; }
+  try { previewWeather = (await api('/api/weather/location')).weather; } catch (_) { previewWeather = null; }
   skew = j.now - Date.now() / 1000;
   device = j.device;
   limits = j.limits;
@@ -1098,7 +1100,18 @@ function draw(t) {
 
   const now = clockParts();
   drawText(draft.time, FaceRules.formatTime(now), 'time');
-  if (draft.date) drawText(draft.date, FaceRules.formatDate(draft.date.format, now), 'date');
+  if (draft.date) {
+    let text = FaceRules.formatDate(draft.date.format, now);
+    if (previewWeather && Date.now() / 1000 + skew - previewWeather.observed_at <= 10800) {
+      const suffix = ` ${previewWeather.emoji} ${previewWeather.temperature_c}°C`;
+      if (textRect(draft.date, text + suffix).w > 316) text = FaceRules.formatDate('short', now);
+      text += suffix;
+    }
+    const slot = {...draft.date};
+    const rect = textRect(slot, text);
+    slot.x += Math.max(0, Math.min(rect.x, 320 - rect.w)) - rect.x;
+    drawText(slot, text, 'date');
+  }
   if (draft.icon) drawLayer(draft.icon, 'icon', undefined, t);
   if (sel.kind === 'np') drawNowPlaying();
 

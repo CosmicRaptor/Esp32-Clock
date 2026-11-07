@@ -8,6 +8,16 @@ Start with `AGENTS.md` (rules and commands), then this file (state and what's ne
 
 A gift clock for Bhoomi (Aryan's girlfriend), a panda fan. It runs on a Waveshare ESP32-S3-Touch-LCD-2.8 in a 3D-printed stand. Aryan controls it from anywhere through an admin portal on Cloudflare: the photo, a short message, alarms, animated layered **clock faces** chosen by rules (night, winter, special dates…), and a strip showing what each of them is playing on Spotify. The clock polls the portal every 10 s over one kept-alive HTTPS connection, using protobuf with ETags. Everything time-based (alarms, which face to show) is decided on the clock, so it keeps working offline.
 
+## Weather deployed and flashed: 7 November 2026
+
+Weather is deployed as Worker version `d3c7e41e-9bd8-4f18-8518-f3e5be1e192a`, and the corrected firmware `0.8.0` was flashed over USB with the user’s approval. Firmware size is **2,978,470 bytes (94%)**, with 86,856 bytes of global RAM. Checks: 155 Python and 66 JavaScript tests pass, plus `bash tools/check_weather_icons.sh` against the real LVGL headers.
+
+Weather appears beside the date after a city is chosen in the admin portal or LAN settings. Both change the same location. A separate 15-minute protobuf request uses an on-demand Open-Meteo KV cache. Aryan selected Mumbai in the portal; the live endpoint returned clear night, 32°C, and the clock’s LAN `/weather` confirmed Mumbai with no pending update. `/portal` reported `state=ok`, HTTP 304. Serial confirmed the sunset face rendered with seven particles, continued asset downloads and sound-list upload (204). Aryan confirmed the physical display works after the correction.
+
+The first weather build rebooted when rendering a weather symbol: its bitmap callback returned packed bytes instead of the LVGL 9 A8 draw-buffer object. The decoded crash was in `lv_draw_sw_blend_color_to_rgb565`, reached from `draw_letter_cb`. The generator now expands into the supplied draw buffer and returns it; the host regression checks all eight glyphs, padded rows and buffer bounds. The repaired firmware was flashed and verified on the board.
+
+See the Weather sections in both READMEs. Direct cloud verification needed the clock’s normal `ESP32HTTPClient` User-Agent; Python’s default User-Agent was rejected with HTTP 403.
+
 ## Live update: 7 November 2026
 
 The approved nine illustrated panda faces are now installed through the existing `/faces` editor, with themed Spotify placement and the approved daily Asia/Kolkata schedule (see `portal/README.md`). `Paris sunset with cat` is the fallback, no face is pinned, and the old `Paris 1` is retained. No separate collection page is deployed; its local review files were archived outside `public`.
@@ -19,8 +29,8 @@ Portal version `ae172a85-d5c5-4b09-b01e-10f5e31ec32d` is deployed. The current w
 | Thing | State |
 |---|---|
 | Repo | `github.com/CosmicRaptor/Esp32-Clock`, branch `main`. The branches `faces-firmware`, `panda-faces` and `spotify-now-playing` are fully merged, so they can be deleted (ask first) |
-| Portal | Deployed Worker `bhoomi-clock` at `https://bhoomi-clock.bhoomi-clock-portal.workers.dev`, version `ae172a85-d5c5-4b09-b01e-10f5e31ec32d`. Behind Cloudflare Access (email one-time PIN for people, a service token for the clock) plus an admin password |
-| Clock firmware | Flashed with the panda collection Spotify styling (2,969,722 bytes, 94%). On Aryan's Wi-Fi (weak, about −85 dBm). Not handed over to Bhoomi yet |
+| Portal | Deployed Worker `bhoomi-clock` at `https://bhoomi-clock.bhoomi-clock-portal.workers.dev`, version `d3c7e41e-9bd8-4f18-8518-f3e5be1e192a`. Behind Cloudflare Access (email one-time PIN for people, a service token for the clock) plus an admin password |
+| Clock firmware | Flashed with weather support, version 0.8.0 (2,978,470 bytes, 94%). On Aryan's Wi-Fi (weak, about −85 dBm). Not handed over to Bhoomi yet |
 | Secrets | In `portal_config.h` (firmware, gitignored), `portal/.dev.vars` (local, gitignored), and Worker secrets in Cloudflare. The clock's keys can also be replaced from its LAN settings page (saved in NVS). No values are written in any doc |
 | Outside the repo | The parent folder `../` holds the board schematics, the Waveshare demo zips (the authoritative pin maps) and the case and stand models (`Waveshare28_case_v3`, etc.) |
 

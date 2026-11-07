@@ -356,3 +356,19 @@ class Face(_message.Message):
     when: When
     nowplaying: NowPlayingSlot
     def __init__(self, id: _Optional[str] = ..., rev: _Optional[str] = ..., background: _Optional[_Union[SpriteRef, _Mapping]] = ..., time: _Optional[_Union[TextSlot, _Mapping]] = ..., date: _Optional[_Union[TextSlot, _Mapping]] = ..., icon: _Optional[_Union[Layer, _Mapping]] = ..., layers: _Optional[_Iterable[_Union[Layer, _Mapping]]] = ..., emitters: _Optional[_Iterable[_Union[Emitter, _Mapping]]] = ..., when: _Optional[_Union[When, _Mapping]] = ..., nowplaying: _Optional[_Union[NowPlayingSlot, _Mapping]] = ...) -> None: ...
+
+class Weather(_message.Message):
+    __slots__ = ("available", "temperature_c", "code", "is_day", "observed_at", "city")
+    AVAILABLE_FIELD_NUMBER: _ClassVar[int]
+    TEMPERATURE_C_FIELD_NUMBER: _ClassVar[int]
+    CODE_FIELD_NUMBER: _ClassVar[int]
+    IS_DAY_FIELD_NUMBER: _ClassVar[int]
+    OBSERVED_AT_FIELD_NUMBER: _ClassVar[int]
+    CITY_FIELD_NUMBER: _ClassVar[int]
+    available: bool
+    temperature_c: int
+    code: int
+    is_day: bool
+    observed_at: int
+    city: str
+    def __init__(self, available: _Optional[bool] = ..., temperature_c: _Optional[int] = ..., code: _Optional[int] = ..., is_day: _Optional[bool] = ..., observed_at: _Optional[int] = ..., city: _Optional[str] = ...) -> None: ...

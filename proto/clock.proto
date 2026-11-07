@@ -265,3 +265,13 @@ message Face {
   When when = 10;
   NowPlayingSlot nowplaying = 11;  // unset: the clock's usual look (see NowPlayingSlot)
 }
+
+// GET /api/device/weather, independently polled every 15 minutes.
+message Weather {
+  bool available = 1;
+  sint32 temperature_c = 2;
+  uint32 code = 3;               // WMO weather code
+  bool is_day = 4;
+  int64 observed_at = 5;         // original observation time, even when serving stale data
+  string city = 6;
+}

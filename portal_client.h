@@ -21,13 +21,18 @@
 // state or photo is swapped in under the same lock.
 namespace portal {
 
-constexpr const char *FW_VERSION = "0.7.0";  // sent as ?fw=
+constexpr const char *FW_VERSION = "0.8.0";  // sent as ?fw=
 
 using State = bhoomi_clock_v1_DeviceState;  // .has_note/.note.text, .has_photo/.photo, .alarms[0..alarms_count)
 using Alarm = bhoomi_clock_v1_Alarm;
 using NowPlaying = bhoomi_clock_v1_NowPlaying;  // .left / .right: what the two people are listening to
 using Listener = bhoomi_clock_v1_Listener;      // .status (OFF/PLAYING/PAUSED), .title, .artist, .art_id
 using Face = bhoomi_clock_v1_Face;              // a clock face: background, layers, emitters, time/date slots, when
+
+// Weather is independent of the 10-second state heartbeat. Take app::Lock first.
+void weatherText(char *out, size_t cap);  // compact icon + Celsius, empty if unavailable/too old
+String weatherSettingsJson();
+bool setWeatherLocation(const String &name, double latitude, double longitude);
 
 void begin();  // start the task; call after Wi-Fi is initialised. No-op if not configured.
 

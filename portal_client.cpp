@@ -1,4 +1,5 @@
 #include "portal_client.h"
+#include <math.h>
 
 #include <FFat.h>
 #include <HTTPClient.h>
@@ -973,6 +974,52 @@ bool ready() {
   return true;
 }
 
+constexpr uint32_t WEATHER_MS = 15 * 60 * 1000;
+bhoomi_clock_v1_Weather weatherState = bhoomi_clock_v1_Weather_init_zero;
+String weatherPending, weatherPendingName;
+uint32_t weatherNextAt = 0;
+int weatherSaveCode = 0;
+
+bool weatherDue() {
+  app::Lock lock;
+  return !weatherNextAt || (int32_t)(millis() - weatherNextAt) >= 0;
+}
+
+void syncWeather(Conn &c) {
+  String pending;
+  {
+    app::Lock lock;
+    if (weatherNextAt && (int32_t)(millis() - weatherNextAt) < 0) return;
+    weatherNextAt = (millis() + WEATHER_MS) | 1;
+    pending = weatherPending;
+  }
+  if (pending.length()) {
+    int code = c.open("/api/device/weather/location?" + pending) ? c.http.PUT((uint8_t *)nullptr, 0) : -1;
+    c.close();
+    app::Lock lock;
+    weatherSaveCode = code;
+    if (code == 204 && weatherPending == pending) {
+      weatherPending = "";
+      weatherPendingName = "";
+    } else if (weatherPending == pending) {
+      weatherNextAt = (millis() + 60 * 1000) | 1;
+      return;
+    }
+  }
+  int code = c.get("/api/device/weather");
+  if (code != 200) { c.close(); return; }
+  uint8_t body[bhoomi_clock_v1_Weather_size + 32];
+  BufSink sink(body, sizeof body);
+  int got = c.http.writeToStream(&sink);
+  if (got < 0 || sink.overflow) { c.close(); return; }
+  c.finish();
+  bhoomi_clock_v1_Weather next = bhoomi_clock_v1_Weather_init_zero;
+  pb_istream_t in = pb_istream_from_buffer(body, sink.len);
+  if (!pb_decode(&in, bhoomi_clock_v1_Weather_fields, &next)) return;
+  app::Lock lock;
+  if (weatherPending.isEmpty()) weatherState = next;
+}
+
 void task(void *) {
   uint32_t nextAt = 0;  // millis() deadline; 0 = as soon as we're ready
   uint32_t backoff = BACKOFF_MIN_MS;
@@ -1001,6 +1048,8 @@ void task(void *) {
       }
     }
     if (!ready()) continue;
+    // Own deadline, even while the state heartbeat is backing off.
+    if (weatherDue()) syncWeather(c);
     if (nextAt && (int32_t)(millis() - nextAt) < 0) {
       // Between polls, still pick up a changed /sounds folder promptly.
       if (soundsDue()) syncSounds(c);
@@ -1031,6 +1080,7 @@ void task(void *) {
           photoRetryAt = ++photoTries <= PHOTO_TRIES_FAST ? 0 : (millis() + PHOTO_SLOW_MS) | 1;
         }
       }
+      syncWeather(c);
       syncCovers(c);
       if (syncFaces(c)) wait = FACES_MORE_MS;  // more faces or images to fetch: don't wait out the whole interval
       syncSounds(c);
@@ -1150,6 +1200,33 @@ String keysJson() {
            ",\"hint\":\"" + hint + "\"}";
   }
   return out + "}}";
+}
+
+void weatherText(char *out, size_t cap) {
+  out[0] = 0;
+  time_t now = time(nullptr);
+  if (!weatherState.available || weatherPending.length() || now < weatherState.observed_at || now - weatherState.observed_at > 3 * 3600) return;
+  int c = weatherState.code;
+  const char *icon = c == 0 ? (weatherState.is_day ? "☀" : "☾") :
+                     c <= 2 ? "⛅" : c == 3 ? "☁" : c <= 48 ? "≋" :
+                     c >= 95 ? "ϟ" : (c >= 71 && c <= 77) || c == 85 || c == 86 ? "❄" : "☂";
+  snprintf(out, cap, " %s %ld°C", icon, (long)weatherState.temperature_c);
+}
+
+String weatherSettingsJson() {
+  return "{\"city\":\"" + wifisetup::jsonEscape(weatherState.city) + "\",\"pending\":" +
+    (weatherPending.length() ? "true" : "false") + ",\"pendingCity\":\"" + wifisetup::jsonEscape(weatherPendingName) +
+    "\",\"code\":" + weatherSaveCode + "}";
+}
+
+bool setWeatherLocation(const String &name, double lat, double lon) {
+  if (name.length() > 320 || !isfinite(lat) || !isfinite(lon) || fabs(lat) > 90 || fabs(lon) > 180) return false;
+  weatherPending = "name=" + urlEncode(name.c_str()) + "&latitude=" + String(lat, 5) + "&longitude=" + String(lon, 5);
+  weatherPendingName = name;
+  weatherSaveCode = 0;
+  weatherState.available = false;
+  weatherNextAt = 0;
+  return true;
 }
 
 void begin() {

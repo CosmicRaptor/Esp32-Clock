@@ -92,6 +92,21 @@ summary{cursor:pointer;color:var(--accent);font-size:15px}
 <div id="msg"></div>
 </form>
 
+<div class="card" id="weatherCard" hidden>
+  <h2>Weather</h2>
+  <p id="weatherCurrent" role="status">Loading city…</p>
+  <form id="weatherSearch"><label for="weatherQuery">City</label>
+    <input id="weatherQuery" minlength="2" maxlength="80" placeholder="Search for a city" required>
+    <button class="btn" id="weatherFind">Search</button>
+  </form>
+  <label for="weatherCities">Matching cities</label>
+  <select id="weatherCities" aria-label="Matching cities"></select>
+  <button class="btn primary" id="weatherSave" disabled>Use this city</button>
+  <button class="btn ghost" id="weatherOff">Turn weather off</button>
+  <p class="hint">Weather beside the date · refreshed every 15 minutes.<br>Weather data by <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>.</p>
+  <p id="weatherError" role="alert"></p>
+</div>
+
 <div class="card" id="files" hidden>
   <div class="row"><span class="lbl">Photos &amp; sounds</span><span class="meta" id="space"></span></div>
   <div id="noCard" class="note" hidden></div>
@@ -418,12 +433,67 @@ document.querySelectorAll('[data-show]').forEach(b=>b.onclick=()=>{const p=$(b.d
     $('title').textContent='Clock settings';
     $('sub').textContent=info.clock?'The clock currently reads '+info.clock+'.':'Adjust how your clock shows the time.';
     $('wifiList').hidden=true;$('wifiCreds').hidden=true;$('go').textContent='Save time zone';
+    $('weatherCard').hidden=false;
     $('files').hidden=false;refreshFiles();
     $('cloud').hidden=false;loadCloud(false);
   }else{
     loadNets(false);
   }
   loadZones(info.tz).catch(()=>{$('tz').innerHTML='<option value="UTC">UTC</option>';});
+})();
+</script>
+<script>
+// Shared city picker behavior for the admin and LAN settings pages.
+(() => {
+  const local = true;
+  const get = id => document.getElementById(id);
+  const report = text => { get('weatherError').textContent = text; };
+  let results = [];
+  async function request(url, options) {
+    const r = await fetch(url, options);
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Weather settings are unavailable.');
+    return j;
+  }
+  async function refresh() {
+    try {
+      const j = await request(local ? '/weather' : '/api/weather/location');
+      get('weatherCurrent').textContent = local
+        ? (j.pending ? 'Waiting for server: ' + (j.pendingCity || 'weather off') + (j.code && j.code !== 204 ? ' (will retry)' : '') : j.city || 'Weather is off')
+        : j.location ? j.location.name : 'Weather is off';
+    } catch (e) { report(e.message); }
+  }
+  get('weatherSearch').onsubmit = async e => {
+    e.preventDefault(); report('');
+    get('weatherFind').disabled = true;
+    get('weatherSave').disabled = true;
+    results = []; get('weatherCities').replaceChildren();
+    try {
+      const query = encodeURIComponent(get('weatherQuery').value.trim());
+      const url = local ? 'https://geocoding-api.open-meteo.com/v1/search?count=8&language=en&format=json&name=' + query : '/api/weather/cities?q=' + query;
+      const j = await request(url, {signal: AbortSignal.timeout(10000)});
+      results = (j.results || []).map(c => ({name: [c.name, c.admin1, c.country].filter(Boolean).join(', ').slice(0, 80), latitude: c.latitude, longitude: c.longitude}));
+      results.forEach((c, i) => { const o = document.createElement('option'); o.value = i; o.textContent = c.name; get('weatherCities').append(o); });
+      get('weatherSave').disabled = !results.length;
+      if (!results.length) report('No cities found. Try another spelling.');
+    } catch (e) { report('City search failed. Please try again.'); }
+    finally { get('weatherFind').disabled = false; }
+  };
+  async function save(loc) {
+    get('weatherSave').disabled = true; get('weatherOff').disabled = true; report('');
+    try {
+      await request(local ? '/weather' : '/api/weather/location', local
+        ? {method: 'POST', headers: {'X-Clock': '1'}, body: new URLSearchParams(loc || {name:'',latitude:0,longitude:0})}
+        : {method: 'PUT', headers: {'content-type':'application/json'}, body: JSON.stringify({location:loc})});
+      await refresh();
+      if (!local) report('Saved. The clock will pick it up on its next weather check.');
+    } catch (e) { report(e.message); }
+    finally { get('weatherSave').disabled = !results.length; get('weatherOff').disabled = false; }
+  }
+  get('weatherSave').onclick = () => { const c = results[Number(get('weatherCities').value)]; if (c) save(c); };
+  get('weatherOff').onclick = () => save(null);
+  if (local) { refresh(); setInterval(refresh, 10000); }
+  else { window.loadWeatherSettings = refresh; }
 })();
 </script></body></html>
 )HTML";

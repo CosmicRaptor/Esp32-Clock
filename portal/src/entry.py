@@ -33,6 +33,9 @@ Behind those, static files in public/ are the admin page, and the rest is the JS
     PUT    /api/assets/sprite    raw LVGL RGB565A8 image     -> {"asset": ...}
     PUT    /api/assets/<hash>.png    the sprite's PNG, for the preview
     GET    /api/assets/<hash>.png|.jpg
+    GET    /api/weather/location -> {location, weather}: selected city and cached reading
+    PUT    /api/weather/location    {location: {name, latitude, longitude} | null}
+    GET    /api/weather/cities?q=... -> geocoding matches
     GET    /api/spotify          -> {"configured": bool, "sides": [{side, name, connected, playing}]}
     GET    /api/spotify/login?side=me|her    302 to Spotify's consent page
     DELETE /api/spotify/<side>   disconnect that person
@@ -80,6 +83,7 @@ import auth
 import model
 import spotify
 import wire
+import weather
 from model import Invalid
 
 FACE_PREFIX, ASSET_PREFIX, PNG_PREFIX, META_PREFIX = "face:", "asset:", "assetpng:", "assetmeta:"
@@ -259,6 +263,31 @@ class Default(WorkerEntrypoint):
 
         if not auth.check_session(password, auth.read_cookie(request.headers.get("cookie"))):
             raise HttpError(401, "Please log in.")
+
+        if path == "/api/weather/cities" and method == "GET":
+            q = parse_qs(url.query).get("q", [""])[0].strip()
+            if not 2 <= len(q) <= 80:
+                raise Invalid("Enter at least two characters of a city name.")
+            target = "https://geocoding-api.open-meteo.com/v1/search?" + urlencode({"name": q, "count": 8, "language": "en", "format": "json"})
+            try:
+                data = await asyncio.wait_for(self.weather_json(target), timeout=6)
+            except Exception:
+                raise HttpError(502, "City search is unavailable. Try again.") from None
+            return json_response({"results": data.get("results", [])})
+
+        if path == "/api/weather/location":
+            if method == "GET":
+                loc = await self.kv_json("weather:location")
+                rec = await self.kv_json("weather:cache")
+                reading = rec["reading"] if weather.usable(rec, loc, time.time()) else None
+                return json_response({"location": loc, "weather": reading})
+            if method == "PUT":
+                body = await read_json(request)
+                if not isinstance(body, dict) or "location" not in body:
+                    raise Invalid("Expected a location, or null to turn weather off.")
+                loc = weather.location(body["location"])
+                await self.env.CLOCK.put("weather:location", json.dumps(loc))
+                return json_response({"location": loc})
 
         if path == "/api/state" and method == "GET":
             return json_response({"state": await self.load_state(),
@@ -505,6 +534,30 @@ class Default(WorkerEntrypoint):
             raise HttpError(401, "Bad device token.")
         method = request.method
 
+        if path == "/api/device/weather/location" and method == "PUT":
+            q = {k: v[0] for k, v in parse_qs(url.query).items()}
+            try:
+                loc = weather.location({"name": q.get("name"), "latitude": float(q.get("latitude", "")),
+                                        "longitude": float(q.get("longitude", ""))}) if q.get("name") else None
+            except ValueError:
+                raise Invalid("Invalid weather coordinates.") from None
+            await self.env.CLOCK.put("weather:location", json.dumps(loc))
+            return Response(None, status=204)
+
+        if path == "/api/device/weather" and method == "GET":
+            loc = await self.kv_json("weather:location")
+            reading = None
+            if loc:
+                async def store(record):
+                    await self.env.CLOCK.put("weather:cache", json.dumps(record))
+                reading = await weather.current(loc, await self.kv_json("weather:cache"), int(time.time()), self.weather_json, store)
+            msg = wire.pb.Weather(city=loc["name"] if loc else "", available=bool(reading))
+            if reading:
+                msg.temperature_c, msg.code, msg.is_day, msg.observed_at = (reading[k] for k in ("temperature_c", "code", "is_day", "observed_at"))
+            if "format=json" in url.query:
+                return json_response({"location": loc, "weather": reading})
+            return Response(msg.SerializeToString(), headers={"content-type": wire.CONTENT_TYPE, "cache-control": "no-store"})
+
         if path == "/api/device/state" and method == "GET":
             q = {k: v[0] for k, v in parse_qs(url.query).items()}
             await self.note_check_in(q)
@@ -582,6 +635,12 @@ class Default(WorkerEntrypoint):
 
     def side_name(self, side: str) -> str:
         return self.secret("ME_NAME" if side == "me" else "HER_NAME") or ("Me" if side == "me" else "Her")
+
+    async def weather_json(self, url):
+        resp = await self.upstream(url)
+        if resp.status != 200:
+            raise Upstream("Weather service unavailable")
+        return json.loads(await resp.text())
 
     async def upstream(self, *args, **kwargs):
         """fetch() that turns every network failure into Upstream."""

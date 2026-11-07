@@ -69,6 +69,24 @@ void handleInfo() {
   sendJson(out);
 }
 
+void handleWeatherGet() {
+  if (wifisetup::portalActive()) return sendError(409, "Not available during setup");
+  app::Lock lock;
+  sendJson(portal::weatherSettingsJson());
+}
+
+void handleWeatherSet() {
+  if (wifisetup::portalActive()) return sendError(409, "Not available during setup");
+  if (server.header("X-Clock") != "1") return sendError(403, "missing X-Clock header");
+  char *endLat, *endLon;
+  String a = server.arg("latitude"), b = server.arg("longitude");
+  double lat = strtod(a.c_str(), &endLat), lon = strtod(b.c_str(), &endLon);
+  if (a.isEmpty() || b.isEmpty() || *endLat || *endLon) return sendError(400, "Invalid coordinates");
+  app::Lock lock;
+  if (!portal::setWeatherLocation(server.arg("name"), lat, lon)) return sendError(400, "Invalid city");
+  sendJson(portal::weatherSettingsJson(), 202);
+}
+
 void handleZones() {
   server.sendHeader("Cache-Control", "max-age=3600");
   server.send(200, "application/json", tz::listJson());
@@ -348,6 +366,8 @@ void task(void *) {
 void begin() {
   server.on("/", HTTP_GET, handleRoot);
   server.on("/info", HTTP_GET, handleInfo);
+  server.on("/weather", HTTP_GET, handleWeatherGet);
+  server.on("/weather", HTTP_POST, handleWeatherSet);
   server.on("/zones", HTTP_GET, handleZones);
   server.on("/scan", HTTP_GET, handleScan);
   server.on("/connect", HTTP_POST, handleConnect);

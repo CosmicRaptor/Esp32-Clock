@@ -29,6 +29,7 @@ A clock face is a separate JSON document, stored under its own KV key (see "face
 """
 
 import datetime
+
 import hashlib
 import json
 import math
@@ -36,6 +37,7 @@ import re
 import secrets
 
 # Keep these in step with proto/clock.options (nanopb's fixed buffer sizes on the clock).
+WEATHER_CITY_MAX = 80  # characters (<= 320 UTF-8 bytes)
 MESSAGE_MAX = 120      # characters (<= 480 UTF-8 bytes)
 MESSAGE_LINES = 4
 LABEL_MAX = 40         # characters (<= 160 UTF-8 bytes)

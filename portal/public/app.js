@@ -126,6 +126,7 @@ async function load() {
   $('login').hidden = true;
   $('app').hidden = false;
   loadSpotify();
+  window.loadWeatherSettings();
 }
 
 function setState(s) {
@@ -610,6 +611,7 @@ async function loadSpotify() {
         await api(`/api/spotify/${s.side}`, { method: 'DELETE' });
         toast('Disconnected');
         loadSpotify();
+  window.loadWeatherSettings();
       });
       li.append(b);
     }

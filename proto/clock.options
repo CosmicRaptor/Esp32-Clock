@@ -25,3 +25,4 @@ bhoomi.clock.v1.Face.id                  max_size:13
 bhoomi.clock.v1.Face.rev                 max_size:13
 bhoomi.clock.v1.Face.layers              max_count:8
 bhoomi.clock.v1.Face.emitters            max_count:3
+bhoomi.clock.v1.Weather.city max_size:321
