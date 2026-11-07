@@ -82,7 +82,11 @@ The messages are defined in [`proto/clock.proto`](../proto/clock.proto). The fir
 
 ## Faces
 
-A **face** is a layered scene, not a flat image: a clean background, transparent sprites that move (a panda bobbing, "zzz" floating up, a heart pulsing), particle effects (snow, petals, stars), and a time and a date slot whose position, size, colour and shadow change per face. The page is `/faces` (linked from the main page). The clock gets faces as protobuf and does the drawing; this task is the portal and API only, the LVGL renderer comes separately.
+The existing Faces page includes **Add the nine panda faces** for one-time setup. It prepares the bundled artwork in the browser, checks each face against the server budget, saves the faces, clears the current pin, places the collection first, and selects **Paris sunset with cat** as fallback. Existing faces are kept. The setup button hides once all nine names exist; all further editing uses the normal face editor. There is no separate deployed collection page. The approved review page is archived outside the deployment under `../output/clock-faces/local-review-page/`.
+
+The daily hours (clock-local time, designed for Asia/Kolkata) are: Bedtime 00–05, Snowy sleeping panda 05–07, Sleepy cherry blossoms 07–09, Café/mug 09–12, Paris blossoms/beret 12–15, Autumn bench 15–18, fallback Paris sunset with cat 18–20, Paris night drive 20–22, Cloud stargazing 22–24. Each face has a themed Spotify pill; it sits at the bottom of the café and bedroom, and above the time on the other scenes. Original PNGs are in `public/panda-collection/`; browser conversion trims transparent sprite padding. `panda-collection.js` holds the approved layouts, colours and schedule; `panda-install.js` installs them through the ordinary authenticated APIs. Interrupted installs can resume, retaining existing faces with matching name, background and hours.
+
+A **face** is a layered scene, not a flat image: a clean background, transparent sprites that move (a panda bobbing, "zzz" floating up, a heart pulsing), particle effects (snow, petals, stars), and a time and a date slot whose position, size, colour and shadow change per face. The page is `/faces` (linked from the main page). The clock gets faces as protobuf and does the drawing with its LVGL renderer (see [Faces on the clock](#faces-on-the-clock)).
 
 On the page:
 

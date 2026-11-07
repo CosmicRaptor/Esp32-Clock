@@ -500,9 +500,12 @@ void placeStrip() {
   }
   lv_obj_set_size(npStrip, w, NP_H);
   lv_obj_set_style_pad_hor(npStrip, padH, 0);
-  int colW = (w - 2 * padH) / 2 - NP_ART - NP_GAP;
+  // Leave breathing room between the two listeners' text columns at the centre.
+  int colW = (w - 2 * padH) / 2 - NP_ART - NP_GAP - 4;
   for (NpSide &n : np) {
     lv_obj_set_width(n.col, colW);
+    lv_obj_set_style_bg_color(n.artBox, slot ? artistCol : ACCENT, 0);
+    lv_obj_set_style_text_color(n.note, slot ? lv_color_hex(slot->has_bg ? slot->bg : slot->title) : lv_color_white(), 0);
     lv_obj_set_style_text_color(n.title, titleCol, 0);
     lv_obj_set_style_text_color(n.artist, artistCol, 0);
   }

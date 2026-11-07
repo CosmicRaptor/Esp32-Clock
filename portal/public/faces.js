@@ -161,6 +161,7 @@ function renderActive() {
 function budgetClass(r) { return r > 1 ? 'over' : r > 0.6 ? 'mid' : ''; }
 
 function renderList() {
+  $('installPandas').hidden = PandaCollection.entries.every(e => faces.some(f => f.name === e.name));
   const ul = $('faces');
   ul.textContent = '';
   $('facesEmpty').hidden = faces.length > 0;
@@ -1120,14 +1121,15 @@ function drawNowPlaying() {
   for (let side = 0; side < 2; side++) {
     const left = side === 0;
     const hx = left ? x + pad : x + w - pad - art;
-    ctx.fillStyle = '#d9667a';
+    ctx.fillStyle = np.artist;
     ctx.beginPath(); ctx.roundRect(hx, y + (NP_H - art) / 2, art, art, 7); ctx.fill();
     ctx.font = '500 14px Montserrat, system-ui, sans-serif';
     ctx.textBaseline = 'middle';
     ctx.textAlign = left ? 'left' : 'right';
     const tx = left ? hx + art + 6 : hx - 6;
     ctx.save();
-    ctx.beginPath(); ctx.rect(left ? x : x + half, y, half, NP_H); ctx.clip();
+    const textW = half - pad - art - 6 - 4;
+    ctx.beginPath(); ctx.rect(left ? tx : tx - textW, y, textW, NP_H); ctx.clip();
     ctx.fillStyle = np.title; ctx.fillText(left ? 'First song' : 'Second song', tx, y + NP_H / 2 - 9);
     ctx.fillStyle = np.artist; ctx.fillText('Artist', tx, y + NP_H / 2 + 9);
     ctx.restore();

@@ -11,8 +11,8 @@ Wi-Fi/NTP desk clock for the **Waveshare ESP32-S3-Touch-LCD-2.8** (ST7789 240×3
 - [x] Photos & sounds on the microSD card. Drag and drop them on the settings page. Photos are resized in the browser to fit 320×240 (JPEG, EXIF rotation applied), and sounds upload as-is.
 - [x] Alarms from the portal: full-screen alarm with the label, the chosen sound from `/sounds` (or a built-in beep) on repeat, and a touch anywhere stops it. No snooze yet.
 - [x] Spotify now playing: a small strip on the clock face, your song on the left and hers on the right (64×64 cover, title, artist). Both accounts are connected in the portal; the clock never sees Spotify.
-- [x] Clock faces from the portal: layered, animated scenes (background, bobbing sprites, snow and petals, the time and date wherever the face puts them). The clock chooses by the faces' rules and its own time (the portal's pinned face wins). Written but **not yet run on the board**: see "Faces" below.
-- [ ] Clock face design polish
+- [x] Clock faces from the portal: layered, animated scenes (background, bobbing sprites, snow and petals, the time and date wherever the face puts them). The clock chooses by the faces' rules and its own time (the portal's pinned face wins). Running on the board; the sunset panda-and-cat face has been visually confirmed.
+- [x] Nine illustrated panda faces, animated accents, daily scheduling, and themed Spotify widgets
 
 ## Build & flash
 
@@ -42,6 +42,8 @@ If uploads fail with "No serial data received", close the Arduino IDE Serial Mon
 
 ## Faces
 
+The built-in nine-face panda collection in the portal includes a themed Spotify strip on each scene. Song columns have a small gap at the centre, and missing-cover placeholders use the face's artist colour. The collection's layouts and daily schedule are documented in `portal/README.md`; the faces are installed and edited on the existing `/faces` page.
+
 The portal's Faces page designs them (see `portal/README.md`, "Faces"). On the clock:
 
 - `portal_client.cpp` fetches each face listed in the state (`GET /api/device/face/<id>`, when its `rev` is new) and the images it uses (`GET /api/device/asset/<hash>`) into PSRAM: a background JPEG and LVGL `RGB565A8` sprite files, which need no decoding. At most 5 MB of images are kept; images no face uses any more are dropped. Faces and images are fetched in the background at about 1 per second after a change (the face that applies right now first), with the usual 10 s heartbeat in between. Nothing is saved across a power cut: after a reboot the faces download again once the clock is online (the built-in clock or the photo shows meanwhile).
@@ -50,7 +52,7 @@ The portal's Faces page designs them (see `portal/README.md`, "Faces"). On the c
 - `face_motion.h` is the motion and particle maths: no LVGL, the same formulas as the portal's `public/face-motion.js` (see `portal/README.md`, "Motions" and "Particles"). `tools/check_face_motion.sh` compiles it on the computer and compares its numbers with the JS (poses with stagger and wrapping, the PRNG, particle positions); `tools/check_face_rules.sh` runs the portal's shared rule vectors through `face_rules.h`.
 - The now-playing strip floats above a face where the face puts it (`NowPlayingSlot`: position, width, colours, or off; the usual dark pill at the top if the face says nothing), and the message card sits above the face too, below the strip when that is at the top. The Wi-Fi-lost / set-time-zone hint of the plain clock isn't drawn on a face.
 
-Not checked on the board yet: `./build.sh` compiles it and the host checks above pass, but nobody has seen it run. Things to look at first: that a sprite sheet shows one frame at a time (`lv_image` offset inside a smaller box), that pulsing sprites scale about their centre, and how the redraw budget in `portal/src/model.py` (`BUDGET_PX`) compares with the real frame rate.
+Checked on the board: all nine collection faces and their images downloaded, the sunset face built with seven twinkling particles, and Aryan confirmed the screen looks right. Still to check: that a sprite sheet shows one frame at a time (`lv_image` offset inside a smaller box), that pulsing sprites scale about their centre, and how the redraw budget in `portal/src/model.py` (`BUDGET_PX`) compares with the real frame rate.
 
 ## HTTPS
 
