@@ -2,7 +2,7 @@
 //   year month day hour weekday | hour_from hour_to months_mask days_mask n_dates { month day year }*
 #include <stdio.h>
 
-#include "../face_rules.h"
+#include "../firmware/BhoomiClock/face_rules.h"
 
 int main() {
   int year, month, day, hour, wday;

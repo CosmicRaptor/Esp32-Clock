@@ -10,9 +10,10 @@ import urllib.error
 import urllib.request
 
 ROOT=Path(__file__).resolve().parents[1]
+FIRMWARE=ROOT/'firmware'/'BhoomiClock'
 
 def connection():
-    config=dict(re.findall(r'^#define\s+(PORTAL_\w+)\s+"([^"]*)"', (ROOT/'portal_config.h').read_text(), re.M))
+    config=dict(re.findall(r'^#define\s+(PORTAL_\w+)\s+"([^"]*)"', (FIRMWARE/'portal_config.h').read_text(), re.M))
     local={}
     for line in (ROOT/'portal/.dev.vars').read_text().splitlines():
         if '=' in line and not line.lstrip().startswith('#'):

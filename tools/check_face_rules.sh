@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 NANOPB="${NANOPB:-$HOME/Documents/Arduino/libraries/Nanopb}"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-c++ -std=c++17 -O1 -Wall -I.. -I"$NANOPB" check_face_rules.cpp -o "$tmp/check"
+c++ -std=c++17 -O1 -Wall -I../firmware/BhoomiClock -I"$NANOPB" check_face_rules.cpp -o "$tmp/check"
 python3 - "$tmp" <<'PY'
 import json, subprocess, sys
 tmp = sys.argv[1]

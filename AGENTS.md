@@ -19,12 +19,12 @@ The clock only makes outbound connections. It also serves a LAN settings page at
 
 | Path | What |
 |---|---|
-| `*.ino`, `*.cpp`, `*.h` (root) | Arduino sketch (LVGL 9.2.2). See the file table in `README.md` |
-| `clock.pb.{c,h}` | **Generated** nanopb code. Never edit by hand |
+| `firmware/BhoomiClock/` | Arduino sketch and config (LVGL 9.2.2); the folder and `.ino` share the `BhoomiClock` basename |
+| `firmware/BhoomiClock/clock.pb.{c,h}` | **Generated** nanopb code. Never edit by hand |
 | `proto/clock.proto` | The clock ↔ portal API, the single source of truth. `proto/generate.sh` regenerates both sides |
 | `portal/` | Admin portal: Python Worker, static pages, tests. See `portal/AGENTS.md` |
 | `tools/check_face_*.sh` | Host-side checks that the C++ face maths and rules match the portal's JS |
-| `portal_config.h` | **Gitignored secrets** (portal URL, device token, Access service token). Template: `portal_config.example.h` |
+| `firmware/BhoomiClock/portal_config.h` | **Gitignored secrets** (portal URL, device token, Access service token). Template: `portal_config.example.h` in the same folder |
 
 ## Commands
 
@@ -37,13 +37,13 @@ proto/generate.sh             # after editing clock.proto / clock.options (needs
 cd portal && npm test         # portal unit tests (Python + JS)
 ```
 
-`build.sh` uses the Arduino IDE's bundled `arduino-cli` and copies `lv_conf.h` into the libraries folder. Edit the repo copy, never the one in `~/Documents/Arduino/libraries`. Libraries: `lvgl@9.2.2`, `ESP32-audioI2S-master@3.4.7`, and the Nanopb 0.4.9.1 runtime copied by hand into `~/Documents/Arduino/libraries/Nanopb/`.
+`build.sh` is the repository-root wrapper for `firmware/BhoomiClock/`. It uses the Arduino IDE's bundled `arduino-cli` and copies `firmware/BhoomiClock/lv_conf.h` into the libraries folder when it differs. Edit the repo copy, never the one in `~/Documents/Arduino/libraries`. Libraries: `lvgl@9.2.2`, `ESP32-audioI2S-master@3.4.7`, and the Nanopb 0.4.9.1 runtime copied by hand into `~/Documents/Arduino/libraries/Nanopb/`.
 
 **Serial log:** `arduino-cli monitor -p /dev/cu.usbmodem* -c baudrate=115200`, using the same bundled CLI path as in `build.sh`. pyserial isn't installed. A small stdlib `termios` reader also works. The board only shows output while it's printing. The Arduino IDE's Serial Monitor holds the port, so close it before uploading. If an upload says "No serial data received", ask the user to hold **BOOT**, replug USB and release.
 
 ## Hard constraints
 
-- **The app uses custom two-slot 6 MB partitions** (`partitions.csv`, `PartitionScheme=custom`). Report the size from `./build.sh` in every firmware change. Changing the layout needs USB and resets FFat; never change it without the user's agreement.
+- **The app uses custom two-slot 6 MB partitions** (`firmware/BhoomiClock/partitions.csv`, `PartitionScheme=custom`). Report the size from `./build.sh` in every firmware change. Changing the layout needs USB and resets FFat; never change it without the user's agreement.
 - **Internal RAM is tight**, about 31 KB free while polling. Put anything big in PSRAM: `heap_caps_malloc(..., MALLOC_CAP_SPIRAM)`. LVGL's pool is already in PSRAM, and mbedTLS allocations of 1 KB or more go there through the hook in `portal_client.cpp` (see "HTTPS" in `README.md`). Watch `min heap` in the `[portal] poll (...)` log line.
 - **Tasks and locking:** the main loop drives LVGL, the web server and the portal client run as their own FreeRTOS tasks, and audio has its own task. Take the lock in `app_lock.h` before touching LVGL objects or shared state from any task other than the loop.
 - **Weak Wi-Fi at the destination.** Every network path must time out, back off and keep the last good state. The clock must keep telling time and ringing alarms offline. Alarms and face rules are evaluated **on the clock** in its local time, never by the server.
@@ -53,12 +53,12 @@ cd portal && npm test         # portal unit tests (Python + JS)
 
 ## Local release access
 
-`portal/.dev.vars` contains the admin password (gitignored, mode 600). Use `tools/firmware_release.py` for authenticated release uploads, explicit installation, interval settings and status. It reads existing Access credentials from `portal_config.h`; never print either file. Do not put credentials in docs or commits.
+`portal/.dev.vars` contains the admin password (gitignored, mode 600). Use `tools/firmware_release.py` for authenticated release uploads, explicit installation, interval settings and status. It reads existing Access credentials from `firmware/BhoomiClock/portal_config.h`; never print either file. Do not put credentials in docs or commits.
 
 ## Working with the user
 
 - **Ask before flashing the board, deploying the portal (`npm run deploy`), changing secrets, or pushing.** The deployed portal and the flashed clock are live in someone's home.
-- **Never commit secrets:** `portal_config.h`, `portal/.dev.vars`, tokens, or the deployed Access credentials. Don't print them in chat either.
+- **Never commit secrets:** `firmware/BhoomiClock/portal_config.h`, `portal/.dev.vars`, tokens, or the deployed Access credentials. Don't print them in chat either.
 - **The setup hotspot:** joining `Bhoomi-Clock` takes the user's Mac offline. If they must join it, say so, then end your turn and wait for them to come back. Prefer verifying over USB serial or `http://bhoomi-clock.local`.
 - You can't see the screen. After a flash, read the serial log and ask the user what the screen shows.
 - Commit style, from `git log`: a subject like `Area: what changed` (e.g. `Faces: …`, `Firmware: …`, `Portal: …`), then a wrapped body explaining what and why. Mention the firmware size when it changed.

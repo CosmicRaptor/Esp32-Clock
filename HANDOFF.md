@@ -45,8 +45,8 @@ Portal version `ae172a85-d5c5-4b09-b01e-10f5e31ec32d` is deployed. The current w
 | Repo | `github.com/CosmicRaptor/Esp32-Clock`, branch `main`. The branches `faces-firmware`, `panda-faces` and `spotify-now-playing` are fully merged, so they can be deleted (ask first) |
 | Portal | Deployed Worker `bhoomi-clock` at `https://bhoomi-clock.bhoomi-clock-portal.workers.dev`, version `d3c7e41e-9bd8-4f18-8518-f3e5be1e192a`. Behind Cloudflare Access (email one-time PIN for people, a service token for the clock) plus an admin password |
 | Clock firmware | Flashed with weather support, version 0.8.0 (2,978,470 bytes, 94%). On Aryan's Wi-Fi (weak, about −85 dBm). Not handed over to Bhoomi yet |
-| Secrets | In `portal_config.h` (firmware, gitignored), `portal/.dev.vars` (local, gitignored), and Worker secrets in Cloudflare. The clock's keys can also be replaced from its LAN settings page (saved in NVS). No values are written in any doc |
-| Outside the repo | The parent folder `../` holds the board schematics, the Waveshare demo zips (the authoritative pin maps) and the case and stand models (`Waveshare28_case_v3`, etc.) |
+| Secrets | In `firmware/BhoomiClock/portal_config.h` (gitignored), `portal/.dev.vars` (local, gitignored), and Worker secrets in Cloudflare. The clock's keys can also be replaced from its LAN settings page (saved in NVS). No values are written in any doc |
+| Outside the repo | `../hardware/reference/` holds board schematics and Waveshare demo zips (the authoritative pin maps); `../hardware/enclosures/` holds case and stand models (`Waveshare28_case_v3`, etc.) |
 
 ## Feature status
 
@@ -115,6 +115,6 @@ Portal version `ae172a85-d5c5-4b09-b01e-10f5e31ec32d` is deployed. The current w
 
 ## OTA release workflow (2026-11-07)
 
-The admin password is saved in gitignored `portal/.dev.vars` (mode 600), not in this document. `tools/firmware_release.py` uses it plus the existing Access service credentials from `portal_config.h`. `upload` publishes `build/BhoomiClock.ino.bin`; `install <sha256>` explicitly approves it; `status`, `cancel`, and `interval <seconds>` manage it. A Git push alone does not install firmware. Uploaded firmware is retained in content-addressed KV keys. Reports are latest snapshots rather than a log archive.
+The admin password is saved in gitignored `portal/.dev.vars` (mode 600), not in this document. `tools/firmware_release.py` uses it plus the existing Access service credentials from `firmware/BhoomiClock/portal_config.h`. `upload` publishes `build/BhoomiClock.ino.bin`; `install <sha256>` explicitly approves it; `status`, `cancel`, and `interval <seconds>` manage it. A Git push alone does not install firmware. Uploaded firmware is retained in content-addressed KV keys. Reports are latest snapshots rather than a log archive.
 
 The physical screen still needs the user's visual check after future updates. Serial confirms initialization and the health gate, not pixel correctness. Keep all existing pre-deployment and pre-flash authorization rules.

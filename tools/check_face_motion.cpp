@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "../face_motion.h"
+#include "../firmware/BhoomiClock/face_motion.h"
 
 using namespace facemotion;
 using M = bhoomi_clock_v1_Motion_Type;

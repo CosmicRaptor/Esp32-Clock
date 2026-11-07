@@ -83,7 +83,7 @@ class FaceWeatherTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             src=Path(tmp)/'weather.cpp';binary=Path(tmp)/'weather'
             src.write_text('#include <cstdio>\n#include "face_weather.h"\nint main(){unsigned codes[]={' + ','.join(map(str,codes)) + '};for(auto c:codes)printf("%d\\n",int(faceweather::group(c)));}')
-            subprocess.run(['c++','-std=c++17','-I',str(ROOT.parent),str(src),'-o',str(binary)],check=True)
+            subprocess.run(['c++','-std=c++17','-I',str(ROOT.parent/'firmware'/'BhoomiClock'),str(src),'-o',str(binary)],check=True)
             result=list(map(int,subprocess.check_output([str(binary)]).split()))
         self.assertEqual(result,[{'default':0,'cloudy':1,'rain':2}[e] for e in expected])
         self.assertEqual(weather.face_weather(97),'rain')

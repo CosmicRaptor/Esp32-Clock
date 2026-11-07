@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class CooperativeTransferTests(unittest.TestCase):
     def test_response_yields_times_out_and_restores_read_timeout(self):
-        source = (ROOT / 'portal_client.cpp').read_text()
+        source = (ROOT / 'firmware' / 'BhoomiClock' / 'portal_client.cpp').read_text()
         helper = source[source.index('int writeResponse('):source.index('uint8_t *bigAlloc(')]
         harness = r'''
 #include <cstdint>

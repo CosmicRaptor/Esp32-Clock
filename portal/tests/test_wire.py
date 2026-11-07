@@ -11,7 +11,7 @@ import wire  # noqa: E402
 from model import Invalid  # noqa: E402
 
 
-HEADER = os.path.join(os.path.dirname(__file__), "..", "..", "clock.pb.h")
+HEADER = os.path.join(os.path.dirname(__file__), "..", "..", "firmware", "BhoomiClock", "clock.pb.h")
 
 
 def nanopb_size(message: str) -> int:

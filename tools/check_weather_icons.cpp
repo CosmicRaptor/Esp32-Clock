@@ -1,5 +1,5 @@
 // LVGL 9 callback contract: bitmap() must return the supplied A8 draw buffer, not raw bits.
-#include "../weather_icons.h"
+#include "../firmware/BhoomiClock/weather_icons.h"
 #include <cassert>
 #include <cstring>
 #include <cstdio>

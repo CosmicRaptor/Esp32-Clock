@@ -40,7 +40,7 @@ Read device responses as JSON with `curl -H 'Authorization: Bearer <DEVICE_TOKEN
 - **The page and the server must never disagree.** The Faces editor posts drafts to `/api/face-check`, so validation lives only in `model.py`. Don't duplicate checks in JS.
 - **Logic that exists in two languages needs shared tests:**
   - Face rules exist in JS, Python and C++. They share `tests/vectors/face_rules.json`, so add cases there.
-  - Motion maths exists in JS (`face-motion.js`) and C++ (`../face_motion.h`). Run `../tools/check_face_motion.sh` after changing either.
+  - Motion maths exists in JS (`face-motion.js`) and C++ (`../firmware/BhoomiClock/face_motion.h`). Run `../tools/check_face_motion.sh` after changing either.
 - **Schema changes:**
   1. Edit `../proto/clock.proto` and `clock.options`, adding fields with new numbers only.
   2. Run `../proto/generate.sh`.

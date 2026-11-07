@@ -1,6 +1,6 @@
 // What the clock and the portal say to each other. The single source of truth for the device API:
 //   ./proto/generate.sh  ->  portal/src/clock_pb2.py   (Python Worker)
-//                        ->  clock.pb.{c,h} at the sketch root (firmware, nanopb)
+//                        ->  firmware/BhoomiClock/clock.pb.{c,h} (firmware, nanopb)
 // Size limits for nanopb live in clock.options; keep them in step with portal/src/model.py.
 //
 // Evolving it: only add fields with new numbers. Never renumber or reuse a number, so an old clock

@@ -51,4 +51,4 @@ const void *bitmap(lv_font_glyph_dsc_t *d, lv_draw_buf_t *buf) {
 lv_font_t weather_icons = [] { lv_font_t f = {}; f.get_glyph_dsc=describe; f.get_glyph_bitmap=bitmap;
   f.line_height=20; f.base_line=3; return f; }();
 '''
-Path('weather_icons.cpp').write_text(code)
+Path('firmware/BhoomiClock/weather_icons.cpp').write_text(code)

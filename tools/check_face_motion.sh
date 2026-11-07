@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 NANOPB="${NANOPB:-$HOME/Documents/Arduino/libraries/Nanopb}"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-c++ -std=c++17 -O1 -Wall -I.. -I"$NANOPB" check_face_motion.cpp -o "$tmp/check"
+c++ -std=c++17 -O1 -Wall -I../firmware/BhoomiClock -I"$NANOPB" check_face_motion.cpp -o "$tmp/check"
 "$tmp/check" > "$tmp/c.txt"
 node check_face_motion.js > "$tmp/js.txt"
 python3 - "$tmp/c.txt" "$tmp/js.txt" <<'PY'
