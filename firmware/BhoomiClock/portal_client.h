@@ -6,12 +6,13 @@
 
 // Talks to the cloud admin portal (see portal/README.md, "Clock API"), in its own task so a slow
 // connection never stalls the screen:
-//   - polls GET /api/device/state every 10 s over one kept-alive connection (ETag / If-None-Match -> bare 304).
+//   - polls GET /api/device/state every 30 s over one kept-alive connection (ETag / If-None-Match -> bare 304).
 //     The state carries the note, alarms, photo id and what the two people are playing on Spotify
 //   - downloads GET /api/device/image/<id> when photo.id changes (retried on 404 / failure)
 //   - downloads GET /api/device/art/<id>, the 64x64 covers for the now-playing strip
 //   - downloads the clock faces (GET /api/device/face/<id>) and the images they use (GET /api/device/asset/<hash>)
-//     into PSRAM, and picks the face to show from their `when` rules (portal/README.md, "Faces")
+//     into PSRAM; complete, verified faces are also cached on microSD for restart/offline restoration
+//     and the face is picked from its `when` rules (portal/README.md, "Faces")
 //   - PUTs the /sounds file list at boot and whenever the card's files change
 // Configure it in portal_config.h (see portal_config.example.h); the keys can also be changed on the
 // LAN settings page (setKey).
@@ -23,7 +24,7 @@ namespace portal {
 
 bool healthy();
 
-constexpr const char *FW_VERSION = "0.10.0";  // sent as ?fw=
+constexpr const char *FW_VERSION = "0.11.0";  // sent as ?fw=
 
 using State = bhoomi_clock_v1_DeviceState;  // .has_note/.note.text, .has_photo/.photo, .alarms[0..alarms_count)
 using Alarm = bhoomi_clock_v1_Alarm;
@@ -34,6 +35,8 @@ using Face = bhoomi_clock_v1_Face;              // a clock face: background, lay
 // Weather is independent of the 10-second state heartbeat. Take app::Lock first.
 void weatherText(char *out, size_t cap);  // compact icon + Celsius, empty if unavailable/too old
 int weatherFaceGroup(); // 0 default, 1 cloudy/foggy, 2 rain/storm; lock held
+String volumeSettingsJson(); // caller holds app lock
+bool setLocalVolume(int alarm, int video); // persists pending local change; caller holds app lock
 String weatherSettingsJson();
 bool setWeatherLocation(const String &name, double latitude, double longitude);
 

@@ -1,6 +1,8 @@
 #include "portal_client.h"
 #include "face_weather.h"
+#include "face_cache_checks.h"
 #include "mindfulness.h"
+#include "volume_sync.h"
 #include "mood_clip.h"
 #include <math.h>
 
@@ -87,6 +89,13 @@ size_t coverLen[2] = {0, 0};
 char coverIdStr[2][41] = {"", ""};
 
 // ---- task-private ----
+// Volume is guarded by app::Lock. Pending local edits survive reboot and beat cloud values
+// until the server confirms the same pair; subsequent admin edits can then take effect.
+VolumeState volumeState = {1, 18, 18, 0};
+bool saveVolume(const VolumeState &v) {
+  Preferences p; if (!p.begin("volume", false)) return false;
+  bool ok = p.putBytes("state", &v, sizeof(v)) == sizeof(v); p.end(); return ok;
+}
 String moodNotes[5];
 String etag;
 bool gotTimeWarn = false;
@@ -723,6 +732,7 @@ constexpr uint32_t FACES_PASS_MS = 3000;        // work on faces for at most thi
 struct FaceEntry {
   char id[13];
   char rev[13];  // the rev the state wants; `face->rev` is the one we hold (older until the new one arrives)
+  char cachedRev[13]; // last complete on-card face, which may be older than the desired revision
   Face *face;    // nullptr until fetched
 };
 struct Asset {
@@ -814,6 +824,7 @@ void reconcileFaces() {
     for (int k = 0; k < faceN; k++)
       if (strcmp(faceList[k].id, e.id) == 0) {
         e.face = faceList[k].face;
+        strlcpy(e.cachedRev, faceList[k].cachedRev, sizeof e.cachedRev);
         faceList[k].face = nullptr;  // moved
       }
     next[n++] = e;
@@ -829,6 +840,270 @@ void reconcileFaces() {
   faceN = n;
   if (changed) facesRev++;
   dropUnusedAssets();
+}
+
+// Face cache is separate from the user's photos, sounds and videos. The state still selects
+// the authoritative revisions. Face files carry a digest; assets are SHA-256 content addressed.
+constexpr const char *FACE_CACHE_DIR = "/portal/face-cache";
+constexpr const char *ASSET_CACHE_DIR = "/portal/face-assets";
+constexpr size_t CACHE_LIMIT_BYTES = 32 * 1024 * 1024;
+constexpr size_t FACE_CACHE_HEADER = 36;  // "BFC1" + SHA-256 of protobuf bytes
+size_t diskCacheBytes = 0;
+bool cacheInitialized = false;
+
+String faceCachePath(const char *id) { return String(FACE_CACHE_DIR) + "/" + id + ".pb"; }
+String assetCachePath(const char *hash) { return String(ASSET_CACHE_DIR) + "/" + hash + ".bin"; }
+void digest256(const uint8_t *data, size_t len, uint8_t out[32]) {
+  mbedtls_sha256_context ctx; mbedtls_sha256_init(&ctx); mbedtls_sha256_starts(&ctx, 0);
+  mbedtls_sha256_update(&ctx, data, len); mbedtls_sha256_finish(&ctx, out); mbedtls_sha256_free(&ctx);
+}
+size_t cacheDirectoryBytes(const char *dirName) {
+  size_t total = 0; File dir = SD_MMC.open(dirName);
+  if (!dir || !dir.isDirectory()) return 0;
+  for (File file = dir.openNextFile(); file; file = dir.openNextFile()) {
+    if (!file.isDirectory()) total += file.size();
+    file.close();
+  }
+  dir.close(); return total;
+}
+bool prepareFaceCache() {
+  if (!storage::mounted()) return false;
+  if (!SD_MMC.exists(SD_DIR) && !SD_MMC.mkdir(SD_DIR)) return false;
+  if (!SD_MMC.exists(FACE_CACHE_DIR) && !SD_MMC.mkdir(FACE_CACHE_DIR)) return false;
+  if (!SD_MMC.exists(ASSET_CACHE_DIR) && !SD_MMC.mkdir(ASSET_CACHE_DIR)) return false;
+  if (!cacheInitialized) {
+    diskCacheBytes = cacheDirectoryBytes(FACE_CACHE_DIR) + cacheDirectoryBytes(ASSET_CACHE_DIR);
+    cacheInitialized = true;
+  }
+  return true;
+}
+// Stage a new checksummed definition separately; the last good face remains until every
+// referenced image is safely cached too. A power loss can therefore never promote a partial face.
+bool stageFaceCache(const char *id, const uint8_t *body, size_t len) {
+  if (!validId(id) || !prepareFaceCache() || !len || len > bhoomi_clock_v1_Face_size + 64) return false;
+  String path = faceCachePath(id) + ".next";
+  File old = SD_MMC.open(path, FILE_READ); size_t oldLen = old ? old.size() : 0; old.close();
+  if (diskCacheBytes - std::min(diskCacheBytes, oldLen) + len + FACE_CACHE_HEADER > CACHE_LIMIT_BYTES) return false;
+  uint8_t *record = (uint8_t *)heap_caps_malloc(len + FACE_CACHE_HEADER, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!record) return false;
+  memcpy(record, "BFC1", 4); digest256(body, len, record+4); memcpy(record+FACE_CACHE_HEADER,body,len);
+  SD_MMC.remove(path + ".tmp");
+  bool ok = writeAtomic(SD_MMC,path.c_str(),record,len+FACE_CACHE_HEADER); free(record);
+  diskCacheBytes = cacheDirectoryBytes(FACE_CACHE_DIR) + cacheDirectoryBytes(ASSET_CACHE_DIR);
+  return ok;
+}
+// Return only a complete, checksummed and decodable record for this id.
+Face *readFaceCacheRecord(const String &path, const char *id) {
+  size_t len = 0; uint8_t *data = readAll(SD_MMC, path.c_str(), bhoomi_clock_v1_Face_size + 64 + FACE_CACHE_HEADER, len);
+  if (!data) return nullptr;
+  bool ok = len > FACE_CACHE_HEADER && !memcmp(data, "BFC1", 4);
+  uint8_t hash[32]; if (ok) { digest256(data+FACE_CACHE_HEADER, len-FACE_CACHE_HEADER, hash); ok = facecache::digestMatches(hash, data+4); }
+  Face *f = ok ? (Face *)heap_caps_malloc(sizeof(Face), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) : nullptr;
+  if (f) {
+    memset(f, 0, sizeof(Face)); pb_istream_t in = pb_istream_from_buffer(data+FACE_CACHE_HEADER, len-FACE_CACHE_HEADER);
+    ok = pb_decode(&in, &bhoomi_clock_v1_Face_msg, f) && !strcmp(f->id, id) && validId(f->rev) && f->has_background && f->has_time;
+  } else ok = false;
+  free(data); if (!ok) { free(f); return nullptr; } return f;
+}
+bool loadCachedFace(const char *id, const char *wantedRev, bool allowStale) {
+  if (!validId(id) || !validId(wantedRev) || !prepareFaceCache()) return false;
+  String path = faceCachePath(id), backup = path + ".bak";
+  Face *f = readFaceCacheRecord(path, id);
+  const bool primaryValid = f != nullptr;
+  if (f && !allowStale && strcmp(f->rev, wantedRev)) { free(f); f=nullptr; }
+  if (!f) {
+    f=readFaceCacheRecord(backup,id);
+    if (f && !allowStale && strcmp(f->rev,wantedRev)) { free(f); f=nullptr; }
+    if (f && !primaryValid) {
+      // Only replace a missing/corrupt primary after the backup has passed every check.
+      SD_MMC.remove(path);
+      if (SD_MMC.rename(backup,path)) Serial.printf("[face-cache] recovered backup %s\n", id);
+    }
+  }
+  if (!f) return false;
+  bool installed = false;
+  {
+    app::Lock lock;
+    for (int i=0; i<faceN; ++i) if (!strcmp(faceList[i].id,id) && !strcmp(faceList[i].rev,wantedRev) &&
+                                        (!faceList[i].face || !allowStale)) {
+      free(faceList[i].face); faceList[i].face=f;
+      strlcpy(faceList[i].cachedRev, f->rev, sizeof faceList[i].cachedRev);
+      f=nullptr; ++facesRev; installed=true; break;
+    }
+  }
+  if (installed) Serial.printf("[face-cache] restored face %s%s\n", id, allowStale ? " (last saved)" : "");
+  free(f); return installed;
+}
+void writeAssetCache(const bhoomi_clock_v1_SpriteRef &r, const uint8_t *data, size_t len) {
+  if (!validHash(r.hash) || !prepareFaceCache()) return;
+  String path = assetCachePath(r.hash);
+  if (SD_MMC.exists(path) || diskCacheBytes + len > CACHE_LIMIT_BYTES) return;
+  SD_MMC.remove(path + ".tmp"); // discard a partial temp file from a previous power cut
+  if (writeAtomic(SD_MMC, path.c_str(), data, len)) diskCacheBytes += len;
+}
+bool loadCachedAsset(const bhoomi_clock_v1_SpriteRef &r, bool background) {
+  if (!validHash(r.hash) || r.size < 12 || r.size > MAX_ASSET_FILE || !prepareFaceCache()) return false;
+  { app::Lock lock; if (findAsset(r.hash)) return true; if (assetN >= MAX_ASSETS || assetBytes + r.size > MAX_ASSET_TOTAL) return false; }
+  String path = assetCachePath(r.hash); size_t len = 0;
+  File cached = SD_MMC.open(path, FILE_READ);
+  if (!cached || cached.isDirectory()) return false;
+  size_t cachedSize = cached.size(); cached.close();
+  if (cachedSize != r.size || cachedSize > MAX_ASSET_FILE) {
+    SD_MMC.remove(path); diskCacheBytes = cacheDirectoryBytes(FACE_CACHE_DIR) + cacheDirectoryBytes(ASSET_CACHE_DIR); return false;
+  }
+  uint8_t *data = readAll(SD_MMC, path.c_str(), MAX_ASSET_FILE, len); if (!data) return false;
+  uint8_t hash[32]; digest256(data, len, hash);
+  bool good = facecache::validAssetShape(data, len, r.size, r.w, r.h, background) && facecache::digestMatchesHex(hash, r.hash, 16);
+  if (!good) { SD_MMC.remove(path); diskCacheBytes = cacheDirectoryBytes(FACE_CACHE_DIR) + cacheDirectoryBytes(ASSET_CACHE_DIR); free(data); return false; }
+  bool installed = false;
+  {
+    app::Lock lock;
+    if (!findAsset(r.hash) && assetN < MAX_ASSETS && assetBytes + len <= MAX_ASSET_TOTAL) {
+      Asset &a=assets[assetN++]; strlcpy(a.hash,r.hash,sizeof a.hash); a.buf=data; a.len=len;
+      assetBytes += len; data=nullptr; ++facesRev; installed=true;
+    }
+  }
+  if (installed) Serial.printf("[face-cache] restored image %s (%u bytes)\n", r.hash, (unsigned)len);
+  free(data); return installed;
+}
+
+// Promote staged definitions only after the exact current revision and every image are
+// present. The older definition and images remain usable if downloading is interrupted.
+void commitReadyFaceCaches() {
+  if (!prepareFaceCache()) return;
+  Face *copy=(Face *)heap_caps_malloc(sizeof(Face), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!copy) return;
+  for (int i=0; i<MAX_FACES; ++i) {
+    char id[13] = {}, rev[13] = {}, cachedRev[13] = {}; bool ready=false;
+    {
+      app::Lock lock;
+      if (i>=faceN) break;
+      if (faceList[i].face && !strcmp(faceList[i].face->rev,faceList[i].rev) && faceReady(*faceList[i].face)) {
+        strlcpy(id,faceList[i].id,sizeof id); strlcpy(rev,faceList[i].rev,sizeof rev);
+        strlcpy(cachedRev,faceList[i].cachedRev,sizeof cachedRev);
+        memcpy(copy,faceList[i].face,sizeof(Face)); ready=true;
+      }
+    }
+    if (!ready || !strcmp(cachedRev,rev)) continue;
+    String path=faceCachePath(id), staged=path+".next", backup=path+".bak";
+    if (!SD_MMC.exists(staged)) {
+      // A previous staging write may have failed (full card, reset, or transient I/O).
+      uint8_t *buf=(uint8_t *)heap_caps_malloc(bhoomi_clock_v1_Face_size+64, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+      if (!buf) continue;
+      pb_ostream_t out=pb_ostream_from_buffer(buf,bhoomi_clock_v1_Face_size+64);
+      bool encoded=pb_encode(&out,&bhoomi_clock_v1_Face_msg,copy);
+      bool stagedOK=encoded && stageFaceCache(id,buf,out.bytes_written); free(buf);
+      if (!stagedOK) continue;
+    }
+    bool allOnDisk=true;
+    eachImage(*copy,[&](const bhoomi_clock_v1_SpriteRef &r, bool) {
+      if (!allOnDisk || !validHash(r.hash)) { allOnDisk=false; return; }
+      File f=SD_MMC.open(assetCachePath(r.hash), FILE_READ);
+      if (!f || f.isDirectory() || f.size()!=r.size) allOnDisk=false;
+      f.close();
+    });
+    if (!allOnDisk) continue;
+    // Confirm the staged record itself still has the exact revision and checksum.
+    size_t n=0; uint8_t *data=readAll(SD_MMC,staged.c_str(),bhoomi_clock_v1_Face_size+64+FACE_CACHE_HEADER,n);
+    if (!data) continue;
+    uint8_t digest[32]; bool valid=n>FACE_CACHE_HEADER && !memcmp(data,"BFC1",4);
+    if (valid) { digest256(data+FACE_CACHE_HEADER,n-FACE_CACHE_HEADER,digest); valid=facecache::digestMatches(digest,data+4); }
+    Face *stagedFace=valid ? (Face *)heap_caps_malloc(sizeof(Face), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) : nullptr;
+    if (stagedFace) {
+      memset(stagedFace,0,sizeof(Face)); pb_istream_t in=pb_istream_from_buffer(data+FACE_CACHE_HEADER,n-FACE_CACHE_HEADER);
+      valid=pb_decode(&in,&bhoomi_clock_v1_Face_msg,stagedFace) && !strcmp(stagedFace->id,id) && !strcmp(stagedFace->rev,rev);
+    } else valid=false;
+    free(stagedFace); free(data);
+    if (!valid) { SD_MMC.remove(staged); continue; }
+    if (!facecache::promote(SD_MMC,path,staged,backup)) continue;
+    { app::Lock lock; for (int k=0;k<faceN;++k) if (!strcmp(faceList[k].id,id) && !strcmp(faceList[k].rev,rev))
+        strlcpy(faceList[k].cachedRev,rev,sizeof faceList[k].cachedRev); }
+    Serial.printf("[face-cache] saved complete face %s rev %s\n",id,rev);
+    vTaskDelay(1);
+  }
+  free(copy);
+  diskCacheBytes = cacheDirectoryBytes(FACE_CACHE_DIR) + cacheDirectoryBytes(ASSET_CACHE_DIR);
+}
+
+// Verify the on-disk last-good face before deleting any of its older artwork.
+bool cacheHasFaceRevision(const char *id, const char *rev) {
+  Face *f=readFaceCacheRecord(faceCachePath(id),id);
+  bool ok=f && !strcmp(f->rev,rev); free(f); return ok;
+}
+
+// Prune only when the cache has grown and all current definitions are safely committed.
+// This preserves the previous face and artwork throughout a partially downloaded update.
+void pruneFaceCache() {
+  if (!prepareFaceCache() || diskCacheBytes < CACHE_LIMIT_BYTES / 2) return;
+  for (int i=0; i<MAX_FACES; ++i) {
+    char id[13]={}, rev[13]={};
+    { app::Lock lock;
+      if (i>=faceN) { if (i==0) return; break; }
+      if (!faceList[i].face || strcmp(faceList[i].face->rev, faceList[i].rev)) return;
+      strlcpy(id,faceList[i].id,sizeof id); strlcpy(rev,faceList[i].rev,sizeof rev);
+    }
+    if (!cacheHasFaceRevision(id,rev)) return;
+  }
+  File dir = SD_MMC.open(ASSET_CACHE_DIR); if (!dir || !dir.isDirectory()) return;
+  for (File file=dir.openNextFile(); file; file=dir.openNextFile()) {
+    String name=file.name(); bool isDir=file.isDirectory(); file.close();
+    int slash=name.lastIndexOf('/'); if (slash>=0) name=name.substring(slash+1);
+    if (isDir) continue;
+    if (name.endsWith(".bin.tmp")) {
+      String h=name.substring(0,name.length()-8);
+      if (validHash(h.c_str())) SD_MMC.remove(String(ASSET_CACHE_DIR)+"/"+name);
+      continue;
+    }
+    if (!name.endsWith(".bin")) continue;
+    String h=name.substring(0,name.length()-4); if (!validHash(h.c_str())) continue;
+    bool used=false;
+    { app::Lock lock; for (int i=0; i<faceN && !used; ++i) if (faceList[i].face)
+        eachImage(*faceList[i].face, [&](const bhoomi_clock_v1_SpriteRef &r, bool) { if (h == r.hash) used=true; }); }
+    if (!used) SD_MMC.remove(String(ASSET_CACHE_DIR)+"/"+name);
+    vTaskDelay(1);
+  }
+  dir.close();
+  File faceDir=SD_MMC.open(FACE_CACHE_DIR);
+  if (faceDir && faceDir.isDirectory()) {
+    for (File file=faceDir.openNextFile(); file; file=faceDir.openNextFile()) {
+      String name=file.name(); bool isDir=file.isDirectory(); file.close();
+      int slash=name.lastIndexOf('/'); if (slash>=0) name=name.substring(slash+1);
+      int dot=name.indexOf('.'); if (isDir || dot<1) continue;
+      String id=name.substring(0,dot), ext=name.substring(dot);
+      if (!validId(id.c_str()) || (ext!=".pb" && ext!=".pb.bak" && ext!=".pb.next" && ext!=".pb.next.tmp")) continue;
+      bool used=false; { app::Lock lock; for (int i=0;i<faceN;++i) if (id==faceList[i].id) used=true; }
+      if (!used) SD_MMC.remove(String(FACE_CACHE_DIR)+"/"+name);
+      vTaskDelay(1);
+    }
+    faceDir.close();
+  }
+  diskCacheBytes = cacheDirectoryBytes(FACE_CACHE_DIR) + cacheDirectoryBytes(ASSET_CACHE_DIR);
+}
+
+// Restore off the main loop so SD reads never delay the clock, touch, or alarms.
+void restoreFaceCache() {
+  if (!prepareFaceCache()) return;
+  { app::Lock lock; reconcileFaces(); }
+  for (int i=0; i<MAX_FACES; ++i) {
+    char id[13] = {}, rev[13] = {};
+    { app::Lock lock; if (i>=faceN) break; strlcpy(id,faceList[i].id,sizeof id); strlcpy(rev,faceList[i].rev,sizeof rev); }
+    loadCachedFace(id, rev, true); vTaskDelay(1);
+  }
+  Face *copy = (Face *)heap_caps_malloc(sizeof(Face), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!copy) return;
+  for (int pass=0; pass<2; ++pass) for (int i=0; i<MAX_FACES; ++i) {
+    bool found=false;
+    {
+      app::Lock lock;
+      if (i>=faceN) break;
+      time_t now=time(nullptr); struct tm t; const FaceEntry *chosen=nullptr;
+      if (timeValid()) { localtime_r(&now,&t); chosen=chooseEntry(t); }
+      if (faceList[i].face && ((pass==0) == (chosen==&faceList[i]))) { memcpy(copy,faceList[i].face,sizeof(Face)); found=true; }
+    }
+    if (found) eachImage(*copy, [&](const bhoomi_clock_v1_SpriteRef &ref, bool bg) { loadCachedAsset(ref,bg); vTaskDelay(1); });
+  }
+  free(copy);
+  pruneFaceCache();
 }
 
 enum class Got { Ok, NotYet, Failed };
@@ -859,16 +1134,24 @@ Got fetchFace(Conn &c, const char *id, const char *rev) {
     } else if (strcmp(f->id, id) != 0 || !f->has_background || !f->has_time) {
       Serial.printf("[faces] %s: not a usable face\n", id);
       clean = true;
+    } else if (strcmp(f->rev, rev) != 0) {
+      // KV may return an older face while its new state is propagating. Retain last good.
+      Serial.printf("[faces] %s: revision not yet available; retrying\n", id);
+      result = Got::NotYet; clean = true;
     } else {
-      app::Lock lock;
-      for (int i = 0; i < faceN; i++)
-        if (strcmp(faceList[i].id, id) == 0) {
-          free(faceList[i].face);
-          faceList[i].face = f;
-          f = nullptr;
-          facesRev++;
-          result = Got::Ok;
-        }
+      {
+        app::Lock lock;
+        for (int i = 0; i < faceN; i++)
+          if (strcmp(faceList[i].id, id) == 0 && strcmp(faceList[i].rev, rev) == 0) {
+            free(faceList[i].face);
+            faceList[i].face = f;
+            f = nullptr;
+            facesRev++;
+            result = Got::Ok;
+            break;
+          }
+      }
+      if (result == Got::Ok) stageFaceCache(id, body, sink.len);
       clean = true;
       Serial.printf("[faces] %s rev %s: fetched (%u bytes)\n", id, rev, (unsigned)sink.len);
     }
@@ -900,16 +1183,13 @@ Got fetchAsset(Conn &c, const bhoomi_clock_v1_SpriteRef &r, bool background) {
   } else {
     BufSink sink(buf, r.size);
     int got = writeResponse(c, sink);
-    bool good = got >= 0 && !sink.overflow && sink.len == r.size;
-    if (good && background) good = buf[0] == 0xFF && buf[1] == 0xD8;
-    // a sprite: the 12-byte LVGL header (magic 0x19, RGB565A8 = 0x14, w, h, stride = 2w), then 3 bytes a pixel
-    if (good && !background) {
-      uint32_t w = buf[4] | (buf[5] << 8), h = buf[6] | (buf[7] << 8);
-      good = buf[0] == 0x19 && buf[1] == 0x14 && w == r.w && h == r.h && r.size == 12 + 3 * w * h;
-    }
+    bool good = got >= 0 && !sink.overflow && facecache::validAssetShape(buf, sink.len, r.size, r.w, r.h, background);
+    uint8_t hash[32];
+    if (good) { digest256(buf, sink.len, hash); good = facecache::digestMatchesHex(hash, r.hash, 16); }
     if (!good) {
       Serial.printf("[faces] image %s: incomplete or wrong (%d of %u bytes)\n", r.hash, got, (unsigned)r.size);
     } else {
+      writeAssetCache(r, buf, sink.len);
       app::Lock lock;
       Asset &a = assets[assetN++];
       strlcpy(a.hash, r.hash, sizeof a.hash);
@@ -957,9 +1237,10 @@ bool syncFaces(Conn &c) {
       strlcpy(rev, faceList[i].rev, sizeof rev);
     }
     if (millis() - started > FACES_PASS_MS) return true;
-    failed = fetchFace(c, id, rev) != Got::Ok;
+    if (!loadCachedFace(id, rev, false)) failed = fetchFace(c, id, rev) != Got::Ok;
   }
 
+  if (!failed) { commitReadyFaceCaches(); pruneFaceCache(); }
   // 2. their images: the chosen face first, then the rest in order
   for (int pass = 0; pass < 2 && !failed; pass++) {
     for (int i = 0; i < MAX_FACES && !failed; i++) {
@@ -980,8 +1261,9 @@ bool syncFaces(Conn &c) {
       }
       while (found && !failed) {
         if (millis() - started > FACES_PASS_MS) return true;
-        failed = fetchAsset(c, need, background) != Got::Ok;
+        if (!loadCachedAsset(need, background)) failed = fetchAsset(c, need, background) != Got::Ok;
         if (failed) break;
+        commitReadyFaceCaches();
         found = false;
         app::Lock lock;
         if (i >= faceN || !faceList[i].face) break;
@@ -1184,6 +1466,32 @@ void manage(Conn &c) {
   delay(200); ESP.restart();
 }
 
+void syncVolume(Conn &c) {
+  VolumeState local;
+  { app::Lock lock; local = volumeState; }
+  if (local.pending) {
+    String path = "/api/device/volume?alarm=" + String(local.alarm) + "&video=" + String(local.video);
+    int code = c.open(path) ? c.http.PUT((uint8_t *)nullptr, 0) : -1;
+    c.close();
+    if (code != 204) return;
+  }
+  int code = c.get("/api/device/volume");
+  if (code != 200) { c.close(); return; }
+  uint8_t body[32] = {}; BufSink sink(body, sizeof(body)-1);
+  int got = writeResponse(c, sink); c.close();
+  if (got < 0 || sink.overflow) return;
+  body[sink.len] = 0; int alarm, video; char extra;
+  if (sscanf((char *)body, "%d %d %c", &alarm, &video, &extra) != 2 ||
+      alarm < 0 || alarm > 21 || video < 0 || video > 21) return;
+  app::Lock lock;
+  // A local edit made during either request wins and will be sent on the next poll.
+  VolumeState next;
+  if (!volumeSyncResult(volumeState, local, alarm, video, next)) return;
+  if (memcmp(&next, &volumeState, sizeof(next)) && saveVolume(next)) {
+    volumeState = next; sound::setLevels(next.alarm, next.video);
+  }
+}
+
 void syncMoodNotes(Conn &c) {
   int code = c.get("/api/device/mood-notes");
   if (code != 200) { c.close(); return; }
@@ -1280,8 +1588,10 @@ void task(void *) {
   uint32_t lastLog = 0;
   uint32_t haveRev = 0;  // keysRev of `active`
   Conn c;  // kept for good: the socket stays open between polls
+  bool restoredFaces = false;
   for (;;) {
     vTaskDelay(pdMS_TO_TICKS(500));
+    if (!restoredFaces && storage::mounted()) { restoreFaceCache(); restoredFaces = true; }
     {
       app::Lock lock;
       if (haveRev != keysRev) {
@@ -1337,6 +1647,7 @@ void task(void *) {
       syncCovers(c);
       if (syncFaces(c)) wait = FACES_MORE_MS;  // more faces or images to fetch: don't wait out the whole interval
       syncSounds(c);
+      syncVolume(c);
       syncMood(c);
       syncMoodNotes(c);
       syncMoodVideos(c);
@@ -1478,6 +1789,17 @@ void weatherText(char *out, size_t cap) {
   snprintf(out, cap, " %s %ld°C", icon, (long)weatherState.temperature_c);
 }
 
+String volumeSettingsJson() {
+  return String("{\"alarm\":") + volumeState.alarm + ",\"video\":" + volumeState.video +
+         ",\"pending\":" + (volumeState.pending ? "true" : "false") + "}";
+}
+bool setLocalVolume(int alarm, int video) {
+  if (alarm < 0 || alarm > 21 || video < 0 || video > 21) return false;
+  VolumeState next = {1, (uint8_t)alarm, (uint8_t)video, 1};
+  if (!saveVolume(next)) return false;
+  volumeState = next; sound::setLevels(next.alarm, next.video); return true;
+}
+
 String weatherSettingsJson() {
   return "{\"city\":\"" + wifisetup::jsonEscape(weatherState.city) + "\",\"pending\":" +
     (weatherPending.length() ? "true" : "false") + ",\"pendingCity\":\"" + wifisetup::jsonEscape(weatherPendingName) +
@@ -1497,6 +1819,14 @@ bool setWeatherLocation(const String &name, double lat, double lon) {
 void begin() {
   loadSaved();  // before anything else, so the face has content even if the portal is unreachable
   loadKeys();
+  Preferences savedVolume;
+  if (savedVolume.begin("volume", false)) {
+    VolumeState v = {};
+    if (savedVolume.getBytesLength("state") == sizeof(v) && savedVolume.getBytes("state", &v, sizeof(v)) == sizeof(v) &&
+        v.version == 1 && v.alarm <= 21 && v.video <= 21 && v.pending <= 1) volumeState = v;
+    savedVolume.end();
+  }
+  sound::setLevels(volumeState.alarm, volumeState.video);
   Preferences notes;
   if (notes.begin("mood-notes", false)) {
     for (int i=0; i<5; ++i) { String key = "m" + String(i+1); moodNotes[i] = notes.getString(key.c_str(), ""); }

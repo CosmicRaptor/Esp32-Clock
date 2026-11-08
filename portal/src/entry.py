@@ -95,6 +95,7 @@ import weather
 import management
 import mindfulness
 import mood_video
+import volume
 import clock_pb2 as pb
 from model import Invalid
 
@@ -275,6 +276,13 @@ class Default(WorkerEntrypoint):
 
         if not auth.check_session(password, auth.read_cookie(request.headers.get("cookie"))):
             raise HttpError(401, "Please log in.")
+
+        if path == "/api/volume" and method in ("GET", "PUT"):
+            if method == "GET":
+                return json_response({"volume": await self.kv_json("volume") or volume.DEFAULT})
+            levels = volume.clean(await read_json(request))
+            await self.env.CLOCK.put("volume", json.dumps(levels))
+            return json_response({"volume": levels})
 
         if path.startswith("/api/mood-note/") and method in ("GET", "PUT"):
             mood = path.removeprefix("/api/mood-note/")
@@ -608,6 +616,18 @@ class Default(WorkerEntrypoint):
         if not auth.same_secret(token, auth.bearer(request.headers.get("authorization"))):
             raise HttpError(401, "Bad device token.")
         method = request.method
+
+        if path == "/api/device/volume" and method in ("GET", "PUT"):
+            if method == "PUT":
+                query = {k: v[0] for k, v in parse_qs(url.query).items()}
+                try:
+                    levels = volume.clean({"alarm": int(query.get("alarm", "")), "video": int(query.get("video", ""))})
+                except ValueError:
+                    raise Invalid("Volume must be an integer from 0 to 21.") from None
+                await self.env.CLOCK.put("volume", json.dumps(levels))
+                return Response(None, status=204)
+            levels = await self.kv_json("volume") or volume.DEFAULT
+            return Response(f"{levels['alarm']} {levels['video']}\n", headers={"content-type": "text/plain", "cache-control": "no-store"})
 
         if path == "/api/device/mood-notes" and method == "GET":
             notes = await asyncio.gather(*(self.kv_json("mood-note:" + str(i)) for i in range(1, 6)))

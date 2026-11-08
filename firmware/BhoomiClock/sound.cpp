@@ -15,7 +15,7 @@ constexpr int PIN_BCLK = 48;
 constexpr int PIN_LRC = 38;
 constexpr int PIN_DOUT = 47;
 
-constexpr uint8_t VOLUME = 18;               // 0..21
+constexpr uint8_t DEFAULT_VOLUME = 18;       // 0..21
 constexpr uint32_t MIN_GOOD_PLAY_MS = 1200;  // a file that ends sooner than this didn't really play
 constexpr int MAX_SHORT_PLAYS = 2;           // ...twice in a row and we give up on it and beep
 constexpr uint32_t REPEAT_GAP_MS = 1000;     // pause between repeats of a user's sound
@@ -36,12 +36,15 @@ SemaphoreHandle_t reqLock = nullptr;
 // ---- request from other tasks (reqLock) ----
 bool reqPlay = false, reqStop = false, reqClip = false;
 char reqFile[72] = "";
+uint8_t reqAlarmVolume = DEFAULT_VOLUME, reqVideoVolume = DEFAULT_VOLUME;
+bool reqVolumeChanged = false;
 
 // ---- task-private ----
 volatile bool active = false;
 bool trackRunning = false;
 bool usingBeep = false;
 bool clipMode = false;
+uint8_t alarmVolume = DEFAULT_VOLUME, videoVolume = DEFAULT_VOLUME;
 bool giveUpOnFile = false;
 int shortPlays = 0;
 uint32_t trackStartedAt = 0;
@@ -141,16 +144,20 @@ bool startTrack() {
 }
 
 void handleRequests() {
-  bool doPlay, doStop, doClip;
+  bool doPlay, doStop, doClip, volumeChanged;
+  uint8_t nextAlarm, nextVideo;
   char file[sizeof reqFile];
   xSemaphoreTake(reqLock, portMAX_DELAY);
   doPlay = reqPlay;
   doStop = reqStop;
   doClip = reqClip;
+  volumeChanged = reqVolumeChanged; reqVolumeChanged = false;
+  nextAlarm = reqAlarmVolume; nextVideo = reqVideoVolume;
   strlcpy(file, reqFile, sizeof file);
   reqPlay = reqStop = false;
   xSemaphoreGive(reqLock);
 
+  if (volumeChanged) { alarmVolume = nextAlarm; videoVolume = nextVideo; }
   if (doStop || doPlay) {
     if (trackRunning || audio->isRunning()) audio->stopSong();
     trackRunning = false;
@@ -161,11 +168,14 @@ void handleRequests() {
   if (doPlay) {  // a play after a stop in the same tick wins
     strlcpy(current, file, sizeof current);
     clipMode = doClip;
+    audio->setVolume(clipMode ? videoVolume : alarmVolume);
     giveUpOnFile = false;
     shortPlays = 0;
     active = true;
     startTrack();
     if (!trackRunning) active = false;
+  } else if (volumeChanged && active) {
+    audio->setVolume(clipMode ? videoVolume : alarmVolume);
   }
 }
 
@@ -209,7 +219,7 @@ void begin() {
   Audio::audio_info_callback = onAudioEvent;
   audio = new Audio(I2S_NUM_0);
   audio->setPinout(PIN_BCLK, PIN_LRC, PIN_DOUT);
-  audio->setVolume(VOLUME);
+  audio->setVolume(DEFAULT_VOLUME);
   ensureBeep();
   // Core 1 like the Arduino loop, but above it (priority 2 vs 1) so playback never starves while
   // the screen is drawing. The library runs its decoder in its own task on core 0.
@@ -231,6 +241,13 @@ void playClip(const char *path) {
   strlcpy(reqFile, path, sizeof reqFile);
   reqPlay = true;
   reqClip = true;
+  xSemaphoreGive(reqLock);
+}
+
+void setLevels(uint8_t alarm, uint8_t video) {
+  if (!reqLock || alarm > 21 || video > 21) return;
+  xSemaphoreTake(reqLock, portMAX_DELAY);
+  reqAlarmVolume = alarm; reqVideoVolume = video; reqVolumeChanged = true;
   xSemaphoreGive(reqLock);
 }
 

@@ -206,3 +206,8 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, .btn:focus-vi
 .diagnostic-output { white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; max-height:240px; overflow:auto; }
 .firmware-candidate { overflow-wrap:anywhere; white-space:pre-line; }
 @media (max-width:420px) { .health-row { align-items:stretch; flex-direction:column; } }
+
+#volumeCard label { display:flex; justify-content:space-between; margin-top:14px; font-weight:600; }
+#volumeCard output { color:var(--mute); font-weight:400; }
+#volumeCard input[type=range] { width:100%; padding:0; accent-color:var(--accent); }
+#volumeCard .btn { margin-top:12px; }

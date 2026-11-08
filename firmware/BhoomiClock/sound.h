@@ -15,6 +15,7 @@ void begin();  // after storage::begin() is not required; the card is checked at
 void play(const char *fileName);  // "" = built-in beep; plays on repeat
 // Plays one SD-card clip once, without alarm fallback or looping.
 void playClip(const char *path);
+void setLevels(uint8_t alarm, uint8_t video); // 0..21, applied on the sound task
 void stop();
 bool playing();
 

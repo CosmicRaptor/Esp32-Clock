@@ -50,6 +50,16 @@
     <p class="hint center" id="pvNote">Rough preview, since the clock face isn't final yet.</p>
   </div>
 
+<div class="card" id="volumeCard">
+  <h2>Speaker volume</h2>
+  <p class="hint">Set alarms and mood videos separately. Zero mutes that sound.</p>
+  <label for="volumeAlarm">Alarms <output id="volumeAlarmValue">18 / 21</output></label>
+  <input type="range" id="volumeAlarm" min="0" max="21" value="18" step="1">
+  <label for="volumeVideo">Mood videos <output id="volumeVideoValue">18 / 21</output></label>
+  <input type="range" id="volumeVideo" min="0" max="21" value="18" step="1">
+  <button class="btn primary" id="volumeSave" type="button">Save volume</button>
+  <p class="hint" id="volumeStatus" role="status"></p>
+</div>
 <div class="card mood-card" id="moodCard">
   <div class="card-heading"><div><span class="eyebrow">A LITTLE MOMENT</span><h2>Mindfulness check-ins</h2></div><span class="pill">Every 3 hours</span></div>
   <p class="hint">A gentle five-point check-in. Responses are private and kept for 30 days.</p>
@@ -210,6 +220,7 @@
 <script src="/weather-settings.js"></script>
 <script src="/management.js"></script>
 <script src="/mood-video.js"></script>
+<script src="/volume-settings.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

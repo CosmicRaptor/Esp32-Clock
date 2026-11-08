@@ -10,6 +10,7 @@
 #include "app_lock.h"
 #include "page_html.h"
 #include "mood_video_js.h"
+#include "volume_settings_js.h"
 #include "mood_clip.h"
 #include "portal_client.h"
 #include "settings.h"
@@ -69,6 +70,22 @@ void handleInfo() {
   String out = String("{\"mode\":\"") + (wifisetup::portalActive() ? "setup" : "settings") +
                "\",\"tz\":\"" + (z ? z->id : "") + "\",\"clock\":\"" + clock + "\"}";
   sendJson(out);
+}
+
+void handleVolumeGet() {
+  if (wifisetup::portalActive()) return sendError(409, "Not available during setup");
+  app::Lock lock; sendJson(portal::volumeSettingsJson());
+}
+void handleVolumeSet() {
+  if (wifisetup::portalActive()) return sendError(409, "Not available during setup");
+  if (server.header("X-Clock") != "1") return sendError(403, "missing X-Clock header");
+  String a = server.arg("alarm"), v = server.arg("video"); char *ea, *ev;
+  long alarm = strtol(a.c_str(), &ea, 10), video = strtol(v.c_str(), &ev, 10);
+  if (a.isEmpty() || v.isEmpty() || *ea || *ev || alarm < 0 || alarm > 21 || video < 0 || video > 21)
+    return sendError(400, "Volume must be from 0 to 21.");
+  app::Lock lock;
+  if (!portal::setLocalVolume(alarm, video)) return sendError(500, "Could not save volume on the clock.");
+  sendJson(portal::volumeSettingsJson());
 }
 
 void handleWeatherGet() {
@@ -377,7 +394,10 @@ void task(void *) {
 void begin() {
   server.on("/", HTTP_GET, handleRoot);
   server.on("/info", HTTP_GET, handleInfo);
+  server.on("/volume-settings.js", HTTP_GET, []() { server.send_P(200, "application/javascript", VOLUME_SETTINGS_JS); });
   server.on("/mood-video.js", HTTP_GET, []() { server.send_P(200, "application/javascript", MOOD_VIDEO_JS); });
+  server.on("/volume", HTTP_GET, handleVolumeGet);
+  server.on("/volume", HTTP_POST, handleVolumeSet);
   server.on("/weather", HTTP_GET, handleWeatherGet);
   server.on("/weather", HTTP_POST, handleWeatherSet);
   server.on("/zones", HTTP_GET, handleZones);

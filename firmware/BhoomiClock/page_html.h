@@ -8,7 +8,7 @@
 // Networks, zones and files are fetched as JSON and rendered with textContent (no HTML escaping).
 // Photos are decoded and resized in the browser (fit inside 320x240, JPEG) before upload.
 static const char PAGE_HTML[] PROGMEM = R"HTML(<!doctype html>
-<html lang="en"><head>
+<html lang="en" data-volume-mode="local"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Bhoomi's clock</title>
@@ -63,6 +63,10 @@ summary{cursor:pointer;color:var(--accent);font-size:15px}
 .k{margin-top:12px}.k .lbl{display:flex;justify-content:space-between}
 .k .lbl i{font-style:normal;text-transform:none;letter-spacing:0}
 #keysMsg{margin-top:10px;min-height:1.2em;text-align:center}
+#volumeCard label{display:flex;justify-content:space-between;margin-top:14px;font-weight:600}
+#volumeCard output{color:var(--mute);font-weight:400}
+#volumeCard input[type=range]{padding:0;accent-color:var(--accent)}
+#volumeCard .btn{width:100%;margin-top:12px;padding:12px;border:0;border-radius:12px;background:var(--accent);color:white;font:inherit;font-weight:600}
 [hidden]{display:none!important}
 </style></head><body><main>
 <h1 id="title">Hello! &#x1F570;</h1>
@@ -124,6 +128,16 @@ summary{cursor:pointer;color:var(--accent);font-size:15px}
   </div>
 </div>
 
+<div class="card" id="volumeCard" hidden>
+  <h2>Speaker volume</h2>
+  <p class="hint">Set alarms and mood videos separately. Zero mutes that sound.</p>
+  <label for="volumeAlarm">Alarms <output id="volumeAlarmValue">18 / 21</output></label>
+  <input type="range" id="volumeAlarm" min="0" max="21" value="18" step="1">
+  <label for="volumeVideo">Mood videos <output id="volumeVideoValue">18 / 21</output></label>
+  <input type="range" id="volumeVideo" min="0" max="21" value="18" step="1">
+  <button class="btn primary" id="volumeSave" type="button">Save volume</button>
+  <p class="hint" id="volumeStatus" role="status"></p>
+</div>
 <div class="card" id="moodVideoCard" hidden>
   <div class="lbl">A little moment</div><h2 style="margin:4px 0 6px;font-size:20px">A video for each mood</h2>
   <p class="note">Choose a mood and a video with sound. The clock plays it after that response.</p>
@@ -455,7 +469,7 @@ document.querySelectorAll('[data-show]').forEach(b=>b.onclick=()=>{const p=$(b.d
     $('title').textContent='Clock settings';
     $('sub').textContent=info.clock?'The clock currently reads '+info.clock+'.':'Adjust how your clock shows the time.';
     $('wifiList').hidden=true;$('wifiCreds').hidden=true;$('go').textContent='Save time zone';
-    $('weatherCard').hidden=false;
+    $('weatherCard').hidden=false;$('volumeCard').hidden=false;
     $('files').hidden=false;$('moodVideoCard').hidden=false;refreshFiles();
     $('cloud').hidden=false;loadCloud(false);
   }else{
@@ -517,5 +531,6 @@ document.querySelectorAll('[data-show]').forEach(b=>b.onclick=()=>{const p=$(b.d
   if (local) { refresh(); setInterval(refresh, 10000); }
   else { window.loadWeatherSettings = refresh; }
 })();
-</script></body></html>
+</script>
+<script src="/volume-settings.js"></script></body></html>
 )HTML";

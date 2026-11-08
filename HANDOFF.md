@@ -1,5 +1,17 @@
 # Handoff: Bhoomi's Clock
 
+## Face artwork SD cache — flashed, 8 November 2026
+
+Firmware 0.11.0 caches verified face protobufs and SHA-256-addressed images under `/portal/face-cache` and `/portal/face-assets` on microSD. It restores cached faces in the portal task before its first network poll, prioritises the current face when time is valid, and retains the last complete on-card face until a new definition and all its images are cached. Missing/corrupt entries fall back to the network; the cache is bounded and obsolete files are pruned only after current faces are committed. See README for the valid-time limitation and cache behavior. USB flash verified; all ten current faces populated their caches. On a second USB restart, serial confirmed the current sunset face was built from cached files before the first portal poll. No check-in was triggered. Firmware uses 3,031,906 bytes (48% of the 6 MB slot), with 85,576 bytes global RAM. Tests: 174 Python, 76 JS, and `tools/check_face_cache.cpp` host checks passed. Physical screen confirmation is still needed.
+
+## Face revision repair — 8 November 2026
+
+The café and sunset faces had published state revisions that did not match their stored documents, causing repeated downloads. Their existing documents were saved one at a time with time for KV propagation; the references now match and their 08–12 and 18–20 schedules remain intact. Video logs confirmed moods 1–3 were already installed rather than re-downloaded. Faces and artwork still live only in PSRAM and must be fetched again after each reboot; the board reported weak Wi-Fi around −96 dBm during the check.
+
+## Separate speaker volumes — deployed and flashed, 8 November 2026
+
+The admin and LAN pages have separate alarm and mood-video sliders (0–21, default 18). LAN changes persist and take effect immediately; pending local changes win over cloud settings until the server confirms the same values. See the portal README for synchronization behaviour. The clock and portal were updated; deployed Worker version `f7cfc93a-051b-4363-b76f-78d03c107e67`. Firmware uses 3,021,410 bytes (48% of a 6 MB slot), with 85,432 bytes global RAM. Python/JS tests, host conflict checks and isolated HTTP integration passed; USB flash verified and the clock's LAN volume endpoint reported 18/18 with no pending edit. A physical audio and live settings-change check is still needed.
+
 ## Mindfulness and mood videos — deployed and flashed, 8 November 2026
 
 The five-point check-in runs every three hours and closes after five minutes. Responses queue offline and the private portal retains them for 30 days. Each mood can have a note and a video with sound: both portals prepare uploads in the browser, and the clock downloads remote uploads to microSD. `checkin` on serial shows the prompt; `moodstatus` reports installed clip hashes, frame counts and audio. The clock and portal were deployed, and Aryan confirmed the flow works. Moods 1–3 have videos on the clock; 1 and 2 currently use the same video. Portal version `98b3cd8d-9f8d-4acb-a57e-0f7fbda945c1`. Firmware including serial download diagnostics uses 3,014,762 bytes (47% of a 6 MB slot), with 85,432 bytes global RAM. The portal indicates a saved video but has no device-confirmed delivery status. No pending firmware install was approved after USB flashing. See the portal README for limits, playback and offline behaviour.

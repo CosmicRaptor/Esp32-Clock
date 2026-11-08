@@ -125,6 +125,7 @@ async function load() {
   setState(j.state);
   $('login').hidden = true;
   $('app').hidden = false;
+  window.loadVolumeSettings();
   loadMoods();
   loadMoodVideo();
   loadMoodNote();
