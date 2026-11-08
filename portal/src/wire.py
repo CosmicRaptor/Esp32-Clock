@@ -126,6 +126,9 @@ def face_message(face: dict) -> pb.Face:
         for h in p["sprites"]:
             _fill_sprite(e.sprites.add(), face, h)
         e.area.x, e.area.y, e.area.w, e.area.h = p["area"]["x"], p["area"]["y"], p["area"]["w"], p["area"]["h"]
+    message_box = face.get("message_box")
+    if message_box is not None:
+        out.message_box.x, out.message_box.y = message_box["x"], message_box["y"]
     np = face.get("nowplaying")
     if np:
         out.nowplaying.show = np["show"]

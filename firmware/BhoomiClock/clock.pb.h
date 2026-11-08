@@ -260,6 +260,11 @@ typedef struct _bhoomi_clock_v1_FaceWeatherVariant {
     bool override_text;
 } bhoomi_clock_v1_FaceWeatherVariant;
 
+typedef struct _bhoomi_clock_v1_MessageBoxSlot {
+    int32_t x;
+    int32_t y;
+} bhoomi_clock_v1_MessageBoxSlot;
+
 typedef struct _bhoomi_clock_v1_Face {
     char id[13];
     char rev[13];
@@ -283,6 +288,8 @@ typedef struct _bhoomi_clock_v1_Face {
     bhoomi_clock_v1_FaceWeatherVariant cloudy; /* overcast/partly cloudy/fog; default if absent */
     bool has_rain;
     bhoomi_clock_v1_FaceWeatherVariant rain; /* drizzle/rain/showers/thunderstorms; default if absent */
+    bool has_message_box;
+    bhoomi_clock_v1_MessageBoxSlot message_box; /* unset: choose a corner clear of the Spotify strip */
 } bhoomi_clock_v1_Face;
 
 /* GET /api/device/weather, independently polled every 15 minutes. */
@@ -356,6 +363,7 @@ extern "C" {
 
 
 
+
 /* Initializer values for message structs */
 #define bhoomi_clock_v1_DeviceState_init_default {0, false, bhoomi_clock_v1_Note_init_default, false, bhoomi_clock_v1_Photo_init_default, 0, {bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default}, false, bhoomi_clock_v1_NowPlaying_init_default, 0, {bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default}, "", ""}
 #define bhoomi_clock_v1_Note_init_default        {"", 0}
@@ -376,7 +384,8 @@ extern "C" {
 #define bhoomi_clock_v1_When_init_default        {0, 0, 0, 0, 0, {bhoomi_clock_v1_Date_init_default, bhoomi_clock_v1_Date_init_default, bhoomi_clock_v1_Date_init_default, bhoomi_clock_v1_Date_init_default, bhoomi_clock_v1_Date_init_default, bhoomi_clock_v1_Date_init_default, bhoomi_clock_v1_Date_init_default, bhoomi_clock_v1_Date_init_default}}
 #define bhoomi_clock_v1_NowPlayingSlot_init_default {0, 0, 0, 0, 0, 0, 0, 0, 0}
 #define bhoomi_clock_v1_FaceWeatherVariant_init_default {false, bhoomi_clock_v1_SpriteRef_init_default, 0, {bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default}, 0, {bhoomi_clock_v1_Emitter_init_default, bhoomi_clock_v1_Emitter_init_default, bhoomi_clock_v1_Emitter_init_default}, 0, 0}
-#define bhoomi_clock_v1_Face_init_default        {"", "", false, bhoomi_clock_v1_SpriteRef_init_default, false, bhoomi_clock_v1_TextSlot_init_default, false, bhoomi_clock_v1_TextSlot_init_default, false, bhoomi_clock_v1_Layer_init_default, 0, {bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default}, 0, {bhoomi_clock_v1_Emitter_init_default, bhoomi_clock_v1_Emitter_init_default, bhoomi_clock_v1_Emitter_init_default}, false, bhoomi_clock_v1_When_init_default, false, bhoomi_clock_v1_NowPlayingSlot_init_default, false, bhoomi_clock_v1_FaceWeatherVariant_init_default, false, bhoomi_clock_v1_FaceWeatherVariant_init_default}
+#define bhoomi_clock_v1_MessageBoxSlot_init_default {0, 0}
+#define bhoomi_clock_v1_Face_init_default        {"", "", false, bhoomi_clock_v1_SpriteRef_init_default, false, bhoomi_clock_v1_TextSlot_init_default, false, bhoomi_clock_v1_TextSlot_init_default, false, bhoomi_clock_v1_Layer_init_default, 0, {bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default}, 0, {bhoomi_clock_v1_Emitter_init_default, bhoomi_clock_v1_Emitter_init_default, bhoomi_clock_v1_Emitter_init_default}, false, bhoomi_clock_v1_When_init_default, false, bhoomi_clock_v1_NowPlayingSlot_init_default, false, bhoomi_clock_v1_FaceWeatherVariant_init_default, false, bhoomi_clock_v1_FaceWeatherVariant_init_default, false, bhoomi_clock_v1_MessageBoxSlot_init_default}
 #define bhoomi_clock_v1_Weather_init_default     {0, 0, 0, 0, 0, ""}
 #define bhoomi_clock_v1_Management_init_default  {0, "", 0}
 #define bhoomi_clock_v1_DeviceState_init_zero    {0, false, bhoomi_clock_v1_Note_init_zero, false, bhoomi_clock_v1_Photo_init_zero, 0, {bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero}, false, bhoomi_clock_v1_NowPlaying_init_zero, 0, {bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero}, "", ""}
@@ -398,7 +407,8 @@ extern "C" {
 #define bhoomi_clock_v1_When_init_zero           {0, 0, 0, 0, 0, {bhoomi_clock_v1_Date_init_zero, bhoomi_clock_v1_Date_init_zero, bhoomi_clock_v1_Date_init_zero, bhoomi_clock_v1_Date_init_zero, bhoomi_clock_v1_Date_init_zero, bhoomi_clock_v1_Date_init_zero, bhoomi_clock_v1_Date_init_zero, bhoomi_clock_v1_Date_init_zero}}
 #define bhoomi_clock_v1_NowPlayingSlot_init_zero {0, 0, 0, 0, 0, 0, 0, 0, 0}
 #define bhoomi_clock_v1_FaceWeatherVariant_init_zero {false, bhoomi_clock_v1_SpriteRef_init_zero, 0, {bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero}, 0, {bhoomi_clock_v1_Emitter_init_zero, bhoomi_clock_v1_Emitter_init_zero, bhoomi_clock_v1_Emitter_init_zero}, 0, 0}
-#define bhoomi_clock_v1_Face_init_zero           {"", "", false, bhoomi_clock_v1_SpriteRef_init_zero, false, bhoomi_clock_v1_TextSlot_init_zero, false, bhoomi_clock_v1_TextSlot_init_zero, false, bhoomi_clock_v1_Layer_init_zero, 0, {bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero}, 0, {bhoomi_clock_v1_Emitter_init_zero, bhoomi_clock_v1_Emitter_init_zero, bhoomi_clock_v1_Emitter_init_zero}, false, bhoomi_clock_v1_When_init_zero, false, bhoomi_clock_v1_NowPlayingSlot_init_zero, false, bhoomi_clock_v1_FaceWeatherVariant_init_zero, false, bhoomi_clock_v1_FaceWeatherVariant_init_zero}
+#define bhoomi_clock_v1_MessageBoxSlot_init_zero {0, 0}
+#define bhoomi_clock_v1_Face_init_zero           {"", "", false, bhoomi_clock_v1_SpriteRef_init_zero, false, bhoomi_clock_v1_TextSlot_init_zero, false, bhoomi_clock_v1_TextSlot_init_zero, false, bhoomi_clock_v1_Layer_init_zero, 0, {bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero, bhoomi_clock_v1_Layer_init_zero}, 0, {bhoomi_clock_v1_Emitter_init_zero, bhoomi_clock_v1_Emitter_init_zero, bhoomi_clock_v1_Emitter_init_zero}, false, bhoomi_clock_v1_When_init_zero, false, bhoomi_clock_v1_NowPlayingSlot_init_zero, false, bhoomi_clock_v1_FaceWeatherVariant_init_zero, false, bhoomi_clock_v1_FaceWeatherVariant_init_zero, false, bhoomi_clock_v1_MessageBoxSlot_init_zero}
 #define bhoomi_clock_v1_Weather_init_zero        {0, 0, 0, 0, 0, ""}
 #define bhoomi_clock_v1_Management_init_zero     {0, "", 0}
 
@@ -509,6 +519,8 @@ extern "C" {
 #define bhoomi_clock_v1_FaceWeatherVariant_emitters_tag 3
 #define bhoomi_clock_v1_FaceWeatherVariant_text_color_tag 4
 #define bhoomi_clock_v1_FaceWeatherVariant_override_text_tag 5
+#define bhoomi_clock_v1_MessageBoxSlot_x_tag     1
+#define bhoomi_clock_v1_MessageBoxSlot_y_tag     2
 #define bhoomi_clock_v1_Face_id_tag              1
 #define bhoomi_clock_v1_Face_rev_tag             2
 #define bhoomi_clock_v1_Face_background_tag      4
@@ -521,6 +533,7 @@ extern "C" {
 #define bhoomi_clock_v1_Face_nowplaying_tag      11
 #define bhoomi_clock_v1_Face_cloudy_tag          12
 #define bhoomi_clock_v1_Face_rain_tag            13
+#define bhoomi_clock_v1_Face_message_box_tag     14
 #define bhoomi_clock_v1_Weather_available_tag    1
 #define bhoomi_clock_v1_Weather_temperature_c_tag 2
 #define bhoomi_clock_v1_Weather_code_tag         3
@@ -732,6 +745,12 @@ X(a, STATIC,   SINGULAR, BOOL,     override_text,     5)
 #define bhoomi_clock_v1_FaceWeatherVariant_layers_MSGTYPE bhoomi_clock_v1_Layer
 #define bhoomi_clock_v1_FaceWeatherVariant_emitters_MSGTYPE bhoomi_clock_v1_Emitter
 
+#define bhoomi_clock_v1_MessageBoxSlot_FIELDLIST(X, a) \
+X(a, STATIC,   SINGULAR, SINT32,   x,                 1) \
+X(a, STATIC,   SINGULAR, SINT32,   y,                 2)
+#define bhoomi_clock_v1_MessageBoxSlot_CALLBACK NULL
+#define bhoomi_clock_v1_MessageBoxSlot_DEFAULT NULL
+
 #define bhoomi_clock_v1_Face_FIELDLIST(X, a) \
 X(a, STATIC,   SINGULAR, STRING,   id,                1) \
 X(a, STATIC,   SINGULAR, STRING,   rev,               2) \
@@ -744,7 +763,8 @@ X(a, STATIC,   REPEATED, MESSAGE,  emitters,          9) \
 X(a, STATIC,   OPTIONAL, MESSAGE,  when,             10) \
 X(a, STATIC,   OPTIONAL, MESSAGE,  nowplaying,       11) \
 X(a, STATIC,   OPTIONAL, MESSAGE,  cloudy,           12) \
-X(a, STATIC,   OPTIONAL, MESSAGE,  rain,             13)
+X(a, STATIC,   OPTIONAL, MESSAGE,  rain,             13) \
+X(a, STATIC,   OPTIONAL, MESSAGE,  message_box,      14)
 #define bhoomi_clock_v1_Face_CALLBACK NULL
 #define bhoomi_clock_v1_Face_DEFAULT NULL
 #define bhoomi_clock_v1_Face_background_MSGTYPE bhoomi_clock_v1_SpriteRef
@@ -757,6 +777,7 @@ X(a, STATIC,   OPTIONAL, MESSAGE,  rain,             13)
 #define bhoomi_clock_v1_Face_nowplaying_MSGTYPE bhoomi_clock_v1_NowPlayingSlot
 #define bhoomi_clock_v1_Face_cloudy_MSGTYPE bhoomi_clock_v1_FaceWeatherVariant
 #define bhoomi_clock_v1_Face_rain_MSGTYPE bhoomi_clock_v1_FaceWeatherVariant
+#define bhoomi_clock_v1_Face_message_box_MSGTYPE bhoomi_clock_v1_MessageBoxSlot
 
 #define bhoomi_clock_v1_Weather_FIELDLIST(X, a) \
 X(a, STATIC,   SINGULAR, BOOL,     available,         1) \
@@ -794,6 +815,7 @@ extern const pb_msgdesc_t bhoomi_clock_v1_Emitter_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_When_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_NowPlayingSlot_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_FaceWeatherVariant_msg;
+extern const pb_msgdesc_t bhoomi_clock_v1_MessageBoxSlot_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_Face_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_Weather_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_Management_msg;
@@ -818,6 +840,7 @@ extern const pb_msgdesc_t bhoomi_clock_v1_Management_msg;
 #define bhoomi_clock_v1_When_fields &bhoomi_clock_v1_When_msg
 #define bhoomi_clock_v1_NowPlayingSlot_fields &bhoomi_clock_v1_NowPlayingSlot_msg
 #define bhoomi_clock_v1_FaceWeatherVariant_fields &bhoomi_clock_v1_FaceWeatherVariant_msg
+#define bhoomi_clock_v1_MessageBoxSlot_fields &bhoomi_clock_v1_MessageBoxSlot_msg
 #define bhoomi_clock_v1_Face_fields &bhoomi_clock_v1_Face_msg
 #define bhoomi_clock_v1_Weather_fields &bhoomi_clock_v1_Weather_msg
 #define bhoomi_clock_v1_Management_fields &bhoomi_clock_v1_Management_msg
@@ -830,11 +853,12 @@ extern const pb_msgdesc_t bhoomi_clock_v1_Management_msg;
 #define bhoomi_clock_v1_Emitter_size             186
 #define bhoomi_clock_v1_FaceRef_size             28
 #define bhoomi_clock_v1_FaceWeatherVariant_size  4525
-#define bhoomi_clock_v1_Face_size                14401
+#define bhoomi_clock_v1_Face_size                14415
 #define bhoomi_clock_v1_Keyframe_size            12
 #define bhoomi_clock_v1_Layer_size               486
 #define bhoomi_clock_v1_Listener_size            168
 #define bhoomi_clock_v1_Management_size          78
+#define bhoomi_clock_v1_MessageBoxSlot_size      12
 #define bhoomi_clock_v1_Motion_size              120
 #define bhoomi_clock_v1_Note_size                494
 #define bhoomi_clock_v1_NowPlayingSlot_size      46

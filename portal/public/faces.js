@@ -435,6 +435,7 @@ function renderElements() {
   const thumb = h => { const i = el('img'); i.alt = ''; i.src = assetUrl(h); return i; };
   // front-most first, like a layers panel
   const np = draft.nowplaying;
+  row('message_box', undefined, swatch('✉'), 'Message box', draft.message_box ? 'custom' : 'automatic');
   row('np', undefined, swatch('♪'), 'Now playing', !np ? 'usual look' : np.show ? 'custom' : 'hidden');
   if (draft.icon) row('icon', undefined, thumb(draft.icon.sprite), 'Icon', motionSummary(draft.icon));
   row('date', undefined, swatch('Aa'), 'Date', draft.date ? '' : 'hidden');
@@ -655,6 +656,16 @@ function renderInspector() {
       box.append(wrap);
     } else box.append(el('p', 'hint', `At most ${limits.motions} motions per sprite.`));
     box.append(el('p', 'hint', 'No rotation: it is slow on the clock. For a wobble or a flap, use a sprite sheet with Frames.'));
+  } else if (sel.kind === 'message_box') {
+    head('Message box', ...(draft.message_box ? [small('Automatic', () => { draft.message_box = null; changed(true); })] : []));
+    if (!draft.message_box) {
+      box.append(el('p', 'hint first', 'The message box sits in a corner away from the Spotify strip. Set a position to place it yourself.'));
+      box.append(small('Set position', () => { const np = draft.nowplaying || NP_DEFAULT; draft.message_box = {x: 272, y: np.show && np.y < 80 ? 192 : 8}; changed(true); }));
+    } else {
+      const f = el('div', 'fields');
+      f.append(numField('X', draft.message_box, 'x', {min: 0, max: 280}), numField('Y', draft.message_box, 'y', {min: 0, max: 200}));
+      box.append(f, el('p', 'hint', 'The message box is 40 × 40 px.'));
+    }
   } else if (sel.kind === 'np') {
     const np = draft.nowplaying;
     head('Now playing', ...(np ? [small('Usual look', () => { draft.nowplaying = null; changed(true); })] : []));
@@ -1119,6 +1130,10 @@ function draw(t) {
   }
   if (draft.icon) drawLayer(draft.icon, 'icon', undefined, t);
   if (sel.kind === 'np') drawNowPlaying();
+  { const np = draft.nowplaying || NP_DEFAULT; const m = draft.message_box || {x: 272, y: np.show && np.y < 80 ? 192 : 8};
+    ctx.save(); ctx.fillStyle = 'rgba(35,30,30,.78)'; ctx.beginPath(); ctx.roundRect(m.x, m.y, 40, 40, 12); ctx.fill();
+    ctx.fillStyle = 'white'; ctx.font = '22px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('✉', m.x + 20, m.y + 20);
+    ctx.fillStyle = '#ef617b'; ctx.beginPath(); ctx.arc(m.x + 32, m.y + 8, 4, 0, Math.PI * 2); ctx.fill(); ctx.restore(); }
 
   drawSelection(sc);
 }

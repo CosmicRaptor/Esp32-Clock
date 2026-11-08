@@ -349,8 +349,16 @@ class FaceWeatherVariant(_message.Message):
     override_text: bool
     def __init__(self, background: _Optional[_Union[SpriteRef, _Mapping]] = ..., layers: _Optional[_Iterable[_Union[Layer, _Mapping]]] = ..., emitters: _Optional[_Iterable[_Union[Emitter, _Mapping]]] = ..., text_color: _Optional[int] = ..., override_text: _Optional[bool] = ...) -> None: ...
 
+class MessageBoxSlot(_message.Message):
+    __slots__ = ("x", "y")
+    X_FIELD_NUMBER: _ClassVar[int]
+    Y_FIELD_NUMBER: _ClassVar[int]
+    x: int
+    y: int
+    def __init__(self, x: _Optional[int] = ..., y: _Optional[int] = ...) -> None: ...
+
 class Face(_message.Message):
-    __slots__ = ("id", "rev", "background", "time", "date", "icon", "layers", "emitters", "when", "nowplaying", "cloudy", "rain")
+    __slots__ = ("id", "rev", "background", "time", "date", "icon", "layers", "emitters", "when", "nowplaying", "cloudy", "message_box", "rain")
     ID_FIELD_NUMBER: _ClassVar[int]
     REV_FIELD_NUMBER: _ClassVar[int]
     BACKGROUND_FIELD_NUMBER: _ClassVar[int]
@@ -362,6 +370,7 @@ class Face(_message.Message):
     WHEN_FIELD_NUMBER: _ClassVar[int]
     NOWPLAYING_FIELD_NUMBER: _ClassVar[int]
     CLOUDY_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_BOX_FIELD_NUMBER: _ClassVar[int]
     RAIN_FIELD_NUMBER: _ClassVar[int]
     id: str
     rev: str
@@ -374,8 +383,9 @@ class Face(_message.Message):
     when: When
     nowplaying: NowPlayingSlot
     cloudy: FaceWeatherVariant
+    message_box: MessageBoxSlot
     rain: FaceWeatherVariant
-    def __init__(self, id: _Optional[str] = ..., rev: _Optional[str] = ..., background: _Optional[_Union[SpriteRef, _Mapping]] = ..., time: _Optional[_Union[TextSlot, _Mapping]] = ..., date: _Optional[_Union[TextSlot, _Mapping]] = ..., icon: _Optional[_Union[Layer, _Mapping]] = ..., layers: _Optional[_Iterable[_Union[Layer, _Mapping]]] = ..., emitters: _Optional[_Iterable[_Union[Emitter, _Mapping]]] = ..., when: _Optional[_Union[When, _Mapping]] = ..., nowplaying: _Optional[_Union[NowPlayingSlot, _Mapping]] = ..., cloudy: _Optional[_Union[FaceWeatherVariant, _Mapping]] = ..., rain: _Optional[_Union[FaceWeatherVariant, _Mapping]] = ...) -> None: ...
+    def __init__(self, id: _Optional[str] = ..., rev: _Optional[str] = ..., background: _Optional[_Union[SpriteRef, _Mapping]] = ..., time: _Optional[_Union[TextSlot, _Mapping]] = ..., date: _Optional[_Union[TextSlot, _Mapping]] = ..., icon: _Optional[_Union[Layer, _Mapping]] = ..., layers: _Optional[_Iterable[_Union[Layer, _Mapping]]] = ..., emitters: _Optional[_Iterable[_Union[Emitter, _Mapping]]] = ..., when: _Optional[_Union[When, _Mapping]] = ..., nowplaying: _Optional[_Union[NowPlayingSlot, _Mapping]] = ..., cloudy: _Optional[_Union[FaceWeatherVariant, _Mapping]] = ..., message_box: _Optional[_Union[MessageBoxSlot, _Mapping]] = ..., rain: _Optional[_Union[FaceWeatherVariant, _Mapping]] = ...) -> None: ...
 
 class Weather(_message.Message):
     __slots__ = ("available", "temperature_c", "code", "is_day", "observed_at", "city")

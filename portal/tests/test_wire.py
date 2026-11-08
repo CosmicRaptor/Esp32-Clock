@@ -136,6 +136,7 @@ class FaceMessageTests(unittest.TestCase):
                 "layers": [dict(layer, scale=60)],
                 "particles": [{"kind": "rise", "sprites": [self.S3, self.S2], "count": 12, "area": {"x": 10, "y": 20, "w": 100, "h": 200},
                                "speed_min": 5, "speed_max": 30, "sway": 8, "period": 3000, "phase": 7, "depth": "back", "seed": 42}],
+                "message_box": {"x": 0, "y": 200},
                 "nowplaying": {"show": True, "x": 8, "y": 190, "w": 304, "bg": "#102030", "bg_pct": 40, "title": "#ffffff", "artist": "#ffb3c0"},
                 "when": {"hours": {"from": 22, "to": 6}, "months": [1, 12], "weekdays": [0, 6],
                          "dates": [{"month": 2, "day": 14, "year": None}, {"month": 11, "day": 7, "year": 2026}]}}
@@ -169,6 +170,8 @@ class FaceMessageTests(unittest.TestCase):
         self.assertEqual((e.kind, e.count, e.front, e.seed, e.sway, e.period_ms, e.phase_ms), (pb.Emitter.RISE, 12, False, 42, 8, 3000, 7))
         self.assertEqual([s.hash for s in e.sprites], [self.S3, self.S2])
         self.assertEqual((e.area.x, e.area.y, e.area.w, e.area.h, e.speed_min, e.speed_max), (10, 20, 100, 200, 5, 30))
+        self.assertTrue(msg.HasField("message_box"))
+        self.assertEqual((msg.message_box.x, msg.message_box.y), (0, 200))
         np = msg.nowplaying
         self.assertEqual((np.show, np.x, np.y, np.w, np.has_bg, np.bg, np.bg_pct, np.title, np.artist), (True, 8, 190, 304, True, 0x102030, 40, 0xffffff, 0xffb3c0))
         w = msg.when
@@ -177,8 +180,9 @@ class FaceMessageTests(unittest.TestCase):
 
     def test_unset_optionals(self):
         face = self.face()
-        face["icon"], face["date"], face["particles"] = None, None, []
+        face["icon"], face["date"], face["particles"], face["message_box"] = None, None, [], None
         msg = pb.Face.FromString(wire.face_message(face).SerializeToString())
+        self.assertFalse(msg.HasField("message_box"))
         self.assertFalse(msg.HasField("icon"))
         self.assertFalse(msg.HasField("date"))
         self.assertEqual(len(msg.emitters), 0)

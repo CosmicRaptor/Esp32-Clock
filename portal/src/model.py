@@ -658,6 +658,9 @@ def clean_face(data, assets: dict, face_id: str) -> dict:
         "layers": [_clean_layer(layer, assets, f"Layer {i + 1}", SPRITE_MAX_FRAME) for i, layer in enumerate(layers)],
         "particles": [_clean_particles(p, assets, f"Particles {i + 1}") for i, p in enumerate(particles)],
         "nowplaying": _clean_nowplaying(d.get("nowplaying")),
+        "message_box": None if d.get("message_box") is None else {
+            "x": _int(_obj(d["message_box"], "The message box").get("x"), 0, 280, "The message box x"),
+            "y": _int(d["message_box"].get("y"), 0, 200, "The message box y")},
         "when": _clean_when(d.get("when")),
     }
     used = {bg}

@@ -58,7 +58,7 @@ The messages are defined in [`proto/clock.proto`](../proto/clock.proto). The fir
 
 **`GET /api/device/state?tz=Asia/Kolkata&fw=0.6.0&rssi=-71`** returns a `DeviceState` (`application/x-protobuf`). It is the clock's one heartbeat: poll it every ~30 s. Send the last `ETag` as `If-None-Match` to get a bare `304` when nothing changed. The ETag moves with the portal's `version` *and* with what's playing, so a new song is a new `200` (and so is a message or alarm edit, which now reaches the clock within ~30 s). The query parameters are optional. They power the "Clock online" line, the time zone label on alarms, and the weak Wi-Fi hint. Add `&format=json` to read the response with curl.
 
-- `note`: up to 120 characters and 4 lines. It's unset when there's no message.
+- `note`: up to 120 characters and 4 lines. It's unset when there's no message. The portal holds one current note; sending another replaces it. The clock shows it when the message box is tapped, with an unread dot for a new send; read status persists on the clock.
 - `photo`: a new `id` means a new photo to download. It's unset when there's no photo.
 - `alarms`: only enabled alarms are listed, sorted by time, in the clock's own time zone. `days` is a bitmask, `1 << tm_wday`. When it's `0`, the alarm rings once on `date`. An empty `sound` means the built-in beep.
 - `faces`, `pinned_face`, `default_face`: the clock faces, see [Faces on the clock](#faces-on-the-clock). `faces` is only ids and revisions (about 30 bytes each), so the state stays small.
@@ -209,6 +209,10 @@ The PRNG, `r1..r6` and the choice of sprite are exact. The sines and cosines can
 ### The Spotify strip
 
 Each face can place the "now playing" strip (the two songs; it only appears while somebody plays) or switch it off: `NowPlayingSlot` in the proto, "Now playing" on the Faces page. Without settings it has the usual look: a dark pill at the top, 304 px wide. With them: `x`, `y` (top-left), a width of 200-320 px, an optional pill colour and opacity, and the colours of the song and artist lines. The strip is 46 px high and is always on top of the face. The preview draws a stand-in for it while its row is selected.
+
+### Message box
+
+The Faces editor shows the message box on each preview. Select **Message box** to set its top-left x (0–280) and y (0–200); it is 40 × 40 pixels. Automatic placement puts it in the top-right corner when the Spotify strip is low or hidden, and the bottom-right when the strip is at the top. Existing faces use automatic placement until customised. Weather variants share the face position.
 
 ### Time and date text
 

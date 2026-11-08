@@ -3,6 +3,7 @@
 #include <esp_heap_caps.h>
 #include <jpeg_decoder.h>  // ESP-IDF esp_jpeg (TJpgDec): baseline JPEG -> RGB565
 #include <lvgl.h>
+#include <Preferences.h>
 #include <time.h>
 
 #include "app_lock.h"
@@ -50,7 +51,11 @@ lv_obj_t *clockView, *dateLabel, *timeLabel, *footLabel;
 // clock view over the photo: full-screen image, dark bar at the bottom with time + date
 lv_obj_t *photoView, *photoImg, *photoTime, *photoDate, *photoFoot;
 // the message card, floating above whichever clock view is showing
-lv_obj_t *noteCard, *noteLabel;
+lv_obj_t *noteCard, *noteLabel, *noteButton, *noteDot;
+bool inboxOpen = false;
+uint64_t noteIdentity = 0, readIdentity = 0;
+void openInbox(lv_event_t *);
+void closeInbox(lv_event_t *);
 
 wifisetup::Phase phase = Phase::JoiningSaved;
 uint32_t onlineAt = 0;
@@ -205,17 +210,39 @@ void buildPhoto() {
 }
 
 void buildNote() {
-  noteCard = lv_obj_create(scr);
-  lv_obj_remove_style_all(noteCard);
-  lv_obj_set_size(noteCard, 296, LV_SIZE_CONTENT);
-  lv_obj_align(noteCard, LV_ALIGN_TOP_MID, 0, 12);
-  lv_obj_remove_flag(noteCard, LV_OBJ_FLAG_SCROLLABLE);
+  Preferences prefs;
+  if (prefs.begin("note-inbox", true)) { readIdentity = prefs.getULong64("read", 0); prefs.end(); }
+  noteButton = lv_obj_create(scr);
+  lv_obj_remove_style_all(noteButton);
+  lv_obj_set_size(noteButton, 40, 40);
+  lv_obj_set_style_bg_color(noteButton, lv_color_hex(0x231E1E), 0);
+  lv_obj_set_style_bg_opa(noteButton, LV_OPA_80, 0);
+  lv_obj_set_style_radius(noteButton, 12, 0);
+  lv_obj_remove_flag(noteButton, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(noteButton, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(noteButton, openInbox, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *icon = label(noteButton, &lv_font_montserrat_20, lv_color_white());
+  lv_label_set_text(icon, LV_SYMBOL_ENVELOPE); lv_obj_center(icon);
+  noteDot = lv_obj_create(noteButton); lv_obj_remove_style_all(noteDot);
+  lv_obj_set_size(noteDot, 9, 9); lv_obj_align(noteDot, LV_ALIGN_TOP_RIGHT, -4, 4);
+  lv_obj_set_style_radius(noteDot, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(noteDot, ACCENT, 0); lv_obj_set_style_bg_opa(noteDot, LV_OPA_COVER, 0);
+  lv_obj_remove_flag(noteDot, LV_OBJ_FLAG_CLICKABLE);
+  noteCard = lv_obj_create(scr); lv_obj_remove_style_all(noteCard);
+  lv_obj_set_size(noteCard, 296, 210); lv_obj_center(noteCard);
   lv_obj_set_style_bg_color(noteCard, lv_color_white(), 0);
-  lv_obj_set_style_bg_opa(noteCard, LV_OPA_90, 0);
-  lv_obj_set_style_radius(noteCard, 14, 0);
-  lv_obj_set_style_pad_all(noteCard, 12, 0);
-  noteLabel = label(noteCard, &lv_font_montserrat_16, INK);
-  lv_obj_add_flag(noteCard, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_set_style_bg_opa(noteCard, LV_OPA_COVER, 0); lv_obj_set_style_radius(noteCard, 14, 0);
+  lv_obj_t *title = label(noteCard, &lv_font_montserrat_16, ACCENT);
+  lv_label_set_text(title, "A NOTE FOR YOU"); lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 14);
+  lv_obj_t *content = lv_obj_create(noteCard); lv_obj_remove_style_all(content);
+  lv_obj_set_size(content, 272, 130); lv_obj_align(content, LV_ALIGN_TOP_MID, 0, 42);
+  lv_obj_set_scroll_dir(content, LV_DIR_VER);
+  noteLabel = label(content, &lv_font_montserrat_16, INK);
+  lv_obj_t *close = lv_obj_create(noteCard); lv_obj_remove_style_all(close);
+  lv_obj_set_size(close, 280, 35); lv_obj_align(close, LV_ALIGN_BOTTOM_MID, 0, -2);
+  lv_obj_add_flag(close, LV_OBJ_FLAG_CLICKABLE); lv_obj_add_event_cb(close, closeInbox, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *hint = label(close, &lv_font_montserrat_14, MUTE); lv_label_set_text(hint, "Tap here to close"); lv_obj_center(hint);
+  show(noteCard, false); show(noteButton, false);
 }
 
 void updateFooter() {
@@ -361,8 +388,29 @@ void removePhoto() {
   shownPhotoId[0] = 0;
 }
 
-char noteShown[481] = "";   // the text on the card
-uint32_t noteShownAt = 0;   // when it last (re)appeared: the card shows for the first 20 s of every minute
+char noteShown[481] = "";
+
+uint64_t identityForNote(const char *text, int64_t sentAt) {
+  if (!text || !*text) return 0;
+  uint64_t hash = 14695981039346656037ULL;
+  for (const unsigned char *p = (const unsigned char *)text; *p; ++p) { hash ^= *p; hash *= 1099511628211ULL; }
+  for (unsigned i = 0; i < 8; ++i) { hash ^= (uint64_t)sentAt >> (8 * i) & 255; hash *= 1099511628211ULL; }
+  return hash ? hash : 1;
+}
+void openInbox(lv_event_t *) {
+  inboxOpen = true;
+  lv_label_set_text(noteLabel, noteShown[0] ? noteShown : "No note right now.");
+  show(noteCard, true); lv_obj_move_foreground(noteCard);
+  if (noteIdentity && noteIdentity != readIdentity) {
+    Preferences prefs;
+    if (prefs.begin("note-inbox", false)) {
+      if (prefs.putULong64("read", noteIdentity)) readIdentity = noteIdentity;
+      prefs.end();
+    }
+    show(noteDot, noteIdentity != readIdentity);
+  }
+}
+void closeInbox(lv_event_t *) { inboxOpen = false; show(noteCard, false); }
 
 void applyPortal() {
   size_t n = 0;
@@ -380,8 +428,11 @@ void applyPortal() {
   if (strcmp(noteShown, note ? note : "") != 0) {
     strlcpy(noteShown, note ? note : "", sizeof noteShown);
     lv_label_set_text(noteLabel, noteShown);
-    noteShownAt = millis();
+
   }
+
+  noteIdentity = identityForNote(note, portal::state().has_note ? portal::state().note.sent_at : 0);
+  if (inboxOpen) lv_label_set_text(noteLabel, noteShown[0] ? noteShown : "No note right now.");
 
   Serial.printf("[ui] portal update: note=%s%s%s, photo=%s (%u bytes), %u alarm(s)\n", note ? "\"" : "none",
                 note ? note : "", note ? "\"" : "", jpg ? portal::photoId() : "none", (unsigned)n,
@@ -390,24 +441,23 @@ void applyPortal() {
 
 constexpr int NP_H = 46;  // the now-playing strip's height (below)
 
-// The card is up for the first 20 s of each minute, so the photo isn't covered all day.
+// Existing faces automatically choose the corner opposite their Spotify strip.
 void updateNote() {
-  // over the photo the strip sits at the top, so the card goes below it while both are up
-  static int noteY = -1;
-  int y = 12;  // over a picture the strip sits at the top, so the card goes below it while both are up
-  if (npVisible && current == View::Photo) y = 62;
-  if (npVisible && current == View::Face) {
-    const auto *slot = faceview::nowPlayingSlot();
-    int top = slot ? slot->y : 8;
-    y = top < 60 ? top + NP_H + 8 : 12;  // a strip down in the lower half doesn't get in the card's way
+  bool clock = inClock();
+  if (!clock && inboxOpen) { inboxOpen = false; show(noteCard, false); }
+  show(noteButton, clock);
+  show(noteDot, noteIdentity && noteIdentity != readIdentity);
+  if (!clock) return;
+  int x = 272, y = 8;
+  if (current == View::Photo) y = 192;
+  if (current == View::Face) {
+    const auto *custom = faceview::messageBoxSlot();
+    const auto *strip = faceview::nowPlayingSlot();
+    if (custom) { x = custom->x; y = custom->y; }
+    else if (!strip || (strip->show && strip->y < 80)) y = 192;
   }
-  if (y != noteY) {  // only when it moves: re-aligning invalidates the area every time
-    noteY = y;
-    lv_obj_align(noteCard, LV_ALIGN_TOP_MID, 0, y);
-  }
-  bool want = noteShown[0] && inClock() && (millis() - noteShownAt) % 60000 < 20000;
-  if (want == !lv_obj_has_flag(noteCard, LV_OBJ_FLAG_HIDDEN)) return;
-  show(noteCard, want);
+  static int oldX = -1, oldY = -1;
+  if (x != oldX || y != oldY) { oldX = x; oldY = y; lv_obj_align(noteButton, LV_ALIGN_TOP_LEFT, x, y); }
 }
 
 // ---------- now playing: a tiny strip, your song on the left and hers on the right ----------

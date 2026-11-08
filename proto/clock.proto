@@ -261,6 +261,11 @@ message FaceWeatherVariant {
   bool override_text = 5;
 }
 
+message MessageBoxSlot {
+  sint32 x = 1;
+  sint32 y = 2;
+}
+
 message Face {
   reserved 3;                    // (was going to be the name: the clock never shows it)
   string id = 1;
@@ -274,6 +279,7 @@ message Face {
   When when = 10;
   NowPlayingSlot nowplaying = 11;  // unset: the clock's usual look (see NowPlayingSlot)
   FaceWeatherVariant cloudy = 12; // overcast/partly cloudy/fog; default if absent
+  MessageBoxSlot message_box = 14; // unset: choose a corner clear of the Spotify strip
   FaceWeatherVariant rain = 13;   // drizzle/rain/showers/thunderstorms; default if absent
 }
 

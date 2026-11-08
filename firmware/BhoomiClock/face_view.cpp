@@ -313,6 +313,7 @@ void begin(lv_obj_t *parent) {
 
 lv_obj_t *root() { return rootObj; }
 bool active() { return on; }
+const bhoomi_clock_v1_MessageBoxSlot *messageBoxSlot() { return on && faceStored->has_message_box ? &faceStored->message_box : nullptr; }
 const bhoomi_clock_v1_NowPlayingSlot *nowPlayingSlot() { return on && faceStored->has_nowplaying ? &faceStored->nowplaying : nullptr; }
 
 void clear() {
