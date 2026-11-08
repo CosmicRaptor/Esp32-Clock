@@ -287,6 +287,7 @@ uint32_t seenPortalRev = 0;
 enum class View { Setup, Msg, Clock, Photo, Face };
 View current = View::Msg;
 bool inClock() { return current == View::Clock || current == View::Photo || current == View::Face; }
+bool faceSuspendedForVideo = false;
 bool faceShown = false;  // a portal face is built and is what "the clock" means right now (see refreshFace())
 bool npVisible = false;  // the now-playing strip is on screen (see below)
 void showView(View v);
@@ -716,14 +717,15 @@ lv_obj_t *moodView, *moodStatus, *moodNoteView, *moodNoteText;
 bool moodVisible = false, noteVisible = false;
 uint32_t moodSince = 0, noteSince = 0;
 unsigned noteMood = 0;
+void playMoodVideo(unsigned mood);
 void finishMoodNote() {
   if (!noteVisible || ringing) return;
   noteVisible = false; show(moodNoteView, false);
-  video_player::play(noteMood);
+  playMoodVideo(noteMood);
 }
 void showMoodNote(unsigned mood) {
   const char *note = portal::moodNote(mood);
-  if (!note || !note[0]) { video_player::play(mood); return; }
+  if (!note || !note[0]) { playMoodVideo(mood); return; }
   noteMood = mood; noteSince = millis(); noteVisible = true;
   lv_label_set_text(moodNoteText, note);
   show(moodNoteView, true); lv_obj_move_foreground(moodNoteView);
@@ -819,7 +821,7 @@ int faceShownWeather = -1;
 int faceCheckedMin = -1;
 
 void refreshFace() {
-  if (!timeValid()) return;
+  if (faceSuspendedForVideo || !timeValid()) return;
   time_t now = time(nullptr);
   struct tm t;
   localtime_r(&now, &t);
@@ -843,6 +845,19 @@ void refreshFace() {
     changed = true;
   }
   if (changed && inClock()) showView(View::Clock);
+}
+
+
+void playMoodVideo(unsigned mood) {
+  // The video fully covers the clock: release its rendered face (including font
+  // caches) before allocating video frames. Portal assets stay cached in PSRAM.
+  faceSuspendedForVideo = true;
+  faceview::clear();
+  faceShown = false;
+  if (inClock()) showView(View::Clock);
+  video_player::play(mood);
+  // loop() restores the currently scheduled face after completion, touch,
+  // alarm interruption, or a failed first frame; never rebuild during playback.
 }
 
 void showView(View v) {
@@ -961,6 +976,10 @@ void loop() {
   updateMood();
   if (noteVisible && millis() - noteSince >= 5000) finishMoodNote();
   video_player::tick();
+  if (faceSuspendedForVideo && !video_player::playing()) {
+    faceSuspendedForVideo = false;
+    refreshFace();
+  }
   if (onlineAt && millis() - onlineAt > SPLASH_MS) {
     onlineAt = 0;
     if (phase == Phase::Online) showView(View::Clock);

@@ -68,7 +68,7 @@ Checked on the board: all nine collection faces and their images downloaded, the
 
 ## HTTPS
 
-Small buffered portal responses yield to FreeRTOS after each body write, use 100 ms socket read waits and enforce a 15-second body deadline. This prevents weak-Wi-Fi TLS reads from starving the idle watchdog. Failed transfers keep the last good state. Large OTA image streaming retains its separate transfer handling.
+HTTP socket single-byte reads yield for one FreeRTOS tick when no byte is available, including partial response headers: Arduino Stream otherwise busy-waits through its timeout and can trigger the idle watchdog. Small buffered portal responses yield to FreeRTOS after each body write, use 100 ms socket read waits and enforce a 15-second body deadline. This prevents weak-Wi-Fi TLS reads from starving the idle watchdog. Failed transfers keep the last good state. Large OTA image streaming retains its separate transfer handling.
 
 A deployed `https://…workers.dev` portal works: certificates are checked against the built-in Mozilla CA bundle, and the TLS connection is kept alive between the 30 s polls (the first handshake takes ~2 s on weak Wi-Fi, later polls ~60 ms). The clock needs NTP to have synced first, so it waits before the first HTTPS request.
 
@@ -128,3 +128,11 @@ From this checkout, `python3 tools/firmware_release.py upload` uploads the build
 The clock firmware also contains a local five-point mindfulness check-in, an offline response queue and a JPEG-frame video player with audio. The portal retains responses for 30 days. Both portals prepare videos in the browser; the clock downloads remote uploads to its SD card. Type `checkin` in the serial monitor to show the prompt. See the portal README for limits and details.
 
 Alarm and mood-video speaker levels can be set independently from the admin or LAN settings pages. Local edits take effect immediately and take priority while syncing back to the portal. See the portal README for synchronization details.
+
+USB memory soak tests: send `memstats` at 115200 baud for a read-only JSON snapshot of uptime, free/minimum internal heap, largest internal block, free/minimum/largest PSRAM, LVGL pool free/largest space and fragmentation, reset reason and RSSI. It does not change cloud reporting. `python3 soak-tests/usb_collect.py` captures serial locally for 24 hours and requests one snapshot every 60 seconds; keep USB connected and the Mac awake. Minimum values are lifetime low-water marks, not current usage. Compare current free space and largest blocks after warm-up across similar workloads; USB reconnections and falling uptime indicate interruptions/reboots.
+
+Audio uses 16 × 256 frames of 32-bit stereo I2S DMA (32 KB internal RAM, about 85 ms at 48 kHz) rather than the library's 64 KB default. Video JPEG reads use at most 1 KB per SD request to bound DMA bounce-buffer demand while audio and TLS run. The USB soak exposed SD DMA allocation failures with the larger reserve; listen for audio underruns when validating this setting.
+
+Unused audio-library EQ filters, VU metering and spectrum processing are disabled to leave more CPU time for simultaneous video and audio. Volume control remains enabled. Video frames taking at least their 200 ms budget to load and decode emit a `[video] slow frame` serial diagnostic. The user confirmed smooth audio and video at the previously affected low volume after this change; before it, levels 15 and below stuttered while 16–18 were smooth.
+
+Full-screen mood-video playback releases the rendered clock face and its font caches before allocating video frames. Face refreshes remain suspended until playback ends, is touched away, is interrupted by an alarm, or fails; the current scheduled face is then rebuilt from cached portal assets. This saves PSRAM and animation work; the fixed LVGL pool remains allocated in PSRAM.

@@ -218,6 +218,16 @@ void begin() {
   reqLock = xSemaphoreCreateMutex();
   Audio::audio_info_callback = onAudioEvent;
   audio = new Audio(I2S_NUM_0);
+  // The library enables three per-sample biquads and a VU meter by default.
+  // We use neither EQ nor metering: leave the PCM untouched apart from volume,
+  // and reserve decoder time for feeding I2S while video also reads the SD card.
+  audio->settings.IIR_FILTER = false;
+  audio->settings.VU_LEVEL = false;
+  audio->settings.SPECTRUM = false;
+  // 32-bit stereo DMA uses 8 bytes/frame: the library default (32 x 256)
+  // reserves 64 KB of scarce internal RAM. Half still buffers ~85 ms at 48 kHz
+  // and leaves another 32 KB for Wi-Fi/TLS and SD bounce buffers during video.
+  audio->settings.DMA_DESC_NUM = 16;
   audio->setPinout(PIN_BCLK, PIN_LRC, PIN_DOUT);
   audio->setVolume(DEFAULT_VOLUME);
   ensureBeep();

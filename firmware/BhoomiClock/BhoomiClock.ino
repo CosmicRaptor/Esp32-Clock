@@ -10,7 +10,11 @@
 // Build & flash: ./build.sh flash
 
 #include <WiFi.h>
+#include <lvgl.h>
 #include <time.h>
+#include <esp_heap_caps.h>
+#include <esp_system.h>
+#include <esp_timer.h>
 
 #include "app_lock.h"
 #include "ota_health.h"
@@ -76,6 +80,19 @@ static void serialCommands() {
     if (line == "ring" || line.startsWith("ring ")) {
       app::Lock lock;
       ui::testAlarm(line.length() > 5 ? line.c_str() + 5 : "");
+    }
+    if (line == "memstats") {
+      lv_mem_monitor_t lv = {};
+      { app::Lock lock; lv_mem_monitor(&lv); }
+      constexpr uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+      Serial.printf("[memstats] {\"uptime_s\":%llu,\"heap\":%u,\"min_heap\":%u,\"largest_block\":%u,\"psram\":%u,\"min_psram\":%u,\"largest_psram\":%u,\"lv_free\":%u,\"lv_largest\":%u,\"lv_frag_pct\":%u,\"reset\":%d,\"rssi\":%d}\n",
+          (unsigned long long)(esp_timer_get_time() / 1000000),
+          (unsigned)heap_caps_get_free_size(caps), (unsigned)heap_caps_get_minimum_free_size(caps),
+          (unsigned)heap_caps_get_largest_free_block(caps), (unsigned)ESP.getFreePsram(),
+          (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM),
+          (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM),
+          (unsigned)lv.free_size, (unsigned)lv.free_biggest_size, (unsigned)lv.frag_pct,
+          (int)esp_reset_reason(), WiFi.RSSI());
     }
     if (line == "checkin") { app::Lock lock; ui::testMindfulness(); }
     if (line == "moodstatus") {

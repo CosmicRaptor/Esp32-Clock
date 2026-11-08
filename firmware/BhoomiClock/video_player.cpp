@@ -5,6 +5,7 @@
 #include <esp_heap_caps.h>
 #include <jpeg_decoder.h>
 #include <Arduino.h>
+#include <algorithm>
 
 namespace video_player {
 namespace {
@@ -19,6 +20,7 @@ constexpr uint32_t FRAME_MS = 200, MAX_MS = 20000;
 constexpr size_t MAX_JPEG = 100000, PIXELS = 320 * 240 * 2;
 
 bool nextFrame() {
+  const uint32_t frameStarted = millis();
   char path[64];
   snprintf(path, sizeof(path), "/mindfulness/%u/%04u.jpg", selected, frame);
   File f = SD_MMC.open(path, FILE_READ);
@@ -26,7 +28,15 @@ bool nextFrame() {
   size_t n = f.size();
   uint8_t *jpg = (uint8_t *)heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!jpg) return false;
-  bool read = f.read(jpg, n) == n;
+  // PSRAM reads need an internal DMA bounce buffer. Bound each SD request
+  // rather than asking for a whole JPEG while audio/TLS also need internal RAM.
+  size_t loaded = 0;
+  while (loaded < n) {
+    size_t chunk = std::min<size_t>(1024, n - loaded);
+    if (f.read(jpg + loaded, chunk) != chunk) break;
+    loaded += chunk;
+  }
+  bool read = loaded == n;
   f.close();
   int next = active == 0 ? 1 : 0;
   if (!pixels[next]) pixels[next] = (uint8_t *)heap_caps_malloc(PIXELS, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -43,7 +53,12 @@ bool nextFrame() {
   d.header.w = 320; d.header.h = 240; d.header.stride = 640; d.data_size = info.output_len; d.data = pixels[next];
   lv_image_cache_drop(&d);
   lv_image_set_src(image, &d);
-  active = next; ++frame; return true;
+  active = next;
+  const uint32_t elapsed = millis() - frameStarted;
+  if (elapsed >= FRAME_MS)
+    Serial.printf("[video] slow frame %u: %lu ms (budget %lu ms)\n", frame,
+                  (unsigned long)elapsed, (unsigned long)FRAME_MS);
+  ++frame; return true;
 }
 }
 void begin() {

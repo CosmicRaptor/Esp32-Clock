@@ -12,6 +12,7 @@
 #include <SD_MMC.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include "cooperative_client.h"
 #include <esp_heap_caps.h>
 #include <esp_ota_ops.h>
 #include <esp_app_desc.h>
@@ -140,8 +141,8 @@ bool timeValid() { return time(nullptr) > 1700000000; }  // TLS needs a sane clo
 // An HTTPClient plus the right kind of socket. The task keeps one for good: a TLS handshake over weak
 // Wi-Fi takes seconds, and we poll every 30 s.
 struct Conn {
-  WiFiClient plain;
-  WiFiClientSecure secure;
+  CooperativeClient<WiFiClient> plain;
+  CooperativeClient<WiFiClientSecure> secure;
   HTTPClient http;
   Conn() {
     if (https()) secure.useBuiltinCACertBundle();  // the ESP-IDF Mozilla bundle; validates chain + host name

@@ -1,0 +1,3 @@
+# Generated health snapshots, serial logs and crash artifacts stay local.
+/20*/
+/usb-*/
