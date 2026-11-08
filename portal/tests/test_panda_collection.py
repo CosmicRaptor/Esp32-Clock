@@ -36,14 +36,13 @@ class PandaCollectionTests(unittest.TestCase):
                 self.assertEqual(report['errors'], [])
                 self.assertLess(report['budget']['ratio'], .15)
 
-    def test_approved_daily_schedule_has_no_overlap_and_sunset_is_fallback(self):
+    def test_daily_schedule_covers_every_hour_without_overlap(self):
         drafts = self.collection['drafts']
-        expected = [6]*5 + [1]*2 + [8]*2 + [2]*3 + [0]*3 + [4]*3 + [7]*2 + [3]*2 + [5]*2
+        expected = [6]*5 + [1] + [8]*2 + [2]*4 + [0]*3 + [4]*3 + [7]*2 + [3]*2 + [5]*2
         for hour, index in enumerate(expected):
             matches = [i for i,f in enumerate(drafts) if f['when']['hours'] and
                        f['when']['hours']['from'] <= hour < f['when']['hours']['to']]
-            self.assertEqual(matches, [] if index == 7 else [index], f'hour {hour}')
-        self.assertIsNone(drafts[7]['when']['hours'])
+            self.assertEqual(matches, [index], f'hour {hour}')
         self.assertEqual(drafts[7]['name'], 'Paris sunset with cat')
 
     def test_every_shipped_image_exists(self):

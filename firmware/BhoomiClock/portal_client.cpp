@@ -1,5 +1,7 @@
 #include "portal_client.h"
 #include "face_weather.h"
+#include "mindfulness.h"
+#include "mood_clip.h"
 #include <math.h>
 
 #include <FFat.h>
@@ -14,6 +16,7 @@
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <mbedtls/sha256.h>
+#include <mbedtls/base64.h>
 #include "ota_health.h"
 #include "sound.h"
 #include <mbedtls/platform.h>
@@ -43,7 +46,7 @@
 namespace portal {
 namespace {
 
-constexpr uint32_t POLL_MS = 10 * 1000;         // the one heartbeat: state + now playing. Mostly a bare 304
+constexpr uint32_t POLL_MS = 30 * 1000;         // the one heartbeat: state + now playing. Mostly a bare 304
 constexpr uint32_t BACKOFF_MIN_MS = 10 * 1000;  // after a failed poll: 10 s, doubling up to FAIL_MAX_MS
 constexpr uint32_t FAIL_MAX_MS = 60 * 1000;
 constexpr int PHOTO_TRIES_FAST = 6;             // photo pending (404 while KV propagates, or a bad download): every poll...
@@ -84,9 +87,10 @@ size_t coverLen[2] = {0, 0};
 char coverIdStr[2][41] = {"", ""};
 
 // ---- task-private ----
+String moodNotes[5];
 String etag;
 bool gotTimeWarn = false;
-bool quiet = false;  // don't log routine polls (the 10 s heartbeat would drown the serial monitor)
+bool quiet = false;  // don't log routine polls (the 30 s heartbeat would drown the serial monitor)
 
 // ---- keys (guarded by app::Lock) ----
 // The device token and the Cloudflare Access service token expire or get rotated, so they can be
@@ -125,7 +129,7 @@ String urlEncode(const char *s) {
 bool timeValid() { return time(nullptr) > 1700000000; }  // TLS needs a sane clock to check certificates
 
 // An HTTPClient plus the right kind of socket. The task keeps one for good: a TLS handshake over weak
-// Wi-Fi takes seconds, and we poll every 10 s.
+// Wi-Fi takes seconds, and we poll every 30 s.
 struct Conn {
   WiFiClient plain;
   WiFiClientSecure secure;
@@ -200,14 +204,14 @@ class BufSink : public Stream {
 // HTTPClient's body loop uses delay(0), which need not run the idle task. Short read
 // waits plus a real task delay keep TLS/image transfers cooperative on weak Wi-Fi.
 // Keep HTTPClient's chunk decoding and enforce an overall body deadline as well.
-int writeResponse(Conn &c, Stream &destination) {
+int writeResponse(Conn &c, Stream &destination, uint32_t deadline = IO_TIMEOUT_MS) {
   class YieldingSink : public Stream {
    public:
-    explicit YieldingSink(Stream &out) : out(out), started(millis()) {}
+    explicit YieldingSink(Stream &out, uint32_t deadline) : out(out), started(millis()), deadline(deadline) {}
     size_t write(uint8_t b) override { return write(&b, 1); }
     size_t write(const uint8_t *p, size_t n) override {
       vTaskDelay(1);
-      if (millis() - started >= IO_TIMEOUT_MS) { setWriteError(); return 0; }
+      if (millis() - started >= deadline) { setWriteError(); return 0; }
       size_t wrote = out.write(p, n);
       if (out.getWriteError()) setWriteError();
       return wrote;
@@ -217,8 +221,8 @@ int writeResponse(Conn &c, Stream &destination) {
     int peek() override { return -1; }
    private:
     Stream &out;
-    uint32_t started;
-  } sink(destination);
+    uint32_t started, deadline;
+  } sink(destination, deadline);
   Stream *socket = c.http.getStreamPtr();
   if (!socket) return -1;
   socket->setTimeout(100);
@@ -1180,6 +1184,94 @@ void manage(Conn &c) {
   delay(200); ESP.restart();
 }
 
+void syncMoodNotes(Conn &c) {
+  int code = c.get("/api/device/mood-notes");
+  if (code != 200) { c.close(); return; }
+  uint8_t body[1024] = {}; BufSink sink(body, sizeof(body)-1);
+  int got = writeResponse(c, sink); c.close();
+  if (got < 0 || sink.overflow) return;
+  body[sink.len] = 0; String values[5]; unsigned seen = 0;
+  char *save = nullptr;
+  for (char *line = strtok_r((char *)body, "\n", &save); line; line = strtok_r(nullptr, "\n", &save)) {
+    if (line[0] < '1' || line[0] > '5' || line[1] != ' ') return;
+    int idx = line[0]-'1'; if (seen & (1u << idx)) return;
+    uint8_t decoded[121] = {}; size_t len = 0;
+    if (mbedtls_base64_decode(decoded, 120, &len, (const uint8_t *)(line+2), strlen(line+2)) != 0 || len > 120) return;
+    decoded[len] = 0; values[idx] = (const char *)decoded; seen |= 1u << idx;
+  }
+  if (seen != 31) return;
+  Preferences p; if (!p.begin("mood-notes", false)) return;
+  for (int i=0; i<5; ++i) {
+    app::Lock lock;
+    if (values[i] != moodNotes[i]) {
+      String key = "m" + String(i+1);
+      if (values[i].isEmpty()) { p.remove(key.c_str()); moodNotes[i] = ""; }
+      else if (p.putString(key.c_str(), values[i]) > 0) moodNotes[i] = values[i];
+    }
+  }
+  p.end();
+}
+
+// Slow, content-addressed SD-card transfers; a failed or interrupted transfer keeps the old clip.
+void syncMoodVideos(Conn &c) {
+  static uint32_t next = 0;
+  if (next && (int32_t)(millis() - next) < 0) return;
+  next = (millis() + 5 * 60 * 1000) | 1;
+  if (!storage::mounted()) return;
+  int code = c.get("/api/device/mood-videos");
+  if (code != 200) { c.close(); return; }
+  uint8_t manifest[512] = {};
+  BufSink sink(manifest, sizeof(manifest)-1);
+  int got = writeResponse(c, sink); c.close();
+  if (got < 0 || sink.overflow) return;
+  manifest[sink.len] = 0;
+  char *save = nullptr;
+  for (char *line = strtok_r((char *)manifest, "\n", &save); line; line = strtok_r(nullptr, "\n", &save)) {
+    unsigned mood, size; char hash[65] = {};
+    if (sscanf(line, "%u %64s %u", &mood, hash, &size) != 3 || mood < 1 || mood > 5 ||
+        strlen(hash) != 64 || size < 16 || size > 12 * 1024 * 1024) continue;
+    bool hex = true; for (size_t i=0; i<64; ++i) if (!isxdigit((unsigned char)hash[i]) || isupper((unsigned char)hash[i])) hex = false;
+    if (!hex) continue;
+    Preferences prefs; if (!prefs.begin("mood-videos", false)) return;
+    String key = "m" + String(mood), previous = prefs.getString(key.c_str(), ""); prefs.end();
+    String activePath = "/mindfulness/" + String(mood) + "/0000.jpg";
+    if (previous == hash && SD_MMC.exists(activePath)) { Serial.printf("[mindfulness] mood %u already installed %.12s\n", mood, hash); continue; }
+    Serial.printf("[mindfulness] downloading mood %u: %u bytes %.12s\n", mood, size, hash);
+    if (!SD_MMC.exists("/mood-staging")) SD_MMC.mkdir("/mood-staging");
+    String temp = "/mood-staging/cloud-" + String(mood) + ".part";
+    SD_MMC.remove(temp);
+    File file = SD_MMC.open(temp, FILE_WRITE); if (!file) return;
+    code = c.get(String("/api/device/mood-video/") + mood + "/" + hash);
+    int count = code == 200 ? writeResponse(c, file, 180000) : -1;
+    c.close(); file.close();
+    if (count < 0 || (unsigned)count != size) { Serial.printf("[mindfulness] mood %u download failed: HTTP %d, received %d of %u bytes\n", mood, code, count, size); SD_MMC.remove(temp); return; }
+    file = SD_MMC.open(temp, FILE_READ); if (!file) return;
+    mbedtls_sha256_context sha; mbedtls_sha256_init(&sha); mbedtls_sha256_starts(&sha, 0);
+    uint8_t buf[2048], digest[32]; size_t n;
+    while ((n = file.read(buf, sizeof buf)) != 0) { mbedtls_sha256_update(&sha, buf, n); vTaskDelay(1); }
+    file.close(); mbedtls_sha256_finish(&sha, digest); mbedtls_sha256_free(&sha);
+    char actual[65]; for(int i=0;i<32;i++) snprintf(actual+i*2, 3, "%02x", digest[i]);
+    if (strcmp(actual,hash)) { Serial.printf("[mindfulness] mood %u hash mismatch\n", mood); SD_MMC.remove(temp); return; }
+    if (!mood_clip::install(temp.c_str(), mood)) { Serial.printf("[mindfulness] mood %u install failed or player busy; retry later\n", mood); SD_MMC.remove(temp); return; }
+    SD_MMC.remove(temp);
+    if (prefs.begin("mood-videos", false)) { prefs.putString(key.c_str(), hash); prefs.end(); }
+    Serial.printf("[mindfulness] installed video for mood %u\n", mood);
+    next = (millis() + POLL_MS) | 1;
+    return; // At most one large transfer per interval.
+  }
+}
+
+void syncMood(Conn &c) {
+  mindfulness::Record r;
+  { app::Lock lock; if (!mindfulness::peek(r)) return; }
+  if (!c.open("/api/device/mood")) return;
+  c.http.addHeader("Content-Type", "application/json");
+  String body = String("{\"at\":") + r.at + ",\"mood\":" + r.mood + "}";
+  int code = c.http.PUT((uint8_t *)body.c_str(), body.length());
+  c.close();
+  if (code == 200) { app::Lock lock; mindfulness::acknowledge(r); }
+}
+
 void task(void *) {
   uint32_t nextAt = 0;  // millis() deadline; 0 = as soon as we're ready
   uint32_t backoff = BACKOFF_MIN_MS;
@@ -1217,7 +1309,7 @@ void task(void *) {
       continue;
     }
 
-    quiet = lastLog && millis() - lastLog < 60 * 1000;  // log the routine poll once a minute, not every 10 s
+    quiet = lastLog && millis() - lastLog < 60 * 1000;  // log the routine poll once a minute, not every 30 s
     if (!quiet) {
       lastLog = millis() | 1;
       Serial.printf("[portal] poll (rssi %d, heap %u, min heap %u, psram %u)\n", WiFi.RSSI(), (unsigned)ESP.getFreeHeap(),
@@ -1245,6 +1337,9 @@ void task(void *) {
       syncCovers(c);
       if (syncFaces(c)) wait = FACES_MORE_MS;  // more faces or images to fetch: don't wait out the whole interval
       syncSounds(c);
+      syncMood(c);
+      syncMoodNotes(c);
+      syncMoodVideos(c);
     }
     nextAt = (millis() + wait) | 1;  // after the work above: on a weak signal it can take seconds
   }
@@ -1299,6 +1394,7 @@ const uint8_t *asset(const char *hash, size_t *len) {
   return a ? a->buf : nullptr;
 }
 uint32_t facesRevision() { return facesRev; }
+const char *moodNote(unsigned mood) { return mood >= 1 && mood <= 5 ? moodNotes[mood-1].c_str() : ""; }
 
 // ---- keys (the LAN settings page; app::Lock held by the caller) ----
 
@@ -1401,6 +1497,11 @@ bool setWeatherLocation(const String &name, double lat, double lon) {
 void begin() {
   loadSaved();  // before anything else, so the face has content even if the portal is unreachable
   loadKeys();
+  Preferences notes;
+  if (notes.begin("mood-notes", false)) {
+    for (int i=0; i<5; ++i) { String key = "m" + String(i+1); moodNotes[i] = notes.getString(key.c_str(), ""); }
+    notes.end();
+  }
   if (!configured()) {
     Serial.println("[portal] no PORTAL_URL (copy portal_config.example.h to portal_config.h); client is off");
     return;

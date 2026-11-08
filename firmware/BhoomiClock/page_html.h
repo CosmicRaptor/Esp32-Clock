@@ -124,6 +124,16 @@ summary{cursor:pointer;color:var(--accent);font-size:15px}
   </div>
 </div>
 
+<div class="card" id="moodVideoCard" hidden>
+  <div class="lbl">A little moment</div><h2 style="margin:4px 0 6px;font-size:20px">A video for each mood</h2>
+  <p class="note">Choose a mood and a video with sound. The clock plays it after that response.</p>
+  <label class="lbl" for="moodVideoMood">Mood</label>
+  <select id="moodVideoMood"><option value="1">Very low</option><option value="2">Low</option><option value="3">Okay</option><option value="4">Good</option><option value="5">Great</option></select>
+  <label class="lbl" for="moodVideoFile">Video with audio</label><input id="moodVideoFile" type="file" accept="video/*">
+  <button class="go" id="moodVideoUpload">Prepare and upload</button>
+  <p class="note">Choose a video up to 2 minutes. The first 20 seconds are prepared in your browser and saved to the clock’s SD card.</p>
+  <p id="moodVideoStatus" role="status"></p>
+</div>
 <div class="card" id="cloud" hidden>
   <div class="row"><span class="lbl">Cloud connection</span><span class="meta" id="cloudAgo"></span></div>
   <div style="margin-top:8px"><span class="dot" id="cloudDot"></span><span id="cloudState">Checking…</span></div>
@@ -147,6 +157,7 @@ summary{cursor:pointer;color:var(--accent);font-size:15px}
   </details>
 </div>
 </main>
+<script src="/mood-video.js"></script>
 <script>
 const $=id=>document.getElementById(id);
 const el=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e;};
@@ -331,6 +342,17 @@ function send(blob,folder,name,onp){
   });
 }
 
+$('moodVideoUpload').onclick=async()=>{
+  const btn=$('moodVideoUpload'), status=$('moodVideoStatus'); btn.disabled=true;
+  try {
+    const clip=await MoodVideo.prepare($('moodVideoFile').files[0], t=>{status.textContent=t;});
+    status.textContent='Uploading prepared video…';
+    await send(clip,'mood-staging','mood-'+$('moodVideoMood').value+'.bcv',()=>{});
+    status.textContent='Saved on the clock. This mood will play the new video.';
+  }catch(e){status.textContent=e.message;}
+  finally{btn.disabled=false;}
+};
+
 const jobs=[];let busy=false;
 function enqueue(files){
   for(const f of files){
@@ -434,7 +456,7 @@ document.querySelectorAll('[data-show]').forEach(b=>b.onclick=()=>{const p=$(b.d
     $('sub').textContent=info.clock?'The clock currently reads '+info.clock+'.':'Adjust how your clock shows the time.';
     $('wifiList').hidden=true;$('wifiCreds').hidden=true;$('go').textContent='Save time zone';
     $('weatherCard').hidden=false;
-    $('files').hidden=false;refreshFiles();
+    $('files').hidden=false;$('moodVideoCard').hidden=false;refreshFiles();
     $('cloud').hidden=false;loadCloud(false);
   }else{
     loadNets(false);

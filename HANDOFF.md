@@ -1,5 +1,9 @@
 # Handoff: Bhoomi's Clock
 
+## Mindfulness and mood videos — deployed and flashed, 8 November 2026
+
+The five-point check-in runs every three hours and closes after five minutes. Responses queue offline and the private portal retains them for 30 days. Each mood can have a note and a video with sound: both portals prepare uploads in the browser, and the clock downloads remote uploads to microSD. `checkin` on serial shows the prompt; `moodstatus` reports installed clip hashes, frame counts and audio. The clock and portal were deployed, and Aryan confirmed the flow works. Moods 1–3 have videos on the clock; 1 and 2 currently use the same video. Portal version `98b3cd8d-9f8d-4acb-a57e-0f7fbda945c1`. Firmware including serial download diagnostics uses 3,014,762 bytes (47% of a 6 MB slot), with 85,432 bytes global RAM. The portal indicates a saved video but has no device-confirmed delivery status. No pending firmware install was approved after USB flashing. See the portal README for limits, playback and offline behaviour.
+
 ## Weather face variations — deployed and flashed, 7 November 2026
 
 All nine panda faces now have default, cloudy/foggy and stormy rain scenes in production. Eighteen edited backgrounds and transparent rain/lightning sprites are under `portal/public/panda-collection/`. The Faces editor previews them; setup upgrades existing face IDs in place while preserving base edits, schedules, order and pin. The larger renderer copy is in PSRAM. Added protobuf fields are backward compatible, and code 97 is now accepted as a thunderstorm.
@@ -20,7 +24,7 @@ Start with `AGENTS.md` (rules and commands), then this file (state and what's ne
 
 ## In one paragraph
 
-A gift clock for Bhoomi (Aryan's girlfriend), a panda fan. It runs on a Waveshare ESP32-S3-Touch-LCD-2.8 in a 3D-printed stand. Aryan controls it from anywhere through an admin portal on Cloudflare: the photo, a short message, alarms, animated layered **clock faces** chosen by rules (night, winter, special dates…), and a strip showing what each of them is playing on Spotify. The clock polls the portal every 10 s over one kept-alive HTTPS connection, using protobuf with ETags. Everything time-based (alarms, which face to show) is decided on the clock, so it keeps working offline.
+A gift clock for Bhoomi (Aryan's girlfriend), a panda fan. It runs on a Waveshare ESP32-S3-Touch-LCD-2.8 in a 3D-printed stand. Aryan controls it from anywhere through an admin portal on Cloudflare: the photo, a short message, alarms, animated layered **clock faces** chosen by rules (night, winter, special dates…), and a strip showing what each of them is playing on Spotify. The clock polls the portal every 30 s over one kept-alive HTTPS connection, using protobuf with ETags. Everything time-based (alarms, which face to show) is decided on the clock, so it keeps working offline.
 
 ## Weather deployed and flashed: 7 November 2026
 
@@ -96,7 +100,7 @@ Portal version `ae172a85-d5c5-4b09-b01e-10f5e31ec32d` is deployed. The current w
 
 ## Key decisions and why
 
-- **The clock pulls, the server never pushes.** Her router blocks inbound connections, and on −90 dBm Wi-Fi one kept-alive poll every 10 s is sturdier than MQTT or WebSockets. With ETags it's mostly empty 304s, about 9% of the Workers free tier.
+- **The clock pulls, the server never pushes.** Her router blocks inbound connections, and on −90 dBm Wi-Fi one kept-alive poll every 30 s is sturdier than MQTT or WebSockets. With ETags it's mostly empty 304s, about 3% of the Workers free tier.
 - **Protobuf for the clock, JSON for the admin pages.** nanopb gives fixed-size structs on the ESP32, and `clock.proto` is the one contract between them.
 - **Cloudflare Worker + KV, no VPS.** It's free and needs no maintenance, which suits a gift meant to run for years. KV's limit of 1,000 writes a day shapes the device path (see `portal/AGENTS.md`).
 - **Images are converted in the browser** (baseline JPEG, LVGL `RGB565A8`), so neither the Worker nor the clock decodes or resizes anything heavy.

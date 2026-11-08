@@ -34,13 +34,14 @@ Audio *audio = nullptr;
 SemaphoreHandle_t reqLock = nullptr;
 
 // ---- request from other tasks (reqLock) ----
-bool reqPlay = false, reqStop = false;
+bool reqPlay = false, reqStop = false, reqClip = false;
 char reqFile[72] = "";
 
 // ---- task-private ----
 volatile bool active = false;
 bool trackRunning = false;
 bool usingBeep = false;
+bool clipMode = false;
 bool giveUpOnFile = false;
 int shortPlays = 0;
 uint32_t trackStartedAt = 0;
@@ -111,6 +112,12 @@ void onAudioEvent(Audio::msg_t m) {
 bool startTrack() {
   bool ok = false;
   usingBeep = true;
+  if (clipMode) {
+    if (current[0] && storage::mounted()) ok = audio->connecttoFS(SD_MMC, current);
+    trackRunning = ok;
+    trackStartedAt = millis();
+    return ok;
+  }
   if (current[0] && !giveUpOnFile && storage::mounted()) {
     String path = String("/sounds/") + current;
     if (SD_MMC.exists(path)) {
@@ -134,11 +141,12 @@ bool startTrack() {
 }
 
 void handleRequests() {
-  bool doPlay, doStop;
+  bool doPlay, doStop, doClip;
   char file[sizeof reqFile];
   xSemaphoreTake(reqLock, portMAX_DELAY);
   doPlay = reqPlay;
   doStop = reqStop;
+  doClip = reqClip;
   strlcpy(file, reqFile, sizeof file);
   reqPlay = reqStop = false;
   xSemaphoreGive(reqLock);
@@ -152,6 +160,7 @@ void handleRequests() {
   }
   if (doPlay) {  // a play after a stop in the same tick wins
     strlcpy(current, file, sizeof current);
+    clipMode = doClip;
     giveUpOnFile = false;
     shortPlays = 0;
     active = true;
@@ -163,6 +172,7 @@ void handleRequests() {
 // Called when a track finished on its own: loop it, unless it never really played.
 void trackEnded() {
   trackRunning = false;
+  if (clipMode) { active = false; restartAt = 0; return; }
   uint32_t len = millis() - trackStartedAt;
   if (!usingBeep) {
     if (len < MIN_GOOD_PLAY_MS) {
@@ -211,6 +221,16 @@ void play(const char *fileName) {
   xSemaphoreTake(reqLock, portMAX_DELAY);
   strlcpy(reqFile, fileName ? fileName : "", sizeof reqFile);
   reqPlay = true;
+  reqClip = false;
+  xSemaphoreGive(reqLock);
+}
+
+void playClip(const char *path) {
+  if (!reqLock || !path) return;
+  xSemaphoreTake(reqLock, portMAX_DELAY);
+  strlcpy(reqFile, path, sizeof reqFile);
+  reqPlay = true;
+  reqClip = true;
   xSemaphoreGive(reqLock);
 }
 

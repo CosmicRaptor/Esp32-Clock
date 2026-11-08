@@ -60,7 +60,7 @@ Behind those, static files in public/ are the admin page, and the rest is the JS
     PUT    /api/management/firmware  upload candidate application binary
     POST   /api/management/install  approve exact candidate; DELETE cancels future discovery
 
-  /api/device/state is the clock's one heartbeat, polled every ~10 s. Besides the portal's own state it carries
+  /api/device/state is the clock's one heartbeat, polled every ~30 s. Besides the portal's own state it carries
   `nowplaying` (asked from Spotify on each call), and its ETag covers both, so a new song is a new 200.
 
 Storage is one KV namespace (binding CLOCK):
@@ -93,6 +93,8 @@ import spotify
 import wire
 import weather
 import management
+import mindfulness
+import mood_video
 import clock_pb2 as pb
 from model import Invalid
 
@@ -106,7 +108,7 @@ SEEN_WRITE_EVERY = 600  # s; KV's free tier allows 1,000 writes/day, so don't wr
 # or hiccups, so the strip on the clock doesn't blink off. Never written anywhere.
 _last_listening: dict = {}
 
-# What this isolate last saw of the clock's check-in, so the 10 s polls don't each cost a KV read.
+# What this isolate last saw of the clock's check-in, so the 30 s polls don't each cost a KV read.
 _checkin: dict = {"at": 0}
 
 # Cloudflare Access signing keys (kid -> WebCrypto key), fetched from the team's certs URL. Access
@@ -273,6 +275,42 @@ class Default(WorkerEntrypoint):
 
         if not auth.check_session(password, auth.read_cookie(request.headers.get("cookie"))):
             raise HttpError(401, "Please log in.")
+
+        if path.startswith("/api/mood-note/") and method in ("GET", "PUT"):
+            mood = path.removeprefix("/api/mood-note/")
+            if mood not in ("1", "2", "3", "4", "5"):
+                raise Invalid("Choose a mood from 1 to 5.")
+            key = "mood-note:" + mood
+            if method == "GET":
+                return json_response({"note": await self.kv_json(key) or ""})
+            body = await read_json(request)
+            note = mindfulness.clean_note(body.get("note") if isinstance(body, dict) else None)
+            await self.env.CLOCK.put(key, json.dumps(note))
+            return json_response({"note": note})
+
+        if path.startswith("/api/mood-video/") and method in ("GET", "PUT"):
+            mood = path.removeprefix("/api/mood-video/")
+            if mood not in ("1", "2", "3", "4", "5"):
+                raise Invalid("Choose a mood from 1 to 5.")
+            key = "mood-video:" + mood
+            if method == "GET":
+                return json_response({"video": await self.kv_json(key)})
+            data = bytes(await request.bytes())
+            meta = mood_video.validate(data)
+            old = await self.kv_json(key)
+            await self.env.CLOCK.put("mood-video-data:" + mood + ":" + meta["sha256"], base64.b64encode(data).decode())
+            await self.env.CLOCK.put(key, json.dumps(meta))
+            if old and old.get("sha256") != meta["sha256"]:
+                await self.env.CLOCK.delete("mood-video-data:" + mood + ":" + old["sha256"])
+            return json_response({"video": meta})
+
+        if path == "/api/moods" and method == "GET":
+            listing = await self.env.CLOCK.list(js_obj({"prefix": "mood:", "limit": 1000}))
+            if hasattr(listing, "to_py"):
+                listing = listing.to_py()
+            records = await asyncio.gather(*(self.kv_json(k["name"]) for k in listing["keys"]))
+            cutoff = int(time.time()) - mindfulness.RETENTION
+            return json_response({"moods": sorted((r for r in records if r and r["at"] > cutoff), key=lambda r: r["at"], reverse=True)})
 
         if path == "/api/management" and method == "GET":
             return json_response({"settings": await self.kv_json("management:settings") or {"interval": 3600},
@@ -571,6 +609,32 @@ class Default(WorkerEntrypoint):
             raise HttpError(401, "Bad device token.")
         method = request.method
 
+        if path == "/api/device/mood-notes" and method == "GET":
+            notes = await asyncio.gather(*(self.kv_json("mood-note:" + str(i)) for i in range(1, 6)))
+            text = "".join(str(i) + " " + base64.b64encode((note or "").encode()).decode() + "\n" for i, note in enumerate(notes, 1))
+            return Response(text, headers={"content-type": "text/plain", "cache-control": "no-store"})
+
+        if path == "/api/device/mood-videos" and method == "GET":
+            entries = await asyncio.gather(*(self.kv_json("mood-video:" + str(i)) for i in range(1, 6)))
+            text = "".join(f"{i} {e['sha256']} {e['size']}\n" for i, e in enumerate(entries, 1) if e)
+            return Response(text, headers={"content-type": "text/plain", "cache-control": "no-store"})
+        if path.startswith("/api/device/mood-video/") and method == "GET":
+            parts = path.removeprefix("/api/device/mood-video/").split("/")
+            if len(parts) != 2 or parts[0] not in ("1", "2", "3", "4", "5") or not re.fullmatch(r"[0-9a-f]{64}", parts[1]):
+                raise HttpError(404, "Unknown video.")
+            raw = await self.env.CLOCK.get("mood-video-data:" + parts[0] + ":" + parts[1])
+            if missing(raw):
+                raise HttpError(404, "Video is still propagating; retry later.")
+            return binary_response(base64.b64decode(str(raw)), "application/octet-stream")
+
+        if path == "/api/device/mood" and method == "PUT":
+            now = int(time.time())
+            mood = mindfulness.clean(await read_json(request), now)
+            expires = mood["at"] + mindfulness.RETENTION
+            if expires > now + 60:
+                await self.env.CLOCK.put("mood:" + str(mood["at"]), json.dumps(mood), js_obj({"expiration": expires}))
+            return json_response({"ok": True})
+
         if path == "/api/device/management" and method == "GET":
             cfg = await self.kv_json("management:settings") or {"interval": 3600}
             release = await self.kv_json("management:approved") or {}
@@ -790,8 +854,8 @@ class Default(WorkerEntrypoint):
     async def spotify_overview(self) -> dict:
         tokens = await self.kv_json(SPOTIFY_KEY) or {}
         configured = bool(self.secret("SPOTIFY_CLIENT_ID") and self.secret("SPOTIFY_CLIENT_SECRET"))
-        now = await asyncio.gather(*(self.listening(s, tokens.get(s)) for s in spotify.SIDES))
-        tokens = await self.kv_json(SPOTIFY_KEY) or {}  # re-read: a revoked grant gets dropped on the way
+        # Playback is refreshed by clock requests, not by opening the admin page.
+        now = [_last_listening.get(s) or dict(spotify.OFF) for s in spotify.SIDES]
         sides = []
         for side, listening in zip(spotify.SIDES, now):
             connected = bool(tokens.get(side))
@@ -845,7 +909,7 @@ class Default(WorkerEntrypoint):
 
     async def note_check_in(self, q: dict):
         """Remember when the clock last polled. Written at most every SEEN_WRITE_EVERY seconds, and (the clock
-        polls every ~10 s) without even reading KV in between, going by this isolate's own memory."""
+        polls every ~30 s) without even reading KV in between, going by this isolate's own memory."""
         now = int(time.time())
         update = {k: q[k][:64] for k in ("tz", "fw") if q.get(k)}
         try:

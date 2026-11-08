@@ -67,6 +67,7 @@ const Face *chooseFace(const struct tm &t, bool *ready);
 // A downloaded face image by hash (a 320x240 JPEG, or an LVGL RGB565A8 sprite file), or nullptr. The client may free it
 // when no face uses it any more, so copy what you need.
 const uint8_t *asset(const char *hash, size_t *len);
+const char *moodNote(unsigned mood); // caller holds app lock; persisted for offline use
 uint32_t facesRevision();  // changes when a face or an image arrives, changes or goes
 
 // ---- keys (the LAN settings page; take app::Lock first) ----

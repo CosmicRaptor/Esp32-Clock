@@ -8,14 +8,14 @@
   const weatherSprites = {'rain-drop':14, lightning:42};
   const entries = [
     ['01', 'Paris blossoms/beret', 12, 15, 'petal', 195, 28, 40, '#28151c'],
-    ['02', 'Snowy sleeping panda', 5, 7, 'snowflake', 194, 25, 40, '#fff4ee'],
-    ['03', 'Café/mug', 9, 12, 'steam', 115, 91, 37, '#fff0d8'],
+    ['02', 'Snowy sleeping panda', 5, 6, 'snowflake', 194, 25, 40, '#fff4ee'],
+    ['03', 'Café/mug', 8, 12, 'steam', 115, 91, 37, '#fff0d8'],
     ['04', 'Paris night drive', 20, 22, 'shooting-star', 207, 29, 40, '#fff4ee'],
     ['05', 'Autumn bench', 15, 18, 'leaf', 209, 29, 39, '#29160e'],
     ['06', 'Cloud stargazing', 22, 24, 'shooting-star', 211, 28, 40, '#fff4ee'],
     ['07', 'Bedtime', 0, 5, 'twinkle', 207, 34, 40, '#fff4ee'],
-    ['08', 'Paris sunset with cat', null, null, 'twinkle', 197, 26, 39, '#fff4ee'],
-    ['09', 'Sleepy cherry blossoms', 7, 9, 'petal', 219, 30, 38, '#28151c'],
+    ['08', 'Paris sunset with cat', 18, 20, 'twinkle', 197, 26, 39, '#fff4ee'],
+    ['09', 'Sleepy cherry blossoms', 6, 8, 'petal', 219, 30, 38, '#28151c'],
   ].map(([key, name, from, to, accent, x, y, size, color]) => ({key, name, from, to, accent, x, y, size, color}));
   // Pill, title, artist: blossom pink, winter violet, café cream, and each scene's own evening colours.
   const musicThemes = [

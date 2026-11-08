@@ -36,8 +36,13 @@ bool begin() {
     Serial.println("[sd] no card");
     return false;
   }
-  for (const char *d : {"/photos", "/sounds"})
+  for (const char *d : {"/photos", "/sounds", "/mood-staging"})
     if (!SD_MMC.exists(d)) SD_MMC.mkdir(d);
+  // Recover a clip if power failed between moving the old directory and activating the new one.
+  for (int mood = 1; mood <= 5; ++mood) {
+    String active = "/mindfulness/" + String(mood), backup = active + ".old";
+    if (!SD_MMC.exists(active) && SD_MMC.exists(backup)) SD_MMC.rename(backup, active);
+  }
   isMounted = true;
   gen = gen + 1;
   Serial.printf("[sd] mounted: %llu MB, %llu MB used\n", SD_MMC.totalBytes() >> 20,
@@ -51,7 +56,7 @@ void touch() { gen = gen + 1; }
 uint64_t totalBytes() { return isMounted ? SD_MMC.totalBytes() : 0; }
 uint64_t usedBytes() { return isMounted ? SD_MMC.usedBytes() : 0; }
 
-bool validFolder(const String &folder) { return folder == "photos" || folder == "sounds"; }
+bool validFolder(const String &folder) { return folder == "photos" || folder == "sounds" || folder == "mood-staging"; }
 String folderPath(const String &folder) { return "/" + folder; }
 
 String cleanName(const String &in) {

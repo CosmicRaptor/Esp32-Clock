@@ -46,7 +46,7 @@ Read device responses as JSON with `curl -H 'Authorization: Bearer <DEVICE_TOKEN
   2. Run `../proto/generate.sh`.
   3. Keep the limits in `model.py` in step with the nanopb sizes. `tests/test_wire.py` checks that the worst case fits.
   4. Run `../build.sh` so the firmware still compiles.
-- **KV free tier allows 1,000 writes a day.** The clock polls every 10 s, so nothing on the device path may write KV per poll (see `note_check_in`, which writes at most once every 10 minutes). Reads are fine at the current rate, about 17k a day of 100k. KV is eventually consistent (up to ~60 s): the clock treats a 404 on a fresh id as "retry later", so keep it that way.
+- **KV free tier allows 1,000 writes a day.** The clock polls every 30 s, so nothing on the device path may write KV per poll (see `note_check_in`, which writes at most once every 10 minutes). Reads are fine at the current rate, about 5.8k a day of 100k. KV is eventually consistent (up to ~60 s): the clock treats a 404 on a fresh id as "retry later", so keep it that way.
 - **Assets** are content-addressed (`asset:<hash>`, `assetpng:<hash>`, `assetmeta:<hash>`). Unused ones are garbage-collected an hour after upload. Backgrounds are 320×240 baseline JPEG (≤ 200 KB). Sprites are LVGL 9 `RGB565A8` (byte layout in `README.md`, "Asset files").
 - **The redraw budget constants** (`ANIM_FPS = 15`, `BUDGET_PX = 30_000`, `SCALE_COST = 3` in `model.py`) are first guesses. Tune them only from measurements on the board, and update the README table with them.
 - **Security layers, keep all of them:**

@@ -186,3 +186,23 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, .btn:focus-vi
 .toast.bad { background: var(--err); color: #fff; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* Mindfulness and health */
+.card-heading { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+.card-heading h2 { margin:3px 0 0; }
+.eyebrow { color:var(--accent); font-size:11px; font-weight:700; letter-spacing:.1em; }
+.pill { border-radius:99px; background:var(--soft); color:var(--ink); padding:5px 10px; font-size:12px; white-space:nowrap; }
+.mood-upload { margin-top:18px; padding-top:16px; border-top:1px solid var(--line); }
+.mood-upload h3 { margin:0; font-size:16px; }
+.mood-upload .lbl, .health-card .lbl { display:block; margin-top:12px; }
+.mood-upload .btn { margin-top:12px; }
+.panel { margin-top:14px; padding:12px; border:1px solid var(--line); border-radius:12px; }
+.panel summary { cursor:pointer; font-weight:600; }
+.panel[open] summary { margin-bottom:12px; }
+.health-summary { background:var(--soft); border-radius:12px; padding:12px; line-height:1.5; }
+.health-row { display:flex; align-items:end; gap:10px; }
+.health-row > div { flex:1; min-width:0; }
+.health-row .btn { flex:none; }
+.diagnostic-output { white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; max-height:240px; overflow:auto; }
+.firmware-candidate { overflow-wrap:anywhere; white-space:pre-line; }
+@media (max-width:420px) { .health-row { align-items:stretch; flex-direction:column; } }

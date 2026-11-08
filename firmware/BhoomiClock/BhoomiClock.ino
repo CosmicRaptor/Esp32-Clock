@@ -20,6 +20,8 @@
 #include "sound.h"
 #include "storage.h"
 #include "touch.h"
+#include <Preferences.h>
+#include <SD_MMC.h>
 #include "ui.h"
 #include "web.h"
 #include "wifi_setup.h"
@@ -74,6 +76,17 @@ static void serialCommands() {
     if (line == "ring" || line.startsWith("ring ")) {
       app::Lock lock;
       ui::testAlarm(line.length() > 5 ? line.c_str() + 5 : "");
+    }
+    if (line == "checkin") { app::Lock lock; ui::testMindfulness(); }
+    if (line == "moodstatus") {
+      Preferences prefs; bool ok = prefs.begin("mood-videos", true);
+      for (unsigned i=1; i<=5; ++i) {
+        String key="m"+String(i), dir="/mindfulness/"+String(i);
+        String hash=ok ? prefs.getString(key.c_str(), "") : "";
+        unsigned frames=0; for (; frames<100; ++frames) { char name[16]; snprintf(name,sizeof(name),"/%04u.jpg",frames); if(!SD_MMC.exists(dir+name)) break; }
+        Serial.printf("[mindfulness] status mood=%u hash=%s frames=%u audio=%s\n", i, hash.c_str(), frames, SD_MMC.exists(dir+"/audio.wav") ? "yes" : "no");
+      }
+      if (ok) prefs.end();
     }
     line = "";
   }

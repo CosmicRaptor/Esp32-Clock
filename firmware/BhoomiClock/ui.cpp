@@ -6,6 +6,8 @@
 #include <time.h>
 
 #include "app_lock.h"
+#include "mindfulness.h"
+#include "video_player.h"
 
 #include "display.h"
 #include "face_view.h"
@@ -646,6 +648,7 @@ void stopRing(const char *why) {
 
 void startRing(unsigned hour, unsigned minute, const char *text, const char *soundFile) {
   if (ringing) return;  // already going off; the first one wins
+  video_player::stop();
   ringing = true;
   ringSince = millis();
   ringFlash = false;
@@ -706,6 +709,83 @@ void updateAlarm() {
     ringFlash = flash;
     lv_obj_set_style_bg_color(alarmView, flash ? ACCENT_LIGHT : ACCENT, 0);
   }
+}
+
+// Quiet, locally scheduled check-in. A response is persisted before playback begins.
+lv_obj_t *moodView, *moodStatus, *moodNoteView, *moodNoteText;
+bool moodVisible = false, noteVisible = false;
+uint32_t moodSince = 0, noteSince = 0;
+unsigned noteMood = 0;
+void finishMoodNote() {
+  if (!noteVisible || ringing) return;
+  noteVisible = false; show(moodNoteView, false);
+  video_player::play(noteMood);
+}
+void showMoodNote(unsigned mood) {
+  const char *note = portal::moodNote(mood);
+  if (!note || !note[0]) { video_player::play(mood); return; }
+  noteMood = mood; noteSince = millis(); noteVisible = true;
+  lv_label_set_text(moodNoteText, note);
+  show(moodNoteView, true); lv_obj_move_foreground(moodNoteView);
+  if (ringing) lv_obj_move_foreground(alarmView);
+}
+void buildMood() {
+  moodView = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(moodView); lv_obj_set_size(moodView, 320, 240);
+  lv_obj_set_style_bg_color(moodView, BG, 0); lv_obj_set_style_bg_opa(moodView, LV_OPA_COVER, 0);
+  lv_obj_remove_flag(moodView, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t *eyebrow = label(moodView, &lv_font_montserrat_14, ACCENT);
+  lv_label_set_text(eyebrow, "A LITTLE MOMENT"); lv_obj_align(eyebrow, LV_ALIGN_TOP_MID, 0, 22);
+  lv_obj_t *title = label(moodView, &lv_font_montserrat_20, INK);
+  lv_label_set_text(title, "How are you feeling?"); lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 46);
+  const char *names[] = {"Very low", "Low", "Okay", "Good", "Great"};
+  const uint32_t colors[] = {0xF4DEE6, 0xF6E3DE, 0xF7EBD4, 0xE6EEDB, 0xDCEFE4};
+  for (int i = 0; i < 5; ++i) {
+    lv_obj_t *button = lv_obj_create(moodView);
+    lv_obj_set_size(button, 57, 76); lv_obj_set_pos(button, 9 + i * 61, 91);
+    lv_obj_remove_flag(button, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_pad_all(button, 2, 0); lv_obj_set_style_radius(button, 14, 0);
+    lv_obj_set_style_border_width(button, 0, 0); lv_obj_set_style_bg_color(button, lv_color_hex(colors[i]), 0);
+    lv_obj_t *text = label(button, &lv_font_montserrat_14, INK);
+    lv_label_set_text(text, names[i]); lv_obj_center(text); lv_obj_remove_flag(text, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(button, [](lv_event_t *e) {
+      unsigned mood = (uintptr_t)lv_event_get_user_data(e);
+      if (!mindfulness::enqueue((uint32_t)time(nullptr), mood)) {
+        lv_label_set_text(moodStatus, "Could not save. Please try again."); return;
+      }
+      moodVisible = false; show(moodView, false);
+      showMoodNote(mood);
+    }, LV_EVENT_CLICKED, (void *)(uintptr_t)(i + 1));
+  }
+  moodStatus = label(moodView, &lv_font_montserrat_14, MUTE);
+  lv_label_set_text(moodStatus, "A little moment for you"); lv_obj_align(moodStatus, LV_ALIGN_BOTTOM_MID, 0, -22);
+  show(moodView, false);
+  moodNoteView = lv_obj_create(lv_layer_top()); lv_obj_remove_style_all(moodNoteView);
+  lv_obj_set_size(moodNoteView, 320, 240); lv_obj_set_style_bg_color(moodNoteView, BG, 0);
+  lv_obj_set_style_bg_opa(moodNoteView, LV_OPA_COVER, 0);
+  lv_obj_remove_flag(moodNoteView, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(moodNoteView, [](lv_event_t *) { finishMoodNote(); }, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *caption = label(moodNoteView, &lv_font_montserrat_14, ACCENT);
+  lv_label_set_text(caption, "A LITTLE NOTE FOR YOU"); lv_obj_align(caption, LV_ALIGN_TOP_MID, 0, 35);
+  lv_obj_remove_flag(caption, LV_OBJ_FLAG_CLICKABLE);
+  moodNoteText = label(moodNoteView, &lv_font_montserrat_20, INK);
+  lv_obj_set_width(moodNoteText, 280); lv_obj_center(moodNoteText); lv_obj_remove_flag(moodNoteText, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_t *hint = label(moodNoteView, &lv_font_montserrat_14, MUTE);
+  lv_label_set_text(hint, "Tap to continue"); lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -24); lv_obj_remove_flag(hint, LV_OBJ_FLAG_CLICKABLE);
+  show(moodNoteView, false);
+}
+void showMood() {
+  moodVisible = true; moodSince = millis();
+  lv_label_set_text(moodStatus, "A little moment for you");
+  show(moodView, true); lv_obj_move_foreground(moodView);
+  if (ringing) lv_obj_move_foreground(alarmView);
+}
+void updateMood() {
+  if (moodVisible && millis() - moodSince >= 300000) { moodVisible = false; show(moodView, false); }
+  if (!timeValid()) return;
+  time_t now = time(nullptr); struct tm t; localtime_r(&now, &t);
+  if (!mindfulness::shouldPrompt(now, t)) return;
+  showMood();
 }
 
 bool alarmMatches(const portal::Alarm &a, const struct tm &t) {
@@ -808,9 +888,14 @@ void begin(const char *apName) {
   faceview::begin(scr);
   buildStrip();
   buildNote();
-  buildAlarm();  // last, so it floats above everything
+  mindfulness::begin();
+  buildMood();
+  video_player::begin();
+  buildAlarm();  // alarms take priority over check-ins and clips
   showMsg(true, "Waking up...", "");
 }
+
+void testMindfulness() { if (timeValid()) showMood(); else Serial.println("[mindfulness] waiting for clock time"); }
 
 void testAlarm(const char *soundFile) {
   time_t now = time(nullptr);
@@ -873,6 +958,9 @@ void loop() {
   }
   checkAlarms();
   updateAlarm();
+  updateMood();
+  if (noteVisible && millis() - noteSince >= 5000) finishMoodNote();
+  video_player::tick();
   if (onlineAt && millis() - onlineAt > SPLASH_MS) {
     onlineAt = 0;
     if (phase == Phase::Online) showView(View::Clock);

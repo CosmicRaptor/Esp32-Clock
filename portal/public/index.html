@@ -50,19 +50,37 @@
     <p class="hint center" id="pvNote">Rough preview, since the clock face isn't final yet.</p>
   </div>
 
-<div class="card" id="managementCard">
-  <h2>Clock health &amp; firmware</h2>
-  <label>Diagnostic reports <select id="diagnosticInterval"><option value="0">Off</option><option value="300">Every 5 minutes</option><option value="900">Every 15 minutes</option><option value="1800">Every 30 minutes</option><option value="3600" selected>Hourly</option><option value="21600">Every 6 hours</option></select></label>
-  <button class="btn" id="saveDiagnostics">Save interval</button>
-  <p id="clockHealthSummary" class="hint">Waiting for a report…</p>
-  <details><summary>Diagnostic details</summary>
-  <pre id="clockDiagnostics" style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px">Waiting for a report…</pre></details>
-  <label>Application firmware (.bin) <input type="file" id="firmwareFile" accept=".bin"></label>
-  <button class="btn" id="uploadFirmware">Upload candidate</button>
-  <p id="firmwareCandidate" style="overflow-wrap:anywhere"></p>
-  <button class="btn primary" id="installFirmware" disabled>Install uploaded firmware</button>
-  <button class="btn ghost" id="cancelFirmware">Cancel pending install</button>
-  <p id="managementResult" role="status"></p>
+<div class="card mood-card" id="moodCard">
+  <div class="card-heading"><div><span class="eyebrow">A LITTLE MOMENT</span><h2>Mindfulness check-ins</h2></div><span class="pill">Every 3 hours</span></div>
+  <p class="hint">A gentle five-point check-in. Responses are private and kept for 30 days.</p>
+  <details class="panel"><summary>Recent responses</summary><button class="btn ghost small" id="refreshMoods">Refresh</button><div id="moodHistory" role="status">Loading…</div></details>
+  <div class="mood-upload"><h3>A video for each mood</h3>
+    <p class="hint">Choose a mood and a video with sound. The clock plays it after that response.</p>
+    <label class="lbl" for="moodVideoMood">Mood</label>
+    <select id="moodVideoMood"><option value="1">Very low</option><option value="2">Low</option><option value="3">Okay</option><option value="4">Good</option><option value="5">Great</option></select>
+    <p class="hint" id="moodVideoExisting">Checking saved video…</p>
+    <label class="lbl" for="moodNoteText">Note before this video</label>
+    <textarea id="moodNoteText" rows="2" maxlength="120" placeholder="A little message for this mood…"></textarea>
+    <button class="btn ghost small" id="moodNoteSave">Save note</button>
+    <p class="hint" id="moodNoteStatus" role="status">Shown for five seconds before the video. Leave empty for no note.</p>
+    <label class="lbl" for="moodVideoFile">Choose a video</label><input id="moodVideoFile" type="file" accept="video/*">
+    <p class="hint">Up to 2 minutes · first 20 seconds used · picture and sound prepared in your browser</p>
+    <button class="btn primary" id="moodVideoUpload">Prepare and send to clock</button>
+    <p id="moodVideoStatus" class="hint" role="status"></p>
+  </div>
+</div>
+<div class="card health-card" id="managementCard">
+  <div class="card-heading"><div><span class="eyebrow">CLOCK SETTINGS</span><h2>Health &amp; firmware</h2></div></div>
+  <p id="clockHealthSummary" class="health-summary">Waiting for a report…</p>
+  <div class="health-row"><div><label class="lbl" for="diagnosticInterval">Diagnostic reports</label><select id="diagnosticInterval"><option value="0">Off</option><option value="300">Every 5 minutes</option><option value="900">Every 15 minutes</option><option value="1800">Every 30 minutes</option><option value="3600" selected>Hourly</option><option value="21600">Every 6 hours</option></select></div><button class="btn ghost" id="saveDiagnostics">Save interval</button></div>
+  <details class="panel"><summary>Diagnostic details</summary><pre id="clockDiagnostics" class="diagnostic-output">Waiting for a report…</pre></details>
+  <details class="panel"><summary>Firmware updates</summary>
+    <label class="lbl" for="firmwareFile">Application firmware (.bin)</label><input type="file" id="firmwareFile" accept=".bin">
+    <button class="btn ghost" id="uploadFirmware">Upload candidate</button>
+    <p id="firmwareCandidate" class="hint firmware-candidate"></p>
+    <div class="actions"><button class="btn primary" id="installFirmware" disabled>Install uploaded firmware</button><button class="btn ghost" id="cancelFirmware">Cancel pending install</button></div>
+  </details>
+  <p id="managementResult" class="hint" role="status"></p>
 </div>
 <div class="card" id="weatherCard">
   <h2>Weather</h2>
@@ -191,6 +209,7 @@
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="/weather-settings.js"></script>
 <script src="/management.js"></script>
+<script src="/mood-video.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

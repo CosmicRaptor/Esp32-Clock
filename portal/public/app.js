@@ -125,6 +125,9 @@ async function load() {
   setState(j.state);
   $('login').hidden = true;
   $('app').hidden = false;
+  loadMoods();
+  loadMoodVideo();
+  loadMoodNote();
   loadSpotify();
   window.loadWeatherSettings();
   window.loadManagement();
@@ -577,7 +580,7 @@ $('aDelete').onclick = () => busy($('aDelete'), async () => {
 
 // ---------------------------------------------------------------- music (Spotify)
 
-// Per person: who is connected, and what they're playing right now (the server asks Spotify).
+// Per person: connection status and playback cached by this server instance.
 async function loadSpotify() {
   let j;
   try { j = await api('/api/spotify'); } catch (e) { return; }
@@ -591,7 +594,7 @@ async function loadSpotify() {
     name.append(el('small', '', i === 0 ? 'left' : 'right'));
     let sub, live = false;
     if (!s.connected) sub = 'Not connected';
-    else if (!s.playing) sub = 'Connected · nothing playing';
+    else if (!s.playing) sub = 'Connected · playback unavailable';
     else {
       live = s.playing.status === 'playing';
       sub = `${live ? '♪' : '⏸'} ${s.playing.title}${s.playing.artist ? ' · ' + s.playing.artist : ''}`;
@@ -642,3 +645,47 @@ async function loadSpotify() {
 load();
 // pick up the clock's check-ins (and changes from another tab) when coming back to the page
 document.addEventListener('visibilitychange', () => { if (!document.hidden && !$('app').hidden && $('editor').hidden && !crop.src) load(); });
+
+async function loadMoods() {
+  const box = $('moodHistory');
+  try {
+    const data = await api('/api/moods');
+    box.replaceChildren();
+    if (!data.moods.length) { box.textContent = 'No responses yet.'; return; }
+    const names = ['', 'Very low', 'Low', 'Okay', 'Good', 'Great'];
+    for (const mood of data.moods) {
+      const row = el('p', '', `${new Intl.DateTimeFormat(undefined, {timeZone: clockTz(), dateStyle: 'medium', timeStyle: 'short'}).format(new Date(mood.at * 1000))} · ${names[mood.mood]}`);
+      box.append(row);
+    }
+  } catch (e) { box.textContent = e.message; }
+}
+$('refreshMoods').onclick = loadMoods;
+
+$('moodVideoUpload').onclick = () => busy($('moodVideoUpload'), async () => {
+  const status = $('moodVideoStatus'), file = $('moodVideoFile').files[0];
+  try {
+    const clip = await MoodVideo.prepare(file, text => { status.textContent = text; });
+    status.textContent = 'Uploading prepared video…';
+    await api('/api/mood-video/' + $('moodVideoMood').value, {method:'PUT', headers:{'content-type':'application/octet-stream'}, body:clip});
+    status.textContent = 'Saved. The clock will download this video when it is online.';
+    await loadMoodVideo();
+  } catch (e) { status.textContent = e.message; }
+});
+
+async function loadMoodVideo() {
+  const target = $('moodVideoExisting');
+  try { const j = await api('/api/mood-video/' + $('moodVideoMood').value); target.textContent = j.video ? `Video saved · ${j.video.frames / 5} seconds · the clock checks for updates regularly` : 'No video saved for this mood yet.'; }
+  catch (e) { target.textContent = e.message; }
+}
+$('moodVideoMood').onchange = () => { loadMoodVideo(); loadMoodNote(); };
+
+async function loadMoodNote() {
+  const mood = $('moodVideoMood').value;
+  try { const j = await api('/api/mood-note/' + mood); if ($('moodVideoMood').value === mood) $('moodNoteText').value = j.note; }
+  catch (e) { $('moodNoteStatus').textContent = e.message; }
+}
+$('moodNoteSave').onclick = () => busy($('moodNoteSave'), async () => {
+  const mood = $('moodVideoMood').value;
+  try { await sendJson('/api/mood-note/' + mood, 'PUT', {note:$('moodNoteText').value}); $('moodNoteStatus').textContent = 'Saved. The clock will pick it up when online.'; }
+  catch (e) { $('moodNoteStatus').textContent = e.message; }
+});

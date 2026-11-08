@@ -9,6 +9,8 @@
 
 #include "app_lock.h"
 #include "page_html.h"
+#include "mood_video_js.h"
+#include "mood_clip.h"
 #include "portal_client.h"
 #include "settings.h"
 #include "storage.h"
@@ -298,6 +300,7 @@ void handleUploadData() {
       String name = storage::cleanName(server.arg("name"));
       if (!storage::validFolder(folder) || name.isEmpty()) return abortUpload("bad file name");
       uint64_t want = strtoull(server.arg("size").c_str(), nullptr, 10);
+      if (folder == "mood-staging" && (want == 0 || want > 12 * 1024 * 1024)) return abortUpload("Video is too large.");
       uint64_t free = storage::totalBytes() - storage::usedBytes();
       if (want + (1 << 20) > free) return abortUpload("The card is full.");
       up.finalName = uniqueName(folder, name);
@@ -330,6 +333,14 @@ void handleUploadData() {
       if (!flushBuf()) return abortUpload("write failed (card full?)");
       up.file.close();
       if (!SD_MMC.rename(up.tmpPath, up.finalPath)) return abortUpload("could not save file");
+      if (server.arg("folder") == "mood-staging") {
+        String name=server.arg("name");
+        if (name.length()!=10 || !name.startsWith("mood-") || !name.endsWith(".bcv") || name[5]<'1' || name[5]>'5' ||
+            !mood_clip::install(up.finalPath.c_str(), unsigned(name[5]-'0'))) {
+          SD_MMC.remove(up.finalPath); return abortUpload("Could not activate video. Try again when no clip is playing.");
+        }
+        SD_MMC.remove(up.finalPath);
+      }
       storage::touch();
       uint32_t ms = millis() - up.started;
       Serial.printf("[sd] saved %s (%u bytes, %u ms, %.0f KB/s)\n", up.finalPath.c_str(),
@@ -366,6 +377,7 @@ void task(void *) {
 void begin() {
   server.on("/", HTTP_GET, handleRoot);
   server.on("/info", HTTP_GET, handleInfo);
+  server.on("/mood-video.js", HTTP_GET, []() { server.send_P(200, "application/javascript", MOOD_VIDEO_JS); });
   server.on("/weather", HTTP_GET, handleWeatherGet);
   server.on("/weather", HTTP_POST, handleWeatherSet);
   server.on("/zones", HTTP_GET, handleZones);

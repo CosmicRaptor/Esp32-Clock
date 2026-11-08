@@ -13,6 +13,8 @@ namespace sound {
 void begin();  // after storage::begin() is not required; the card is checked at play time
 
 void play(const char *fileName);  // "" = built-in beep; plays on repeat
+// Plays one SD-card clip once, without alarm fallback or looping.
+void playClip(const char *path);
 void stop();
 bool playing();
 

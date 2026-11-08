@@ -8,7 +8,7 @@ A gift: a panda-themed desk clock for Aryan's girlfriend, Bhoomi. It runs on a *
 
 ```
 Aryan's phone ──▶ portal (Cloudflare Worker + KV, behind Cloudflare Access)
-                      ▲  GET /api/device/state every 10 s (protobuf, ETag → mostly 304)
+                      ▲  GET /api/device/state every 30 s (protobuf, ETag → mostly 304)
                       │  GET /api/device/{image,face,asset,art}/…   PUT /api/device/sounds
                   the clock (this sketch) at Bhoomi's home, on weak Wi-Fi (−85 to −93 dBm)
 ```
