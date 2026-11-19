@@ -1,3 +1,4 @@
+#include "debug_log.h"
 #include "display.h"
 
 #include <driver/spi_master.h>
@@ -102,7 +103,7 @@ void beginScrollMetrics() {
 void endScrollMetrics() {
   if(!measuringScroll)return;
   measuringScroll=false;
-  Serial.printf("[pager] scroll %u ms, ui passes %u, max UI %u us, pixels %u\n",
+  debuglog::printf("[pager] scroll %u ms, ui passes %u, max UI %u us, pixels %u\n",
     (unsigned)(millis()-scrollStarted),(unsigned)scrollFrames,(unsigned)scrollMaxUs,(unsigned)scrollPixels);
 }
 void loop() {

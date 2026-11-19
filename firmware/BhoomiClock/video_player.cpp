@@ -1,3 +1,4 @@
+#include "debug_log.h"
 #include "video_player.h"
 #include "storage.h"
 #include "sound.h"
@@ -56,7 +57,7 @@ bool nextFrame() {
   active = next;
   const uint32_t elapsed = millis() - frameStarted;
   if (elapsed >= FRAME_MS)
-    Serial.printf("[video] slow frame %u: %lu ms (budget %lu ms)\n", frame,
+    debuglog::printf("[video] slow frame %u: %lu ms (budget %lu ms)\n", frame,
                   (unsigned long)elapsed, (unsigned long)FRAME_MS);
   ++frame; return true;
 }

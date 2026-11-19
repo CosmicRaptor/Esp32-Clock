@@ -1,3 +1,4 @@
+#include "debug_log.h"
 #include "ui.h"
 
 #include <esp_heap_caps.h>
@@ -357,21 +358,21 @@ bool decodePhoto(const uint8_t *jpg, size_t n, const char *id) {
   cfg.out_scale = JPEG_IMAGE_SCALE_0;
   esp_jpeg_image_output_t info = {};
   if (esp_jpeg_get_image_info(&cfg, &info) != ESP_OK || !info.width || !info.height) {
-    Serial.printf("[ui] photo %s: not a decodable JPEG\n", id);
+    debuglog::printf("[ui] photo %s: not a decodable JPEG\n", id);
     return false;
   }
   int slot = slotInUse == 0 ? 1 : 0;
   free(slots[slot].px);
   slots[slot].px = (uint8_t *)heap_caps_malloc(info.output_len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!slots[slot].px) {
-    Serial.printf("[ui] photo %s: no memory for %u bytes\n", id, (unsigned)info.output_len);
+    debuglog::printf("[ui] photo %s: no memory for %u bytes\n", id, (unsigned)info.output_len);
     return false;
   }
   cfg.outbuf = slots[slot].px;
   cfg.outbuf_size = info.output_len;
   uint32_t t0 = millis();
   if (esp_jpeg_decode(&cfg, &info) != ESP_OK) {
-    Serial.printf("[ui] photo %s: decode failed\n", id);
+    debuglog::printf("[ui] photo %s: decode failed\n", id);
     free(slots[slot].px);
     slots[slot].px = nullptr;
     return false;
@@ -393,7 +394,7 @@ bool decodePhoto(const uint8_t *jpg, size_t n, const char *id) {
     slots[old].px = nullptr;
   }
   strlcpy(shownPhotoId, id, sizeof shownPhotoId);
-  Serial.printf("[ui] photo %s: %ux%u decoded in %u ms\n", id, info.width, info.height,
+  debuglog::printf("[ui] photo %s: %ux%u decoded in %u ms\n", id, info.width, info.height,
                 (unsigned)(millis() - t0));
   return true;
 }
@@ -454,7 +455,7 @@ void applyPortal() {
   noteIdentity = identityForNote(note, portal::state().has_note ? portal::state().note.sent_at : 0);
   if (inboxOpen) lv_label_set_text(noteLabel, noteShown[0] ? noteShown : "No note right now.");
 
-  Serial.printf("[ui] portal update: note=%s%s%s, photo=%s (%u bytes), %u alarm(s)\n", note ? "\"" : "none",
+  debuglog::printf("[ui] portal update: note=%s%s%s, photo=%s (%u bytes), %u alarm(s)\n", note ? "\"" : "none",
                 note ? note : "", note ? "\"" : "", jpg ? portal::photoId() : "none", (unsigned)n,
                 (unsigned)portal::state().alarms_count);
 }
@@ -606,7 +607,7 @@ bool decodeCover(NpSide &n, const uint8_t *jpg, size_t len, const char *id) {
   cfg.out_scale = JPEG_IMAGE_SCALE_0;
   esp_jpeg_image_output_t info = {};
   if (esp_jpeg_get_image_info(&cfg, &info) != ESP_OK || !info.width || !info.height || info.output_len > 64 * 1024) {
-    Serial.printf("[ui] cover %.8s: not a decodable JPEG\n", id);
+    debuglog::printf("[ui] cover %.8s: not a decodable JPEG\n", id);
     return false;
   }
   uint8_t *px = (uint8_t *)heap_caps_malloc(info.output_len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -614,7 +615,7 @@ bool decodeCover(NpSide &n, const uint8_t *jpg, size_t len, const char *id) {
   cfg.outbuf = px;
   cfg.outbuf_size = info.output_len;
   if (esp_jpeg_decode(&cfg, &info) != ESP_OK) {
-    Serial.printf("[ui] cover %.8s: decode failed\n", id);
+    debuglog::printf("[ui] cover %.8s: decode failed\n", id);
     free(px);
     return false;
   }
@@ -689,7 +690,7 @@ void updateNowPlaying() {
       continue;
     show(n.half, on);
     lv_obj_set_style_opa(n.half, st == bhoomi_clock_v1_Listener_Status_PAUSED ? LV_OPA_50 : LV_OPA_COVER, 0);
-    Serial.printf("[ui] now playing %s side: %s\n", i ? "right" : "left",
+    debuglog::printf("[ui] now playing %s side: %s\n", i ? "right" : "left",
                   !on ? "hidden" : st == bhoomi_clock_v1_Listener_Status_PAUSED ? "paused (dimmed)" : "playing");
   }
   const auto *slot = current == View::Face ? faceview::nowPlayingSlot() : nullptr;
@@ -697,7 +698,7 @@ void updateNowPlaying() {
   if (want != npVisible) {
     npVisible = want;
     show(npStrip, want);
-    Serial.printf("[ui] now playing strip %s\n", want ? "shown" : "hidden");
+    debuglog::printf("[ui] now playing strip %s\n", want ? "shown" : "hidden");
   }
 }
 
@@ -717,7 +718,7 @@ void stopRing(const char *why) {
   sound::stop();
   show(alarmView, false);
   applyBrightness();
-  Serial.printf("[alarm] stopped (%s)\n", why);
+  debuglog::printf("[alarm] stopped (%s)\n", why);
 }
 
 void startRing(unsigned hour, unsigned minute, const char *text, const char *soundFile) {
@@ -733,7 +734,7 @@ void startRing(unsigned hour, unsigned minute, const char *text, const char *sou
   lv_obj_move_foreground(alarmView);
   applyBrightness();
   sound::play(soundFile);
-  Serial.printf("[alarm] RING %02u:%02u \"%s\" sound=%s\n", hour, minute, text, soundFile[0] ? soundFile : "(beep)");
+  debuglog::printf("[alarm] RING %02u:%02u \"%s\" sound=%s\n", hour, minute, text, soundFile[0] ? soundFile : "(beep)");
 }
 
 void buildAlarm() {
@@ -908,7 +909,7 @@ void refreshFace() {
     faceShown = false;
     faceShownId[0] = faceShownRev[0] = 0;
     changed = true;
-    Serial.println("[ui] no portal face applies: the built-in clock");
+    debuglog::println("[ui] no portal face applies: the built-in clock");
   } else if (!faceShown || strcmp(f->id, faceShownId) != 0 || strcmp(f->rev, faceShownRev) != 0 || portal::weatherFaceGroup() != faceShownWeather) {
     if (!faceview::show(*f)) return;  // can't be built: keep what's showing, and try again next minute
     faceShown = true;
@@ -982,7 +983,7 @@ void loadHome() {
   // Force text refresh even when returning in the same minute.
   lv_label_set_text(timeLabel, "");
   applyPortal(); applyNowPlaying(); refreshFace(); showView(View::Clock);
-  Serial.printf("[pager] clock build %u ms\n",(unsigned)(millis()-started));
+  debuglog::printf("[pager] clock build %u ms\n",(unsigned)(millis()-started));
 }
 void applyBrightness() {
   static int previous = -1;
@@ -1098,7 +1099,7 @@ void updateModes() {
     modeTime = modeRing = modeCaption = modePanda = nightSpotify = nullptr;
     lv_obj_set_style_bg_color(pages[(int)mode], nightDim ? lv_color_black() : BG, 0);
     lv_obj_set_style_text_color(pageTitles[(int)mode], nightDim ? lv_color_hex(0x990D0D) : INK, 0);
-    Serial.printf("[ui] page %s (focus=%d)\n", next == Mode::Clock ? "Clock" : next == Mode::Focus ? "Focus" : "Night", (int)focusTimer.state);
+    debuglog::printf("[ui] page %s (focus=%d)\n", next == Mode::Clock ? "Clock" : next == Mode::Focus ? "Focus" : "Night", (int)focusTimer.state);
     revealAt = millis() | 1;
     if (!changed) revealAt = millis() - MODE_REVEAL_MS - 1;
     applyBrightness();
@@ -1225,14 +1226,14 @@ void begin(const char *apName) {
 }
 
 void printStats() {
-  Serial.printf("[uistats] {\"mode\":\"%s\",\"pager_moving\":%s,\"pager_busy\":%s,\"offset\":%ld,\"recoveries\":%u,\"focus_art_bytes\":%u}\n",
+  debuglog::printf("[uistats] {\"mode\":\"%s\",\"pager_moving\":%s,\"pager_busy\":%s,\"offset\":%ld,\"recoveries\":%u,\"focus_art_bytes\":%u,\"log_dropped\":%u,\"log_buffered\":%u}\n",
     mode == Mode::Clock ? "Clock" : mode == Mode::Focus ? "Focus" : "Night",
     pagerMoving ? "true" : "false",
     (lv_obj_is_scrolling(pager) || lv_anim_get(pager,nullptr)) ? "true" : "false",
-    (long)lv_obj_get_scroll_x(pager),(unsigned)pagerRecoveries,(unsigned)focusview::artworkBytes());
+    (long)lv_obj_get_scroll_x(pager),(unsigned)pagerRecoveries,(unsigned)focusview::artworkBytes(),(unsigned)debuglog::dropped(),(unsigned)debuglog::buffered());
 }
 
-void testMindfulness() { if (timeValid() && mode == Mode::Clock && !focusTimer.quiet()) showMood(); else Serial.println("[mindfulness] waiting for clock time"); }
+void testMindfulness() { if (timeValid() && mode == Mode::Clock && !focusTimer.quiet()) showMood(); else debuglog::println("[mindfulness] waiting for clock time"); }
 
 void testAlarm(const char *soundFile) {
   time_t now = time(nullptr);

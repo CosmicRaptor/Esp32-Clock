@@ -1,3 +1,4 @@
+#include "debug_log.h"
 #include "web.h"
 
 #include <ESPmDNS.h>
@@ -260,7 +261,7 @@ void handleDelete() {
   if (!SD_MMC.exists(path)) return sendError(404, "not found");
   if (!SD_MMC.remove(path)) return sendError(500, "could not delete");
   storage::touch();
-  Serial.printf("[sd] deleted %s\n", path.c_str());
+  debuglog::printf("[sd] deleted %s\n", path.c_str());
   sendJson("{\"ok\":true}");
 }
 
@@ -329,7 +330,7 @@ void handleUploadData() {
       if (!up.buf) return abortUpload("out of memory");
       up.file = SD_MMC.open(up.tmpPath, FILE_WRITE);
       if (!up.file) return abortUpload("could not create file");
-      Serial.printf("[sd] upload start %s\n", up.finalPath.c_str());
+      debuglog::printf("[sd] upload start %s\n", up.finalPath.c_str());
       break;
     }
     case UPLOAD_FILE_WRITE: {
@@ -360,7 +361,7 @@ void handleUploadData() {
       }
       storage::touch();
       uint32_t ms = millis() - up.started;
-      Serial.printf("[sd] saved %s (%u bytes, %u ms, %.0f KB/s)\n", up.finalPath.c_str(),
+      debuglog::printf("[sd] saved %s (%u bytes, %u ms, %.0f KB/s)\n", up.finalPath.c_str(),
                     (unsigned)up.total, (unsigned)ms, ms ? up.total / 1.024 / ms : 0.0);
       break;
     }
@@ -423,7 +424,7 @@ void onOnline() {
   if (MDNS.begin(HOSTNAME)) {
     MDNS.addService("http", "tcp", 80);
     mdnsUp = true;
-    Serial.printf("[web] settings at http://%s.local/\n", HOSTNAME);
+    debuglog::printf("[web] settings at http://%s.local/\n", HOSTNAME);
   }
 }
 

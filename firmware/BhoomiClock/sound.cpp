@@ -1,3 +1,4 @@
+#include "debug_log.h"
 #include "sound.h"
 
 #include <Audio.h>
@@ -57,7 +58,7 @@ void put32(uint8_t *p, uint32_t v) { put16(p, v & 0xFFFF); put16(p + 2, v >> 16)
 // Writes the beep WAV if it isn't there yet. Returns true when the file is usable.
 bool ensureBeep() {
   if (!FFat.begin(true)) {  // formats only our own (otherwise unused) partition if it was never set up
-    Serial.println("[sound] flash storage unavailable; no built-in beep");
+    debuglog::println("[sound] flash storage unavailable; no built-in beep");
     return false;
   }
   if (FFat.exists(BEEP_FILE)) return true;
@@ -103,7 +104,7 @@ bool ensureBeep() {
     ok = FFat.rename(tmp, BEEP_FILE);
   }
   if (!ok) FFat.remove(tmp);
-  Serial.printf("[sound] built-in beep %s\n", ok ? "written to flash" : "could not be written");
+  debuglog::printf("[sound] built-in beep %s\n", ok ? "written to flash" : "could not be written");
   return ok;
 }
 
@@ -130,7 +131,7 @@ void ensureChime() {
 
 void onAudioEvent(Audio::msg_t m) {
   if (m.e == Audio::evt_info || m.e == Audio::evt_log || m.e == Audio::evt_eof)
-    Serial.printf("[audio] %s: %s\n", m.s ? m.s : "", m.msg ? m.msg : "");
+    debuglog::printf("[audio] %s: %s\n", m.s ? m.s : "", m.msg ? m.msg : "");
 }
 
 bool startTrack() {
@@ -151,20 +152,20 @@ bool startTrack() {
     if (SD_MMC.exists(path)) {
       ok = audio->connecttoFS(SD_MMC, path.c_str());
       usingBeep = false;
-      if (!ok) Serial.printf("[sound] %s: could not open\n", current);
+      if (!ok) debuglog::printf("[sound] %s: could not open\n", current);
     } else {
-      Serial.printf("[sound] %s not found on the card\n", current);
+      debuglog::printf("[sound] %s not found on the card\n", current);
       giveUpOnFile = true;
     }
   }
   if (!ok) {
     usingBeep = true;
     ok = audio->connecttoFS(FFat, BEEP_FILE);
-    if (!ok) Serial.println("[sound] built-in beep unavailable");
+    if (!ok) debuglog::println("[sound] built-in beep unavailable");
   }
   trackRunning = ok;
   trackStartedAt = millis();
-  if (ok) Serial.printf("[sound] playing %s\n", usingBeep ? "built-in beep" : current);
+  if (ok) debuglog::printf("[sound] playing %s\n", usingBeep ? "built-in beep" : current);
   return ok;
 }
 
@@ -188,7 +189,7 @@ void handleRequests() {
     trackRunning = false;
     active = false;
     restartAt = 0;
-    if (doStop) Serial.println("[sound] stopped");
+    if (doStop) debuglog::println("[sound] stopped");
   }
   if (doPlay) {  // a play after a stop in the same tick wins
     strlcpy(current, file, sizeof current);
@@ -212,7 +213,7 @@ void trackEnded() {
   if (!usingBeep) {
     if (len < MIN_GOOD_PLAY_MS) {
       if (++shortPlays >= MAX_SHORT_PLAYS) {
-        Serial.printf("[sound] %s keeps ending at once (unsupported?); using the beep instead\n", current);
+        debuglog::printf("[sound] %s keeps ending at once (unsupported?); using the beep instead\n", current);
         giveUpOnFile = true;
       }
     } else {

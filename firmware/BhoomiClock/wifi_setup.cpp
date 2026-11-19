@@ -1,3 +1,4 @@
+#include "debug_log.h"
 #include "wifi_setup.h"
 
 #include <DNSServer.h>
@@ -113,7 +114,7 @@ void collectScan(int n) {
   }
   std::sort(nets.begin(), nets.end(), [](const Net &a, const Net &b) { return a.rssi > b.rssi; });
   WiFi.scanDelete();
-  Serial.printf("[wifi] scan: %u networks\n", (unsigned)nets.size());
+  debuglog::printf("[wifi] scan: %u networks\n", (unsigned)nets.size());
 }
 
 void startScan() {
@@ -126,7 +127,7 @@ void startScan() {
 
 void startPortal() {
   if (portalUp) return;
-  Serial.printf("[wifi] starting setup portal \"%s\"\n", apName.c_str());
+  debuglog::printf("[wifi] starting setup portal \"%s\"\n", apName.c_str());
 
   // Scan in plain STA mode first (radio idle, not serving an AP) so the page opens with a list.
   // The first scan right after a mode change can fail, so retry.
@@ -162,13 +163,13 @@ void stopPortal() {
   WiFi.softAPdisconnect(true);
   WiFi.mode(WIFI_STA);
   portalUp = false;
-  Serial.println("[wifi] setup portal closed");
+  debuglog::println("[wifi] setup portal closed");
 }
 
 void becameOnline() {
   joining = false;
   WiFi.setAutoReconnect(true);
-  Serial.printf("[wifi] online: \"%s\" ip=%s rssi=%d dBm\n", WiFi.SSID().c_str(),
+  debuglog::printf("[wifi] online: \"%s\" ip=%s rssi=%d dBm\n", WiFi.SSID().c_str(),
                 WiFi.localIP().toString().c_str(), WiFi.RSSI());
   setStatus(Phase::Online, WiFi.SSID(), WiFi.localIP().toString());
 }
@@ -180,7 +181,7 @@ void joinLoop() {
   if (ws == WL_CONNECTED) {
     if (joinIsCandidate) {
       saveCreds(candSsid, candPass);
-      Serial.println("[wifi] credentials saved");
+      debuglog::println("[wifi] credentials saved");
       portalCloseAt = millis() + PORTAL_LINGER_MS;
     } else if (portalUp) {
       portalCloseAt = millis() + 1000;  // background retry of saved network worked
@@ -193,7 +194,7 @@ void joinLoop() {
 
   joining = false;
   WiFi.disconnect(false, false);  // stop the driver retrying on its own
-  Serial.printf("[wifi] join failed (reason %u, status %d)\n", lastDiscReason, ws);
+  debuglog::printf("[wifi] join failed (reason %u, status %d)\n", lastDiscReason, ws);
   if (joinIsCandidate) {
     // Weak links fail the handshake too, which would otherwise read as "wrong password".
     auto it = std::find_if(nets.begin(), nets.end(), [](const Net &n) { return n.ssid == candSsid; });
@@ -231,7 +232,7 @@ void portalLoop() {
   // but never while a phone is on the setup AP (a retry hops channels and drops them).
   if (!joining && !scanning && st.phase == Phase::Portal && !savedSsid.isEmpty() &&
       now - lastSavedRetry > PORTAL_RETRY_MS && WiFi.softAPgetStationNum() == 0) {
-    Serial.printf("[wifi] retrying saved network \"%s\"\n", savedSsid.c_str());
+    debuglog::printf("[wifi] retrying saved network \"%s\"\n", savedSsid.c_str());
     lastSavedRetry = now;
     startJoin(savedSsid, savedPass, false);
   }
@@ -242,7 +243,7 @@ void checkForgetButton() {
     if (!bootDownSince) {
       bootDownSince = millis() | 1;
     } else if (millis() - bootDownSince > FORGET_HOLD_MS) {
-      Serial.println("[wifi] BOOT held: forgetting Wi-Fi and rebooting");
+      debuglog::println("[wifi] BOOT held: forgetting Wi-Fi and rebooting");
       forget();
       delay(200);
       ESP.restart();
@@ -295,11 +296,11 @@ void begin(const char *name, Listener onChange) {
 
   loadCreds();
   if (savedSsid.isEmpty()) {
-    Serial.println("[wifi] no saved network");
+    debuglog::println("[wifi] no saved network");
     startPortal();
     return;
   }
-  Serial.printf("[wifi] joining saved network \"%s\"\n", savedSsid.c_str());
+  debuglog::printf("[wifi] joining saved network \"%s\"\n", savedSsid.c_str());
   WiFi.mode(WIFI_STA);
   startJoin(savedSsid, savedPass, false);
   setStatus(Phase::JoiningSaved, savedSsid);
@@ -313,7 +314,7 @@ void loop() {
   if (!joining && !portalUp) {
     bool up = WiFi.status() == WL_CONNECTED;
     if (!up && st.phase == Phase::Online) {
-      Serial.println("[wifi] connection lost, auto-reconnecting");
+      debuglog::println("[wifi] connection lost, auto-reconnecting");
       setStatus(Phase::Reconnecting, st.ssid);
     } else if (up && st.phase == Phase::Reconnecting) {
       becameOnline();
@@ -352,7 +353,7 @@ String scanJson(bool refresh) {
 void connect(const String &s, const String &p) {
   candSsid = s;
   candPass = p;
-  Serial.printf("[wifi] portal: trying \"%s\"\n", s.c_str());
+  debuglog::printf("[wifi] portal: trying \"%s\"\n", s.c_str());
   if (scanning) {  // a running scan would make the join fail
     WiFi.scanDelete();
     scanning = false;

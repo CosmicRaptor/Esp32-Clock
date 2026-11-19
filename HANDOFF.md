@@ -1,5 +1,15 @@
 # Handoff: Bhoomi's Clock
 
+## End-button stall / USB debug output — USB flashed 0.12.3, 20 November 2026
+
+After the 0.12.2 capture ended, user reported another End-button freeze with delayed scrolling followed by recovery. Live snapshot showed healthy memory and no latched scroll flag; attaching a USB reader was followed by a successful swipe. Installed HWCDC writer can wait seconds for host consumption, and my page diagnostics plus other app logs were synchronous UI/task writes. The continuous reader could mask this path. Do not describe the 0.12.2 memory results as a final resolution of all freezes.
+
+Moved every application debug print into a bounded, fixed 8 KB PSRAM queue. Only a separate low-priority task writes USB, outside app/queue locks. Producers never wait for USB; full records drop on overflow, formatted records cap at 383 bytes, and counters appear in uistats. Serial input unchanged. Writer stack is 3 KB internal RAM. No installed Arduino library was modified. Host regression with stopped output task and forbidden producer USB calls: 100,000 writes return in 12–13 ms, queue stays bounded, overflow/wraparound tests pass. Added that regression to signed OTA CI; 176 Python + 78 JS portal tests and timer/navigation checks pass.
+
+Firmware **0.12.3** USB-flashed with hashes verified; bootloader/partitions unchanged. `./build.sh`: **3,080,190 bytes (48% of 6 MB), globals 85,816 bytes**; application file 3,080,336 bytes. Kept the USB reader closed for about 170 seconds after boot while user tested repeated Start/End and scrolling; user confirmed **No pauses; responsive**. Then 90-second capture recorded 9 samples: heap 51,012–62,148, largest internal block fixed 31,732; LVGL free fixed 339,256, fragmentation 1%, Focus artwork zero on Clock. Log backlog drained 2,194→0; no normal-use drops observed. This is bounded validation, not a multi-hour hardware soak or proof that the queue was forced full on the device.
+
+Report: `soak-tests/reports/20261120-usb-log-stall.md`; prior report annotated with follow-up. Logs: `build/frozen-after-end-0.12.2-serial.log`, `soak-tests/usb-20261120-013315/serial.jsonl`, `soak-tests/usb-20261120-014315/serial.jsonl`. Captures ended; no reader left attached. Preserve unrelated Wi-Fi diagnostic, portal, CI cache and AGENTS.md edits.
+
 ## Freeze investigation and memory monitoring — USB flashed 0.12.2, 20 November 2026
 
 User reported progressive lag and a stuck screen. Preserved eight 0.12.1 pre-reset samples (internal heap recovered to 59,312 bytes, largest block fixed at 31,732, LVGL fragmentation 5%), then reset without reflashing at the user's request and captured a separate baseline. Reproduced a real bug in my scroll changes: LVGL emits SCROLL_BEGIN before registering an animation, but cancelling before its first tick can omit SCROLL_END, leaving pagerMoving set and normal UI updates paused. Native regression failed before the fix. Main loop now reconciles that flag with actual pointer-scroll and animation state so it cannot remain paused when both are idle. Added read-only UI-state/artwork diagnostics alongside memstats.

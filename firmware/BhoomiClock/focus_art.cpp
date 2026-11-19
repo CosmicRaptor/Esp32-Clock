@@ -1,3 +1,4 @@
+#include "debug_log.h"
 #include "focus_art.h"
 #include <Arduino.h>
 #include <SD_MMC.h>
@@ -39,7 +40,7 @@ bool install() {
   if (ok && SD_MMC.exists(PATH)) ok = SD_MMC.remove(PATH);
   if (ok) ok = SD_MMC.rename(TEMP,PATH);
   if (!ok) SD_MMC.remove(TEMP);
-  Serial.printf("[focus-art] SD install %s (%u bytes)\n",ok ? "ok" : "failed",(unsigned)sizeof FOCUS_STUDY_JPG);
+  debuglog::printf("[focus-art] SD install %s (%u bytes)\n",ok ? "ok" : "failed",(unsigned)sizeof FOCUS_STUDY_JPG);
   return ok;
 }
 uint8_t *load() {
@@ -66,7 +67,7 @@ uint8_t *load() {
     if(px){cfg.outbuf=px;cfg.outbuf_size=PIXELS;if(esp_jpeg_decode(&cfg,&info)!=ESP_OK){free(px);px=nullptr;}}
   }
   free(jpg);
-  Serial.printf("[focus-art] SD decode %s (%u ms)\n",px ? "ok" : "failed",(unsigned)(millis()-started));
+  debuglog::printf("[focus-art] SD decode %s (%u ms)\n",px ? "ok" : "failed",(unsigned)(millis()-started));
   return px;
 }
 }

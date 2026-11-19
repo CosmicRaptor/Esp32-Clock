@@ -1,5 +1,7 @@
 # Clock memory and scroll-freeze investigation — 20 November 2026
 
+**Follow-up:** the user subsequently reported another End-button stall after this capture ended. The memory findings below remain valid, but 0.12.2 was not the final resolution. See [the 0.12.3 USB-log follow-up](20261120-usb-log-stall.md) for the live snapshot, background logging fix and no-reader validation.
+
 Firmware **0.12.2** was USB-installed after preserving the original frozen-state capture and a separate reset run of 0.12.1. User reported repeated scrolling, reversed swipes, Start/End and a running timer remained responsive after the fix.
 
 ## Reproduced regression

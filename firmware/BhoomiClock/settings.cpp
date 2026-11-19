@@ -1,3 +1,4 @@
+#include "debug_log.h"
 #include "settings.h"
 
 #include <Preferences.h>
@@ -22,7 +23,7 @@ void begin() {
   prefs.end();
   zone = tz::find(id);
   apply();
-  Serial.printf("[settings] time zone: %s (%s)\n", zone ? zone->id : "not set", posixTz());
+  debuglog::printf("[settings] time zone: %s (%s)\n", zone ? zone->id : "not set", posixTz());
 }
 
 bool setTimezone(const String &id) {
@@ -33,7 +34,7 @@ bool setTimezone(const String &id) {
     prefs.putString("tz", z->id);
     prefs.end();
     zone = z;
-    Serial.printf("[settings] time zone set to %s\n", z->id);
+    debuglog::printf("[settings] time zone set to %s\n", z->id);
   }
   apply();
   return true;

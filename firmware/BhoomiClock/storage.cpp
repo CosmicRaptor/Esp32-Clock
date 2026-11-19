@@ -1,3 +1,4 @@
+#include "debug_log.h"
 #include "storage.h"
 
 #include <FS.h>
@@ -23,17 +24,17 @@ bool begin() {
   digitalWrite(PIN_D3, HIGH);
   delay(10);
   if (!SD_MMC.setPins(PIN_CLK, PIN_CMD, PIN_D0)) {
-    Serial.println("[sd] pin setup failed");
+    debuglog::println("[sd] pin setup failed");
     return false;
   }
   // 1-bit bus, and never format: a mount failure must not wipe someone's card.
   if (!SD_MMC.begin("/sdcard", true, false, SDMMC_FREQ_DEFAULT)) {
-    Serial.println("[sd] no card / mount failed");
+    debuglog::println("[sd] no card / mount failed");
     return false;
   }
   if (SD_MMC.cardType() == CARD_NONE) {
     SD_MMC.end();
-    Serial.println("[sd] no card");
+    debuglog::println("[sd] no card");
     return false;
   }
   for (const char *d : {"/photos", "/sounds", "/mood-staging"})
@@ -45,7 +46,7 @@ bool begin() {
   }
   isMounted = true;
   gen = gen + 1;
-  Serial.printf("[sd] mounted: %llu MB, %llu MB used\n", SD_MMC.totalBytes() >> 20,
+  debuglog::printf("[sd] mounted: %llu MB, %llu MB used\n", SD_MMC.totalBytes() >> 20,
                 SD_MMC.usedBytes() >> 20);
   return true;
 }

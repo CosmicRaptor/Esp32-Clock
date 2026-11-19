@@ -1,3 +1,4 @@
+#include "debug_log.h"
 #include "ota_health.h"
 #include <Arduino.h>
 #include <atomic>
@@ -38,7 +39,7 @@ void tick() {
   if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
     esp_timer_stop(deadline);
     verifying = false;
-    Serial.println("[ota] startup health checks passed");
+    debuglog::println("[ota] startup health checks passed");
   }
 }
 }

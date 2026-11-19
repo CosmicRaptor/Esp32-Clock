@@ -1,3 +1,4 @@
+#include "debug_log.h"
 #include "touch.h"
 
 #include <Wire.h>
@@ -137,7 +138,7 @@ void readCb(lv_indev_t *, lv_indev_data_t *data) {
     if (SWAP_XY) std::swap(x, y);
     lastX = constrain(x, 0, display::WIDTH - 1);
     lastY = constrain(y, 0, display::HEIGHT - 1);
-    if (missed >= 3) Serial.printf("[touch] down raw (%u,%u) -> screen (%d,%d)\n", rx, ry, lastX, lastY);
+    if (missed >= 3) debuglog::printf("[touch] down raw (%u,%u) -> screen (%d,%d)\n", rx, ry, lastX, lastY);
     missed = 0;
   } else if (missed < 1000) {
     missed++;
@@ -157,10 +158,10 @@ bool begin() {
   if (probe328()) chip = Chip::CST328;
   else if (probe3530()) chip = Chip::CST3530;
   if (chip == Chip::None) {
-    Serial.println("[touch] no touch controller found; the screen won't react to touch");
+    debuglog::println("[touch] no touch controller found; the screen won't react to touch");
     return false;
   }
-  Serial.printf("[touch] %s found\n", chip == Chip::CST328 ? "CST328" : "CST3530");
+  debuglog::printf("[touch] %s found\n", chip == Chip::CST328 ? "CST328" : "CST3530");
 
   missed = 1000;  // start released
   lv_indev_t *dev = lv_indev_create();

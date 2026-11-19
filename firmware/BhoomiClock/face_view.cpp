@@ -1,3 +1,4 @@
+#include "debug_log.h"
 #include "face_view.h"
 
 #include <esp_heap_caps.h>
@@ -92,18 +93,18 @@ uint8_t *decodeBackground(const uint8_t *jpg, size_t n) {
   esp_jpeg_image_output_t info = {};
   if (esp_jpeg_get_image_info(&cfg, &info) != ESP_OK || info.width != display::WIDTH || info.height != display::HEIGHT ||
       info.output_len != BG_BYTES) {
-    Serial.println("[face] background: not a 320x240 JPEG");
+    debuglog::println("[face] background: not a 320x240 JPEG");
     return nullptr;
   }
   uint8_t *px = (uint8_t *)heap_caps_malloc(BG_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!px) {
-    Serial.println("[face] background: out of memory");
+    debuglog::println("[face] background: out of memory");
     return nullptr;
   }
   cfg.outbuf = px;
   cfg.outbuf_size = BG_BYTES;
   if (esp_jpeg_decode(&cfg, &info) != ESP_OK) {
-    Serial.println("[face] background: decode failed");
+    debuglog::println("[face] background: decode failed");
     heap_caps_free(px);
     return nullptr;
   }
@@ -377,7 +378,7 @@ bool show(const portal::Face &original) {
     particles += E.count;
   }
   if (!ok || inst > MAX_INST || particles > MAX_PART) {
-    Serial.printf("[face] %s: can't be shown (a file is missing or broken, or it is too big)\n", f.id);
+    debuglog::printf("[face] %s: can't be shown (a file is missing or broken, or it is too big)\n", f.id);
     freeSprites(tmp, tmpN);
     heap_caps_free(px);
     return false;
@@ -386,7 +387,7 @@ bool show(const portal::Face &original) {
   lv_font_t *ft = makeFont(sizeTime, nullptr, 0);
   lv_font_t *fd = f.has_date ? makeFont(sizeDate, ft, sizeTime) : nullptr;
   if (!ft || (f.has_date && !fd)) {
-    Serial.printf("[face] %s: no memory for its fonts\n", f.id);
+    debuglog::printf("[face] %s: no memory for its fonts\n", f.id);
     if (fd && fd != ft) lv_tiny_ttf_destroy(fd);
     if (ft) lv_tiny_ttf_destroy(ft);
     freeSprites(tmp, tmpN);
@@ -431,7 +432,7 @@ bool show(const portal::Face &original) {
 
   on = true;
   shownAt = millis();
-  Serial.printf("[face] %s (%s): %d sprite image(s), %d particle(s), %d file(s)\n", faceStored->id, faceStored->rev, instN, partN, sprN);
+  debuglog::printf("[face] %s (%s): %d sprite image(s), %d particle(s), %d file(s)\n", faceStored->id, faceStored->rev, instN, partN, sprN);
   time_t now = time(nullptr);  // place everything now, so the first frame isn't a pile of sprites in the corner
   struct tm t;
   localtime_r(&now, &t);

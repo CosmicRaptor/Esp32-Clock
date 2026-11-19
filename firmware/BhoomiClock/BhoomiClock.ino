@@ -1,3 +1,4 @@
+#include "debug_log.h"
 // Bhoomi's clock — Waveshare ESP32-S3-Touch-LCD-2.8 (landscape, in the stand)
 //
 // - Wi-Fi setup via captive portal, with on-screen instructions + join QR code
@@ -43,7 +44,7 @@ static void onWifi(const wifisetup::Status &s) {
       // configTzTime keeps our TZ rule (plain configTime would overwrite it with a fixed offset).
       configTzTime(settings::posixTz(), "pool.ntp.org", "time.google.com", "time.cloudflare.com");
       ntpStarted = true;
-      Serial.println("[ntp] sync started");
+      debuglog::println("[ntp] sync started");
     }
   }
 }
@@ -51,8 +52,9 @@ static void onWifi(const wifisetup::Status &s) {
 void setup() {
   otahealth::begin();
   Serial.begin(115200);
-  Serial.println();
-  Serial.println("=== Bhoomi clock booting ===");
+  debuglog::begin();
+  debuglog::println();
+  debuglog::println("=== Bhoomi clock booting ===");
 
   app::Lock lock;
   settings::begin();
@@ -87,7 +89,7 @@ static void serialCommands() {
       lv_mem_monitor_t lv = {};
       { app::Lock lock; lv_mem_monitor(&lv); ui::printStats(); }
       constexpr uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
-      Serial.printf("[memstats] {\"uptime_s\":%llu,\"heap\":%u,\"min_heap\":%u,\"largest_block\":%u,\"psram\":%u,\"min_psram\":%u,\"largest_psram\":%u,\"lv_free\":%u,\"lv_largest\":%u,\"lv_frag_pct\":%u,\"reset\":%d,\"rssi\":%d}\n",
+      debuglog::printf("[memstats] {\"uptime_s\":%llu,\"heap\":%u,\"min_heap\":%u,\"largest_block\":%u,\"psram\":%u,\"min_psram\":%u,\"largest_psram\":%u,\"lv_free\":%u,\"lv_largest\":%u,\"lv_frag_pct\":%u,\"reset\":%d,\"rssi\":%d}\n",
           (unsigned long long)(esp_timer_get_time() / 1000000),
           (unsigned)heap_caps_get_free_size(caps), (unsigned)heap_caps_get_minimum_free_size(caps),
           (unsigned)heap_caps_get_largest_free_block(caps), (unsigned)ESP.getFreePsram(),
@@ -103,7 +105,7 @@ static void serialCommands() {
         String key="m"+String(i), dir="/mindfulness/"+String(i);
         String hash=ok ? prefs.getString(key.c_str(), "") : "";
         unsigned frames=0; for (; frames<100; ++frames) { char name[16]; snprintf(name,sizeof(name),"/%04u.jpg",frames); if(!SD_MMC.exists(dir+name)) break; }
-        Serial.printf("[mindfulness] status mood=%u hash=%s frames=%u audio=%s\n", i, hash.c_str(), frames, SD_MMC.exists(dir+"/audio.wav") ? "yes" : "no");
+        debuglog::printf("[mindfulness] status mood=%u hash=%s frames=%u audio=%s\n", i, hash.c_str(), frames, SD_MMC.exists(dir+"/audio.wav") ? "yes" : "no");
       }
       if (ok) prefs.end();
     }
@@ -129,7 +131,7 @@ void loop() {
     localtime_r(&now, &t);
     char buf[40];
     strftime(buf, sizeof buf, "%Y-%m-%d %H:%M:%S %Z", &t);
-    Serial.printf("[ntp] %s%s\n", buf, now > 1700000000 ? "" : " (not synced yet)");
+    debuglog::printf("[ntp] %s%s\n", buf, now > 1700000000 ? "" : " (not synced yet)");
   }
 
   delay(2);

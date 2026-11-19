@@ -1,3 +1,4 @@
+#include "debug_log.h"
 #include "portal_client.h"
 #include "face_weather.h"
 #include "face_cache_checks.h"
@@ -275,7 +276,7 @@ bool flashUp = false;
 
 bool flashBegin() {
   if (!flashUp) flashUp = FFat.begin(true);  // formats only our own (unused) partition if it was never set up
-  if (!flashUp) Serial.println("[portal] flash storage unavailable; nothing will be saved across power cuts");
+  if (!flashUp) debuglog::println("[portal] flash storage unavailable; nothing will be saved across power cuts");
   return flashUp;
 }
 
@@ -309,7 +310,7 @@ uint8_t *readAll(FS_ &fs, const char *path, size_t maxLen, size_t &len) {
 }
 
 void saveState(const uint8_t *body, size_t len) {
-  if (flashBegin() && !writeAtomic(FFat, STATE_FILE, body, len)) Serial.println("[portal] could not save state to flash");
+  if (flashBegin() && !writeAtomic(FFat, STATE_FILE, body, len)) debuglog::println("[portal] could not save state to flash");
 }
 
 void forgetPhoto() {
@@ -324,9 +325,9 @@ void savePhoto(const uint8_t *jpg, size_t len, const char *id) {
   SD_MMC.remove(PHOTO_ID_FILE);
   if (writeAtomic(SD_MMC, PHOTO_FILE, jpg, len) &&
       writeAtomic(SD_MMC, PHOTO_ID_FILE, (const uint8_t *)id, strlen(id)))
-    Serial.printf("[portal] photo %s saved to the SD card (%u bytes)\n", id, (unsigned)len);
+    debuglog::printf("[portal] photo %s saved to the SD card (%u bytes)\n", id, (unsigned)len);
   else
-    Serial.println("[portal] could not save the photo to the SD card");
+    debuglog::println("[portal] could not save the photo to the SD card");
 }
 
 // At boot: bring back the last state and photo. The first poll afterwards is unconditional (no
@@ -335,14 +336,14 @@ void loadSaved() {
   size_t len = 0;
   uint8_t *body = flashBegin() ? readAll(FFat, STATE_FILE, bhoomi_clock_v1_DeviceState_size + 64, len) : nullptr;
   if (!body) {
-    Serial.println("[portal] no saved state");
+    debuglog::println("[portal] no saved state");
     return;
   }
   pb_istream_t in = pb_istream_from_buffer(body, len);
   State *next = (State *)bigAlloc(sizeof(State));
   if (next) memset(next, 0, sizeof(State));
   if (!next || !pb_decode(&in, &bhoomi_clock_v1_DeviceState_msg, next)) {
-    Serial.println("[portal] saved state is unreadable; ignoring it");
+    debuglog::println("[portal] saved state is unreadable; ignoring it");
     free(body);
     free(next);
     return;
@@ -351,7 +352,7 @@ void loadSaved() {
   cur.has_nowplaying = false;  // whatever was playing at the last save is old news
   memset(&cur.nowplaying, 0, sizeof cur.nowplaying);
   have = true;
-  Serial.printf("[portal] restored saved state v%u (%u bytes): note=%s, photo=%s, %u alarm(s)\n", (unsigned)cur.version,
+  debuglog::printf("[portal] restored saved state v%u (%u bytes): note=%s, photo=%s, %u alarm(s)\n", (unsigned)cur.version,
                 (unsigned)len, cur.has_note ? "yes" : "none", cur.has_photo ? cur.photo.id : "none",
                 (unsigned)cur.alarms_count);
   free(body);
@@ -374,11 +375,11 @@ void loadSaved() {
       photoBuf = jpg;
       photoLen = jpgLen;
       strlcpy(photoIdStr, savedId, sizeof photoIdStr);
-      Serial.printf("[portal] restored photo %s from the SD card (%u bytes%s)\n", savedId, (unsigned)jpgLen,
+      debuglog::printf("[portal] restored photo %s from the SD card (%u bytes%s)\n", savedId, (unsigned)jpgLen,
                     same ? "" : ", older than the state");
     } else {
       free(jpg);
-      Serial.println("[portal] no usable saved photo; it will be downloaded");
+      debuglog::println("[portal] no usable saved photo; it will be downloaded");
     }
   }
   bump();
@@ -387,14 +388,14 @@ void loadSaved() {
 // ---------- state ----------
 
 void logState(const State &st, const String &tag, size_t bytes) {
-  Serial.printf("[portal] state: 200 v%u etag=%s, %u bytes; note=%s%s%s; photo=%s; %u alarm(s)\n", (unsigned)st.version,
+  debuglog::printf("[portal] state: 200 v%u etag=%s, %u bytes; note=%s%s%s; photo=%s; %u alarm(s)\n", (unsigned)st.version,
                 tag.c_str(), (unsigned)bytes, st.has_note ? "\"" : "none", st.has_note ? st.note.text : "",
                 st.has_note ? "\"" : "", st.has_photo ? st.photo.id : "none", (unsigned)st.alarms_count);
   for (pb_size_t i = 0; i < st.alarms_count; i++) {
     const Alarm &a = st.alarms[i];
-    Serial.printf("[portal]   alarm %s %02u:%02u days=0x%02X", a.id, (unsigned)a.hour, (unsigned)a.minute, (unsigned)a.days);
-    if (a.has_date) Serial.printf(" on %04u-%02u-%02u", (unsigned)a.date.year, (unsigned)a.date.month, (unsigned)a.date.day);
-    Serial.printf(" \"%s\" sound=%s\n", a.label, a.sound[0] ? a.sound : "(beep)");
+    debuglog::printf("[portal]   alarm %s %02u:%02u days=0x%02X", a.id, (unsigned)a.hour, (unsigned)a.minute, (unsigned)a.days);
+    if (a.has_date) debuglog::printf(" on %04u-%02u-%02u", (unsigned)a.date.year, (unsigned)a.date.month, (unsigned)a.date.day);
+    debuglog::printf(" \"%s\" sound=%s\n", a.label, a.sound[0] ? a.sound : "(beep)");
   }
 }
 
@@ -418,19 +419,19 @@ Poll fetchState(Conn &c) {
       app::Lock lock;
       okAt = millis() | 1;
     }
-    if (!quiet) Serial.printf("[portal] state: 304 not modified (%s)\n", etag.c_str());
+    if (!quiet) debuglog::printf("[portal] state: 304 not modified (%s)\n", etag.c_str());
     return Poll::Unchanged;
   }
   if (code != HTTP_CODE_OK) {
-    Serial.printf("[portal] state: HTTP %d%s\n", code, code < 0 ? (" " + c.http.errorToString(code)).c_str() : "");
-    if (code == 401) Serial.println("[portal] the device token was rejected; update it on the settings page");
+    debuglog::printf("[portal] state: HTTP %d%s\n", code, code < 0 ? (" " + c.http.errorToString(code)).c_str() : "");
+    if (code == 401) debuglog::println("[portal] the device token was rejected; update it on the settings page");
     if (code == 302 || code == 403)  // Access sends anything it doesn't let through to its login page
-      Serial.println("[portal] Cloudflare Access refused the clock (service token expired?); update it on the settings page");
-    if (code == 301) Serial.println("[portal] the portal is HTTPS only; PORTAL_URL must start with https://");
+      debuglog::println("[portal] Cloudflare Access refused the clock (service token expired?); update it on the settings page");
+    if (code == 301) debuglog::println("[portal] the portal is HTTPS only; PORTAL_URL must start with https://");
     if (code < 0 && https()) {  // say why a TLS connection failed (certificate, memory, ...)
       char why[100] = "";
       c.secure.lastError(why, sizeof why);
-      Serial.printf("[portal] TLS: %s (free heap %u, largest block %u)\n", why[0] ? why : "no error recorded",
+      debuglog::printf("[portal] TLS: %s (free heap %u, largest block %u)\n", why[0] ? why : "no error recorded",
                     (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
     }
     c.close();
@@ -441,7 +442,7 @@ Poll fetchState(Conn &c) {
   uint8_t *body = bigAlloc(cap);
   State *next = (State *)bigAlloc(sizeof(State));
   if (!body || !next) {
-    Serial.println("[portal] state: out of memory");
+    debuglog::println("[portal] state: out of memory");
     free(body);
     free(next);
     c.close();
@@ -455,12 +456,12 @@ Poll fetchState(Conn &c) {
 
   Poll result = Poll::Failed;
   if (got < 0 || sink.overflow) {
-    Serial.printf("[portal] state: bad body (%d bytes, overflow=%d)\n", got, sink.overflow);
+    debuglog::printf("[portal] state: bad body (%d bytes, overflow=%d)\n", got, sink.overflow);
   } else {
     memset(next, 0, sizeof(State));
     pb_istream_t in = pb_istream_from_buffer(body, sink.len);
     if (!pb_decode(&in, &bhoomi_clock_v1_DeviceState_msg, next)) {
-      Serial.printf("[portal] state: decode failed: %s\n", PB_GET_ERROR(&in));
+      debuglog::printf("[portal] state: decode failed: %s\n", PB_GET_ERROR(&in));
     } else {
       etag = newTag;
       // A 200 is either the portal's own things changing (version), or a new song. Only the former
@@ -478,7 +479,7 @@ Poll fetchState(Conn &c) {
       }
       const auto &np = next->nowplaying;
       if (playingChanged)
-        Serial.printf("[portal] now playing: L=%s \"%s\" - %s | R=%s \"%s\" - %s\n", statusName(np.left.status), np.left.title,
+        debuglog::printf("[portal] now playing: L=%s \"%s\" - %s | R=%s \"%s\" - %s\n", statusName(np.left.status), np.left.title,
                       np.left.artist, statusName(np.right.status), np.right.title, np.right.artist);
       if (portalChanged) logState(*next, newTag, sink.len);
       result = Poll::Changed;
@@ -507,7 +508,7 @@ Photo syncPhoto(Conn &c) {
         photoLen = 0;
         photoIdStr[0] = 0;
         bump();
-        Serial.println("[portal] photo removed");
+        debuglog::println("[portal] photo removed");
         forgetPhoto();
       }
       return Photo::Ok;
@@ -517,13 +518,13 @@ Photo syncPhoto(Conn &c) {
     size = cur.photo.size;
   }
   if (!validId(id) || size < 4 || size > MAX_PHOTO_BYTES) {
-    Serial.printf("[portal] photo: refusing id=\"%s\" size=%u\n", id, (unsigned)size);
+    debuglog::printf("[portal] photo: refusing id=\"%s\" size=%u\n", id, (unsigned)size);
     return Photo::Failed;
   }
 
   uint8_t *buf = bigAlloc(size);
   if (!buf) {
-    Serial.printf("[portal] photo: out of memory for %u bytes\n", (unsigned)size);
+    debuglog::printf("[portal] photo: out of memory for %u bytes\n", (unsigned)size);
     return Photo::Failed;
   }
   uint32_t t0 = millis();
@@ -531,18 +532,18 @@ Photo syncPhoto(Conn &c) {
   Photo result = Photo::Failed;
   bool clean = false;  // the answer was read to the end, so the socket can be kept
   if (code == HTTP_CODE_NOT_FOUND) {
-    Serial.printf("[portal] photo %s: 404 (not propagated yet), will retry\n", id);
+    debuglog::printf("[portal] photo %s: 404 (not propagated yet), will retry\n", id);
     result = Photo::NotYet;
   } else if (code != HTTP_CODE_OK) {
-    Serial.printf("[portal] photo %s: HTTP %d\n", id, code);
+    debuglog::printf("[portal] photo %s: HTTP %d\n", id, code);
   } else {
     BufSink sink(buf, size);
     int got = writeResponse(c, sink);
     if (got < 0 || sink.overflow || sink.len != size) {
-      Serial.printf("[portal] photo %s: incomplete (%d of %u bytes, overflow=%d)\n", id, got, (unsigned)size,
+      debuglog::printf("[portal] photo %s: incomplete (%d of %u bytes, overflow=%d)\n", id, got, (unsigned)size,
                     sink.overflow);
     } else if (buf[0] != 0xFF || buf[1] != 0xD8) {
-      Serial.printf("[portal] photo %s: not a JPEG\n", id);
+      debuglog::printf("[portal] photo %s: not a JPEG\n", id);
     } else {
       {
         app::Lock lock;
@@ -553,7 +554,7 @@ Photo syncPhoto(Conn &c) {
         buf = nullptr;  // owned by the state now
         bump();
       }
-      Serial.printf("[portal] photo %s: downloaded %u bytes in %u ms\n", id, (unsigned)size,
+      debuglog::printf("[portal] photo %s: downloaded %u bytes in %u ms\n", id, (unsigned)size,
                     (unsigned)(millis() - t0));
       savePhoto(photoBuf, size, id);  // outside the lock: SD writes can take a while
       result = Photo::Ok;
@@ -631,20 +632,20 @@ void syncSounds(Conn &c) {
   }
   pb_ostream_t out = pb_ostream_from_buffer(body, bhoomi_clock_v1_SoundList_size);
   if (!pb_encode(&out, &bhoomi_clock_v1_SoundList_msg, list)) {
-    Serial.printf("[portal] sounds: encode failed: %s\n", PB_GET_ERROR(&out));
+    debuglog::printf("[portal] sounds: encode failed: %s\n", PB_GET_ERROR(&out));
   } else if (c.open("/api/device/sounds")) {
     c.http.addHeader("Content-Type", "application/x-protobuf");
     int code = c.http.PUT(body, out.bytes_written);
     if (code == HTTP_CODE_NO_CONTENT) c.finish();  // no body to read
     else c.close();
     if (code == HTTP_CODE_NO_CONTENT || code == HTTP_CODE_OK) {
-      Serial.printf("[portal] sounds: sent %u name(s), %u bytes -> %d\n", (unsigned)list->names_count,
+      debuglog::printf("[portal] sounds: sent %u name(s), %u bytes -> %d\n", (unsigned)list->names_count,
                     (unsigned)out.bytes_written, code);
       soundsEverSent = true;
       soundsSentGen = gen;
       soundsSentHash = h;
     } else {
-      Serial.printf("[portal] sounds: PUT failed, HTTP %d\n", code);
+      debuglog::printf("[portal] sounds: PUT failed, HTTP %d\n", code);
     }
   }
   free(list);
@@ -709,11 +710,11 @@ void syncCovers(Conn &c) {
         buf = nullptr;  // owned by the state now
         ok = true;
         coverTriedAt[side] = 0;
-        Serial.printf("[portal] cover %.8s: %u bytes (side %d)\n", want, (unsigned)sink.len, side);
+        debuglog::printf("[portal] cover %.8s: %u bytes (side %d)\n", want, (unsigned)sink.len, side);
       }
     }
     if (!ok) {
-      Serial.printf("[portal] cover %.8s: failed (HTTP %d), will retry\n", want, code);
+      debuglog::printf("[portal] cover %.8s: failed (HTTP %d), will retry\n", want, code);
       c.close();
     }
     free(buf);
@@ -921,7 +922,7 @@ bool loadCachedFace(const char *id, const char *wantedRev, bool allowStale) {
     if (f && !primaryValid) {
       // Only replace a missing/corrupt primary after the backup has passed every check.
       SD_MMC.remove(path);
-      if (SD_MMC.rename(backup,path)) Serial.printf("[face-cache] recovered backup %s\n", id);
+      if (SD_MMC.rename(backup,path)) debuglog::printf("[face-cache] recovered backup %s\n", id);
     }
   }
   if (!f) return false;
@@ -935,7 +936,7 @@ bool loadCachedFace(const char *id, const char *wantedRev, bool allowStale) {
       f=nullptr; ++facesRev; installed=true; break;
     }
   }
-  if (installed) Serial.printf("[face-cache] restored face %s%s\n", id, allowStale ? " (last saved)" : "");
+  if (installed) debuglog::printf("[face-cache] restored face %s%s\n", id, allowStale ? " (last saved)" : "");
   free(f); return installed;
 }
 void writeAssetCache(const bhoomi_clock_v1_SpriteRef &r, const uint8_t *data, size_t len) {
@@ -967,7 +968,7 @@ bool loadCachedAsset(const bhoomi_clock_v1_SpriteRef &r, bool background) {
       assetBytes += len; data=nullptr; ++facesRev; installed=true;
     }
   }
-  if (installed) Serial.printf("[face-cache] restored image %s (%u bytes)\n", r.hash, (unsigned)len);
+  if (installed) debuglog::printf("[face-cache] restored image %s (%u bytes)\n", r.hash, (unsigned)len);
   free(data); return installed;
 }
 
@@ -1022,7 +1023,7 @@ void commitReadyFaceCaches() {
     if (!facecache::promote(SD_MMC,path,staged,backup)) continue;
     { app::Lock lock; for (int k=0;k<faceN;++k) if (!strcmp(faceList[k].id,id) && !strcmp(faceList[k].rev,rev))
         strlcpy(faceList[k].cachedRev,rev,sizeof faceList[k].cachedRev); }
-    Serial.printf("[face-cache] saved complete face %s rev %s\n",id,rev);
+    debuglog::printf("[face-cache] saved complete face %s rev %s\n",id,rev);
     vTaskDelay(1);
   }
   free(copy);
@@ -1131,16 +1132,16 @@ Got fetchFace(Conn &c, const char *id, const char *rev) {
     memset(f, 0, sizeof(Face));
     pb_istream_t in = pb_istream_from_buffer(body, sink.len);
     if (got < 0 || sink.overflow) {
-      Serial.printf("[faces] %s: bad body\n", id);
+      debuglog::printf("[faces] %s: bad body\n", id);
     } else if (!pb_decode(&in, &bhoomi_clock_v1_Face_msg, f)) {
-      Serial.printf("[faces] %s: decode failed: %s\n", id, PB_GET_ERROR(&in));
+      debuglog::printf("[faces] %s: decode failed: %s\n", id, PB_GET_ERROR(&in));
       clean = true;
     } else if (strcmp(f->id, id) != 0 || !f->has_background || !f->has_time) {
-      Serial.printf("[faces] %s: not a usable face\n", id);
+      debuglog::printf("[faces] %s: not a usable face\n", id);
       clean = true;
     } else if (strcmp(f->rev, rev) != 0) {
       // KV may return an older face while its new state is propagating. Retain last good.
-      Serial.printf("[faces] %s: revision not yet available; retrying\n", id);
+      debuglog::printf("[faces] %s: revision not yet available; retrying\n", id);
       result = Got::NotYet; clean = true;
     } else {
       {
@@ -1157,10 +1158,10 @@ Got fetchFace(Conn &c, const char *id, const char *rev) {
       }
       if (result == Got::Ok) stageFaceCache(id, body, sink.len);
       clean = true;
-      Serial.printf("[faces] %s rev %s: fetched (%u bytes)\n", id, rev, (unsigned)sink.len);
+      debuglog::printf("[faces] %s rev %s: fetched (%u bytes)\n", id, rev, (unsigned)sink.len);
     }
   } else {
-    Serial.printf("[faces] %s: HTTP %d\n", id, code);
+    debuglog::printf("[faces] %s: HTTP %d\n", id, code);
   }
   if (clean) c.finish();
   else c.close();
@@ -1171,7 +1172,7 @@ Got fetchFace(Conn &c, const char *id, const char *rev) {
 
 Got fetchAsset(Conn &c, const bhoomi_clock_v1_SpriteRef &r, bool background) {
   if (!validHash(r.hash) || r.size < 12 || r.size > MAX_ASSET_FILE || assetBytes + r.size > MAX_ASSET_TOTAL || assetN >= MAX_ASSETS) {
-    Serial.printf("[faces] image %s: refused (size %u, %u cached)\n", r.hash, (unsigned)r.size, (unsigned)assetBytes);
+    debuglog::printf("[faces] image %s: refused (size %u, %u cached)\n", r.hash, (unsigned)r.size, (unsigned)assetBytes);
     return Got::Failed;
   }
   uint8_t *buf = bigAlloc(r.size);
@@ -1183,7 +1184,7 @@ Got fetchAsset(Conn &c, const bhoomi_clock_v1_SpriteRef &r, bool background) {
   if (code == HTTP_CODE_NOT_FOUND) {
     result = Got::NotYet;
   } else if (code != HTTP_CODE_OK) {
-    Serial.printf("[faces] image %s: HTTP %d\n", r.hash, code);
+    debuglog::printf("[faces] image %s: HTTP %d\n", r.hash, code);
   } else {
     BufSink sink(buf, r.size);
     int got = writeResponse(c, sink);
@@ -1191,7 +1192,7 @@ Got fetchAsset(Conn &c, const bhoomi_clock_v1_SpriteRef &r, bool background) {
     uint8_t hash[32];
     if (good) { digest256(buf, sink.len, hash); good = facecache::digestMatchesHex(hash, r.hash, 16); }
     if (!good) {
-      Serial.printf("[faces] image %s: incomplete or wrong (%d of %u bytes)\n", r.hash, got, (unsigned)r.size);
+      debuglog::printf("[faces] image %s: incomplete or wrong (%d of %u bytes)\n", r.hash, got, (unsigned)r.size);
     } else {
       writeAssetCache(r, buf, sink.len);
       app::Lock lock;
@@ -1203,7 +1204,7 @@ Got fetchAsset(Conn &c, const bhoomi_clock_v1_SpriteRef &r, bool background) {
       buf = nullptr;
       facesRev++;
       result = Got::Ok;
-      Serial.printf("[faces] image %s: %u bytes in %u ms\n", r.hash, (unsigned)r.size, (unsigned)(millis() - t0));
+      debuglog::printf("[faces] image %s: %u bytes in %u ms\n", r.hash, (unsigned)r.size, (unsigned)(millis() - t0));
     }
     clean = got >= 0 && !sink.overflow;
   }
@@ -1292,7 +1293,7 @@ bool noTokenWarn = false;
 
 bool ready() {
   if (active[KEY_TOKEN].isEmpty()) {
-    if (!noTokenWarn) Serial.println("[portal] no device token: set one on the settings page");
+    if (!noTokenWarn) debuglog::println("[portal] no device token: set one on the settings page");
     noTokenWarn = true;
     return false;
   }
@@ -1302,7 +1303,7 @@ bool ready() {
     if (!wifisetup::online() || wifisetup::portalActive()) return false;
   }
   if (https() && !timeValid()) {
-    if (!gotTimeWarn) Serial.println("[portal] waiting for NTP before the first HTTPS request");
+    if (!gotTimeWarn) debuglog::println("[portal] waiting for NTP before the first HTTPS request");
     gotTimeWarn = true;
     return false;
   }
@@ -1474,7 +1475,7 @@ void manage(Conn &c) {
   if (!verified) verified = mbedtls_pk_verify(&signingKey, MBEDTLS_MD_SHA256, signedHash, sizeof(signedHash), signature, signatureSize);
   mbedtls_pk_free(&signingKey);
   if (verified) { otaCode = -18; prefs.end(); return; }
-  Serial.printf("[ota] downloading %u bytes into %s\n", (unsigned)cfg.size, slot->label);
+  debuglog::printf("[ota] downloading %u bytes into %s\n", (unsigned)cfg.size, slot->label);
   code = c.get("/api/device/firmware/" + release);
   if (code != 200 || c.http.getSize() != (int)cfg.size) { otaCode = code == 200 ? -11 : code; c.close(); prefs.end(); return; }
   esp_ota_handle_t handle;
@@ -1500,7 +1501,7 @@ void manage(Conn &c) {
     prefs.putString("attempted", release) && prefs.putString("target", ihx);
   prefs.end();
   if (!saved || esp_ota_set_boot_partition(slot) != ESP_OK) { otaCode = -16; return; }
-  Serial.println("[ota] verified firmware; rebooting into trial image");
+  debuglog::println("[ota] verified firmware; rebooting into trial image");
   delay(200); ESP.restart();
 }
 
@@ -1581,8 +1582,8 @@ void syncMoodVideos(Conn &c) {
     Preferences prefs; if (!prefs.begin("mood-videos", false)) return;
     String key = "m" + String(mood), previous = prefs.getString(key.c_str(), ""); prefs.end();
     String activePath = "/mindfulness/" + String(mood) + "/0000.jpg";
-    if (previous == hash && SD_MMC.exists(activePath)) { Serial.printf("[mindfulness] mood %u already installed %.12s\n", mood, hash); continue; }
-    Serial.printf("[mindfulness] downloading mood %u: %u bytes %.12s\n", mood, size, hash);
+    if (previous == hash && SD_MMC.exists(activePath)) { debuglog::printf("[mindfulness] mood %u already installed %.12s\n", mood, hash); continue; }
+    debuglog::printf("[mindfulness] downloading mood %u: %u bytes %.12s\n", mood, size, hash);
     if (!SD_MMC.exists("/mood-staging")) SD_MMC.mkdir("/mood-staging");
     String temp = "/mood-staging/cloud-" + String(mood) + ".part";
     SD_MMC.remove(temp);
@@ -1590,18 +1591,18 @@ void syncMoodVideos(Conn &c) {
     code = c.get(String("/api/device/mood-video/") + mood + "/" + hash);
     int count = code == 200 ? writeResponse(c, file, 180000) : -1;
     c.close(); file.close();
-    if (count < 0 || (unsigned)count != size) { Serial.printf("[mindfulness] mood %u download failed: HTTP %d, received %d of %u bytes\n", mood, code, count, size); SD_MMC.remove(temp); return; }
+    if (count < 0 || (unsigned)count != size) { debuglog::printf("[mindfulness] mood %u download failed: HTTP %d, received %d of %u bytes\n", mood, code, count, size); SD_MMC.remove(temp); return; }
     file = SD_MMC.open(temp, FILE_READ); if (!file) return;
     mbedtls_sha256_context sha; mbedtls_sha256_init(&sha); mbedtls_sha256_starts(&sha, 0);
     uint8_t buf[2048], digest[32]; size_t n;
     while ((n = file.read(buf, sizeof buf)) != 0) { mbedtls_sha256_update(&sha, buf, n); vTaskDelay(1); }
     file.close(); mbedtls_sha256_finish(&sha, digest); mbedtls_sha256_free(&sha);
     char actual[65]; for(int i=0;i<32;i++) snprintf(actual+i*2, 3, "%02x", digest[i]);
-    if (strcmp(actual,hash)) { Serial.printf("[mindfulness] mood %u hash mismatch\n", mood); SD_MMC.remove(temp); return; }
-    if (!mood_clip::install(temp.c_str(), mood)) { Serial.printf("[mindfulness] mood %u install failed or player busy; retry later\n", mood); SD_MMC.remove(temp); return; }
+    if (strcmp(actual,hash)) { debuglog::printf("[mindfulness] mood %u hash mismatch\n", mood); SD_MMC.remove(temp); return; }
+    if (!mood_clip::install(temp.c_str(), mood)) { debuglog::printf("[mindfulness] mood %u install failed or player busy; retry later\n", mood); SD_MMC.remove(temp); return; }
     SD_MMC.remove(temp);
     if (prefs.begin("mood-videos", false)) { prefs.putString(key.c_str(), hash); prefs.end(); }
-    Serial.printf("[mindfulness] installed video for mood %u\n", mood);
+    debuglog::printf("[mindfulness] installed video for mood %u\n", mood);
     next = (millis() + POLL_MS) | 1;
     return; // At most one large transfer per interval.
   }
@@ -1643,7 +1644,7 @@ void task(void *) {
           nextAt = 0;
           backoff = BACKOFF_MIN_MS;
           lastLog = 0;
-          Serial.println("[portal] keys changed on the settings page; reconnecting");
+          debuglog::println("[portal] keys changed on the settings page; reconnecting");
         }
       }
     }
@@ -1660,7 +1661,7 @@ void task(void *) {
     quiet = lastLog && millis() - lastLog < 60 * 1000;  // log the routine poll once a minute, not every 30 s
     if (!quiet) {
       lastLog = millis() | 1;
-      Serial.printf("[portal] poll (rssi %d, heap %u, min heap %u, psram %u)\n", WiFi.RSSI(), (unsigned)ESP.getFreeHeap(),
+      debuglog::printf("[portal] poll (rssi %d, heap %u, min heap %u, psram %u)\n", WiFi.RSSI(), (unsigned)ESP.getFreeHeap(),
                     (unsigned)ESP.getMinFreeHeap(), (unsigned)ESP.getFreePsram());
     }
     Poll p = fetchState(c);
@@ -1703,10 +1704,10 @@ void loadKeys() {
     keyVal[k] = keyCustom[k] ? saved : String(KEY_BUILTIN[k]);
   }
   prefs.end();
-  Serial.print("[portal] keys:");
+  debuglog::print("[portal] keys:");
   for (int k = 0; k < KEY_COUNT; k++)
-    Serial.printf(" %s=%s", KEY_JSON[k], keyVal[k].isEmpty() ? "none" : keyCustom[k] ? "settings" : "built-in");
-  Serial.println();
+    debuglog::printf(" %s=%s", KEY_JSON[k], keyVal[k].isEmpty() ? "none" : keyCustom[k] ? "settings" : "built-in");
+  debuglog::println();
 }
 
 }  // namespace
@@ -1777,7 +1778,7 @@ bool setKey(Key k, const String &value, String *error) {
   keysRev++;
   lastCode = 0;  // "connecting" until the next poll with the new key answers, not the old key's result
   lastAt = 0;
-  Serial.printf("[portal] %s %s from the settings page\n", KEY_JSON[k], keyCustom[k] ? "changed" : "reset to built-in");
+  debuglog::printf("[portal] %s %s from the settings page\n", KEY_JSON[k], keyCustom[k] ? "changed" : "reset to built-in");
   return true;
 }
 
@@ -1871,11 +1872,11 @@ void begin() {
     notes.end();
   }
   if (!configured()) {
-    Serial.println("[portal] no PORTAL_URL (copy portal_config.example.h to portal_config.h); client is off");
+    debuglog::println("[portal] no PORTAL_URL (copy portal_config.example.h to portal_config.h); client is off");
     return;
   }
   if (https()) mbedtls_platform_set_calloc_free(tlsCalloc, tlsFree);
-  Serial.printf("[portal] polling %s every %u s\n", PORTAL_URL, (unsigned)(POLL_MS / 1000));
+  debuglog::printf("[portal] polling %s every %u s\n", PORTAL_URL, (unsigned)(POLL_MS / 1000));
   // Core 0 with Wi-Fi and the web server; stack is generous because mbedTLS handshakes run in it.
   xTaskCreatePinnedToCore(task, "portal", 16 * 1024, nullptr, 1, nullptr, 0);
 }

@@ -66,6 +66,7 @@ jobs:
           /tmp/check_ota_signature
           c++ -std=c++11 tools/check_focus_timer.cpp -o /tmp/check_focus_timer
           /tmp/check_focus_timer
+          python3 tools/check_debug_log.py
       - name: Build the versioned application
         if: steps.release.outputs.changed == 'true'
         env:
