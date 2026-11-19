@@ -68,7 +68,7 @@ Checked on the board: all nine collection faces and their images downloaded, the
 
 ## HTTPS
 
-HTTP socket single-byte reads yield for one FreeRTOS tick when no byte is available, including partial response headers: Arduino Stream otherwise busy-waits through its timeout and can trigger the idle watchdog. Small buffered portal responses yield to FreeRTOS after each body write, use 100 ms socket read waits and enforce a 15-second body deadline. This prevents weak-Wi-Fi TLS reads from starving the idle watchdog. Failed transfers keep the last good state. Large OTA image streaming retains its separate transfer handling.
+HTTP socket single-byte reads yield for one FreeRTOS tick when no byte is available, including partial response headers: Arduino Stream otherwise busy-waits through its timeout and can trigger the idle watchdog. Small buffered portal responses yield to FreeRTOS after each body write, use 100 ms socket read waits and enforce a 15-second body deadline. This prevents weak-Wi-Fi TLS reads from starving the idle watchdog. Failed transfers keep the last good state. OTA streams through the same yielding helper with a ten-minute overall body deadline so weak-Wi-Fi bulk reads cannot starve IDLE0.
 
 A deployed `https://…workers.dev` portal works: certificates are checked against the built-in Mozilla CA bundle, and the TLS connection is kept alive between the 30 s polls (the first handshake takes ~2 s on weak Wi-Fi, later polls ~60 ms). The clock needs NTP to have synced first, so it waits before the first HTTPS request.
 

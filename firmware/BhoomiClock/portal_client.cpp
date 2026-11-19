@@ -1368,6 +1368,7 @@ class OtaSink : public Stream {
   ~OtaSink() { mbedtls_sha256_free(&sha); }
   size_t write(uint8_t b) override { return write(&b, 1); }
   size_t write(const uint8_t *p, size_t n) override {
+    if (!n) return 0; // A timed-out short read is not a flash write failure.
     if (failed || n > expected - count || esp_ota_write(handle, p, n) != ESP_OK) { failed = true; return 0; }
     mbedtls_sha256_update(&sha, p, n); count += n; return n;
   }
@@ -1479,7 +1480,9 @@ void manage(Conn &c) {
   esp_ota_handle_t handle;
   if (esp_ota_begin(slot, cfg.size, &handle) != ESP_OK) { otaCode = -12; c.close(); prefs.end(); return; }
   OtaSink image(handle, cfg.size);
-  int read = c.http.writeToStream(&image);
+  // Firmware can take minutes on weak Wi-Fi. Use short socket reads and a real
+  // FreeRTOS yield, just like other downloads, with a bounded ten-minute body.
+  int read = writeResponse(c, image, 600000);
   c.close();
   uint8_t digest[32]; char hex[65];
   mbedtls_sha256_finish(&image.sha, digest);
