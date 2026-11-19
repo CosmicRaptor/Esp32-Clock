@@ -252,6 +252,8 @@ This is what the pages use. Requests need the session cookie from `POST /api/log
 
 ## Firmware and clock diagnostics
 
+The `npm test` script expands `tests/js/*.test.js` explicitly, including on the Node 22 GitHub runner; directory arguments are not portable across Node versions.
+
 The main admin page's **Clock health & firmware** card uploads a candidate application `.bin` and matching detached signature `.json`, explicitly requests its installation, cancels future discovery, and configures diagnostic reports (hourly by default, minimum five minutes, or off). It displays the latest report and its server receipt time. Refresh the page for new data. Firmware headers must identify an ESP32-S3 application; signing-enabled firmware additionally verifies the signature using its own public key, rejects old versions, and validates the complete image and SHA-256. The browser checks that the metadata matches the selected binary before uploading. The server validates metadata shape; cryptographic trust is enforced on the clock. See the main README's scheduled signed releases section for provisioning and GitHub Actions setup.
 
 Admin routes (existing session and Access checks apply):
