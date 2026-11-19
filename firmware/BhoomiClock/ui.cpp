@@ -9,6 +9,7 @@
 #include "app_lock.h"
 #include "mindfulness.h"
 #include "focus_timer.h"
+#include "focus_view.h"
 #include "video_player.h"
 
 #include "display.h"
@@ -996,6 +997,7 @@ void modeButton(const char *text, int x, int y, int width, void (*action)()) {
 }
 void newModeRoot() {
   if (modeRoot) lv_obj_delete(modeRoot);
+  focusview::clear();
   modeTime = modeRing = modeCaption = modePanda = nightSpotify = nullptr;
   modeRoot = lv_obj_create(pages[(int)mode]); lv_obj_remove_style_all(modeRoot);
   lv_obj_set_size(modeRoot, 320, 240); lv_obj_remove_flag(modeRoot, LV_OBJ_FLAG_SCROLLABLE);
@@ -1022,6 +1024,17 @@ void drawPanda() {
 }
 void buildMode() {
   newModeRoot();
+  if (mode == Mode::Focus && !nightDim) {
+    focusview::build(modeRoot,focusTimer,[](focusview::Action action,unsigned minutes) {
+      switch(action) {
+        case focusview::Action::Start: startFocus(minutes); break;
+        case focusview::Action::End: focusTimer.done(); requestMode(Mode::Focus); break;
+        case focusview::Action::TakeBreak: focusTimer.takeBreak(millis()); requestMode(Mode::Focus); break;
+        case focusview::Action::Done: focusTimer.done(); requestMode(Mode::Clock); break;
+      }
+    });
+    return;
+  }
   if (mode == Mode::Night && (focusTimer.state == focus::State::Idle || focusTimer.running())) {
     modeTime = modeText("", 65, bigFont ? bigFont : &lv_font_montserrat_48);
     nightSpotify = modeText("", 191, &lv_font_montserrat_14);
@@ -1075,6 +1088,7 @@ void updateModes() {
     // Adjacent pages contain only a title while dragging. Release the old
     // content only after snapping; construct the new screen after its reveal.
     if (modeRoot) { lv_obj_delete(modeRoot); modeRoot = nullptr; }
+    focusview::clear();
     modeTime = modeRing = modeCaption = modePanda = nightSpotify = nullptr;
     lv_obj_set_style_bg_color(pages[(int)mode], nightDim ? lv_color_black() : BG, 0);
     lv_obj_set_style_text_color(pageTitles[(int)mode], nightDim ? lv_color_hex(0x990D0D) : INK, 0);
@@ -1091,13 +1105,14 @@ void updateModes() {
     } else buildMode();
   }
   static uint32_t lastPaint = 0;
-  if (!revealAt && modeRoot && modeTime && millis() - lastPaint >= 250) {
+  if (!revealAt && modeRoot && millis() - lastPaint >= 250) {
     lastPaint = millis();
-    if (focusTimer.running()) {
+    if (focusview::active()) focusview::tick(focusTimer,millis());
+    if (modeTime && focusTimer.running()) {
       uint32_t seconds = (focusTimer.remaining(millis()) + 999) / 1000;
       lv_label_set_text_fmt(modeTime,"%02u:%02u",(unsigned)(seconds/60),(unsigned)(seconds%60));
       if (modeRing) lv_arc_set_value(modeRing, (uint64_t)focusTimer.remaining(millis()) * 1000 / focusTimer.duration);
-    } else if (mode == Mode::Night) {
+    } else if (modeTime && mode == Mode::Night) {
       time_t now = time(nullptr); struct tm t; localtime_r(&now,&t);
       if (timeValid()) lv_label_set_text_fmt(modeTime,"%02d:%02d",t.tm_hour,t.tm_min);
       else lv_label_set_text(modeTime,"--:--");

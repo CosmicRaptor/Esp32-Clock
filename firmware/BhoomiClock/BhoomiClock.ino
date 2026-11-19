@@ -19,6 +19,7 @@
 #include "app_lock.h"
 #include "ota_health.h"
 #include "display.h"
+#include "focus_art.h"
 #include "portal_client.h"
 #include "settings.h"
 #include "sound.h"
@@ -61,6 +62,7 @@ void setup() {
   display::loop();  // draw "waking up" before the (slow) initial Wi-Fi scan
 
   storage::begin();
+  focusart::install();
   wifisetup::begin(AP_NAME, onWifi);
   web::begin();  // after Wi-Fi: opening a socket before the TCP/IP stack is up crashes
   sound::begin();  // alarm sounds: the decoder task + the built-in beep (internal flash)

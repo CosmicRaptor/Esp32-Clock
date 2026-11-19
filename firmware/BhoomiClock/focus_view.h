@@ -1,0 +1,13 @@
+#pragma once
+#include <lvgl.h>
+#include <time.h>
+#include "focus_timer.h"
+namespace focusview {
+enum class Action { Start, End, TakeBreak, Done };
+using Callback = void (*)(Action, unsigned minutes);
+void build(lv_obj_t *parent, const focus::Timer &timer, Callback callback);
+void tick(const focus::Timer &timer, uint32_t now);
+// Parent owns objects; call after deleting parent so the image no longer references pixels.
+void clear();
+bool active();
+}
