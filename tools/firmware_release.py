@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Publish from this checkout without printing credentials. Upload alone never installs."""
 import argparse
+import os
 import subprocess
 import tempfile
 import json
@@ -13,11 +14,20 @@ ROOT=Path(__file__).resolve().parents[1]
 FIRMWARE=ROOT/'firmware'/'BhoomiClock'
 
 def connection():
-    config=dict(re.findall(r'^#define\s+(PORTAL_\w+)\s+"([^"]*)"', (FIRMWARE/'portal_config.h').read_text(), re.M))
-    local={}
-    for line in (ROOT/'portal/.dev.vars').read_text().splitlines():
-        if '=' in line and not line.lstrip().startswith('#'):
-            k,v=line.split('=',1);local[k.strip()]=v.strip().strip('"').strip("'")
+    if os.environ.get('PORTAL_URL'):
+        config = {key: os.environ.get(key, '') for key in (
+            'PORTAL_URL', 'PORTAL_ACCESS_CLIENT_ID', 'PORTAL_ACCESS_CLIENT_SECRET')}
+        local = {'ADMIN_PASSWORD': os.environ.get('ADMIN_PASSWORD', '')}
+    else:
+        config=dict(re.findall(r'^#define\s+(PORTAL_\w+)\s+"([^"]*)"', (FIRMWARE/'portal_config.h').read_text(), re.M))
+        local = None
+    if local is None:
+        local={}
+        for line in (ROOT/'portal/.dev.vars').read_text().splitlines():
+            if '=' in line and not line.lstrip().startswith('#'):
+                k,v=line.split('=',1);local[k.strip()]=v.strip().strip('"').strip("'")
+    if not local.get('ADMIN_PASSWORD'):
+        raise SystemExit('ADMIN_PASSWORD is required.')
     base=config['PORTAL_URL'].rstrip('/')
     if not base.startswith('https://'): raise SystemExit('Release publishing requires HTTPS.')
     storage=tempfile.TemporaryDirectory(prefix='clock-release-')
@@ -47,10 +57,28 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('action',choices=['status','upload','install','cancel','interval'])
     p.add_argument('value',nargs='?')
+    p.add_argument('--signature', type=Path, help='Detached JSON metadata from ota_signing.py sign (upload only)')
     args=p.parse_args();request=connection()
     if args.action=='upload':
         image=Path(args.value or ROOT/'build/BhoomiClock.ino.bin').read_bytes()
-        print(json.dumps(request('/api/management/firmware','PUT',image)))
+        signed = None
+        if args.signature:
+            import hashlib
+            signed = json.loads(args.signature.read_text())
+            if signed.get('release') != hashlib.sha256(image).hexdigest() or signed.get('size') != len(image):
+                raise SystemExit('Signature metadata does not match this binary.')
+        uploaded = request('/api/management/firmware','PUT',image)
+        if signed:
+            import time
+            for attempt in range(7):
+                try:
+                    request('/api/management/firmware/' + uploaded['release'] + '/signature', 'PUT',
+                            {k: signed[k] for k in ('version', 'signature')})
+                    break
+                except SystemExit:
+                    if attempt == 6: raise
+                    time.sleep(15)
+        print(json.dumps(uploaded))
     elif args.action=='install':
         if not args.value or not re.fullmatch('[0-9a-f]{64}',args.value):p.error('install requires the uploaded SHA-256')
         print(json.dumps(request('/api/management/install','POST',{'release':args.value})))

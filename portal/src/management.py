@@ -6,6 +6,19 @@ from model import Invalid
 INTERVALS = (0, 300, 900, 1800, 3600, 21600)
 MAX_FIRMWARE = 6 * 1024 * 1024
 
+def signature(data):
+    """Validate storage format only; the clock verifies authenticity with its own key."""
+    if not isinstance(data, dict):
+        raise Invalid('Expected signed firmware metadata.')
+    version, sig = data.get('version'), data.get('signature')
+    if not isinstance(version, str) or not re.fullmatch(r'(0|[1-9][0-9]{0,9})\.(0|[1-9][0-9]{0,9})\.(0|[1-9][0-9]{0,9})', version):
+        raise Invalid('Expected a canonical firmware version.')
+    if any(int(n) > 0xffffffff for n in version.split('.')):
+        raise Invalid('Firmware version component too large.')
+    if not isinstance(sig, str) or not re.fullmatch(r'[0-9a-f]{16,144}', sig) or len(sig) % 2:
+        raise Invalid('Expected a DER ECDSA signature encoded as lowercase hex.')
+    return {'version': version, 'signature': sig}
+
 def settings(data):
     if not isinstance(data, dict):
         raise Invalid('Expected settings object.')
@@ -29,7 +42,7 @@ def report(data):
         if type(value) is not int or not -2147483648 <= value <= 0xffffffffffff:
             raise Invalid('Invalid diagnostic number: ' + key)
         out[key] = value
-    for key in ('firmware', 'running', 'failed', 'installed'):
+    for key in ('firmware', 'running', 'failed', 'installed', 'signing_key'):
         value = data.get(key, '')
         if not isinstance(value, str) or not re.fullmatch(r'[a-zA-Z0-9._-]{0,64}', value):
             raise Invalid('Invalid diagnostic identifier.')

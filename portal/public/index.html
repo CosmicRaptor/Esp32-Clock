@@ -86,6 +86,8 @@
   <details class="panel"><summary>Diagnostic details</summary><pre id="clockDiagnostics" class="diagnostic-output">Waiting for a report…</pre></details>
   <details class="panel"><summary>Firmware updates</summary>
     <label class="lbl" for="firmwareFile">Application firmware (.bin)</label><input type="file" id="firmwareFile" accept=".bin">
+    <label class="lbl" for="firmwareSignature">Matching firmware signature (.json)</label><input type="file" id="firmwareSignature" accept=".json,application/json">
+    <p class="hint">The clock verifies the signature before installing. Scheduled updates upload both files automatically.</p>
     <button class="btn ghost" id="uploadFirmware">Upload candidate</button>
     <p id="firmwareCandidate" class="hint firmware-candidate"></p>
     <div class="actions"><button class="btn primary" id="installFirmware" disabled>Install uploaded firmware</button><button class="btn ghost" id="cancelFirmware">Cancel pending install</button></div>

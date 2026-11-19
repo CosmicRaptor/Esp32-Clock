@@ -1,5 +1,13 @@
 # Handoff: Bhoomi's Clock
 
+## Scheduled signed OTA — activation in progress, 19 November 2026
+
+Added a Monday/Wednesday/Friday 09:17 IST Actions workflow that skips unchanged firmware inputs, assigns a higher version, tests/builds, signs with ECDSA P-256/SHA-256, uploads and queues automatic installation. Published source/version tags track successful approval. The clock verifies detached signed version/hash/size metadata using its own public key before erasing the inactive slot, checks the downloaded bytes, and persists a signed version floor across rollback. Portal API and manual upload UI support the detached JSON file. Diagnostics include a public-key fingerprint; CI refuses release until the clock reports the matching key.
+
+User approved activation. Generated the private key under gitignored `.ota-secrets/signing.pem` (mode 600); only the public trust anchor is in the source. Configured all six repository Actions secrets using the renewed GitHub CLI login. Portal deployed as Worker version `cd21d40a-dac0-497c-99e1-1e57a1ed5b9a`. Trusted baseline firmware **0.11.2** USB-flashed with hash verification: **3,036,730 bytes (48% of 6 MB), globals 85,616 bytes**. Bootloader/partition files matched existing flash; partition layout unchanged. Source push and the first GitHub-hosted signed OTA verification are pending. `AGENTS.md` has a pre-existing user modification; preserve it outside this commit. Back up the private signing key securely.
+
+Validation: firmware compile 3,036,554 bytes (48% of a 6 MB slot), globals 85,616 bytes; 175 portal Python tests, 78 portal JS tests, six signing/release tests, C++ version/hex checks, face rules/motion and weather checks, local authenticated HTTP integration and YAML parsing pass. Actual GitHub-hosted build/publish and on-device signature enforcement still need activation testing.
+
 ## Message box — deployed and flashed, 8 November 2026
 
 The portal note is now opened from a corner message box with a persistent unread indicator; each face can set its position in the Faces editor, with automatic placement opposite the Spotify strip on existing faces. The portal still stores one current note. Portal Worker version `11211060-a038-445a-8901-b2a7a4eff1df` was deployed. Firmware 0.11.1 was USB flashed with hash verification; it uses 3,035,290 bytes (48% of a 6 MB slot), globals 85,616 bytes. Portal tests and face rules/motion checks passed. User confirmed the physical screen and touch work. The previous USB soak log `soak-tests/usb-20261108-223752/serial.jsonl` was preserved and its collector stopped for flashing; a new 24-hour capture started at 23:13 IST in `soak-tests/usb-20261108-231307/serial.jsonl`, with a wake lock. Treat the two captures as separate firmware runs.

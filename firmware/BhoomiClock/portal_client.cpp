@@ -19,6 +19,9 @@
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <mbedtls/sha256.h>
+#include <mbedtls/pk.h>
+#include "ota_signature.h"
+#include "ota_signing_key.h"
 #include <mbedtls/base64.h>
 #include "ota_health.h"
 #include "sound.h"
@@ -1421,7 +1424,10 @@ void manage(Conn &c) {
   }
   if (diagnosticInterval && (!diagnosticAt || (int32_t)(now - diagnosticAt) >= 0)) {
     diagnosticAt = (now + diagnosticInterval * 1000) | 1;
-    String body = "{\"installed\":\"" + installed + "\",\"ota_state\":" + String(otahealth::pending() ? 1 : 0) + ",\"firmware\":\"" + String(FW_VERSION) + "\",\"running\":\"" + runningHash() +
+    uint8_t keyHash[32]; char keyHex[65];
+    mbedtls_sha256((const uint8_t *)OTA_SIGNING_PUBLIC_KEY, sizeof(OTA_SIGNING_PUBLIC_KEY) - 1, keyHash, 0);
+    for (int i = 0; i < 32; i++) snprintf(keyHex + i * 2, 3, "%02x", keyHash[i]);
+    String body = "{\"signing_key\":\"" + String(keyHex) + "\",\"installed\":\"" + installed + "\",\"ota_state\":" + String(otahealth::pending() ? 1 : 0) + ",\"firmware\":\"" + String(FW_VERSION) + "\",\"running\":\"" + runningHash() +
       "\",\"failed\":\"" + failedRelease + "\",\"uptime\":" + String((uint32_t)(esp_timer_get_time() / 1000000)) +
       ",\"heap\":" + String(ESP.getFreeHeap()) + ",\"min_heap\":" + String(ESP.getMinFreeHeap()) +
       ",\"largest_block\":" + String(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)) +
@@ -1440,6 +1446,33 @@ void manage(Conn &c) {
   for (char ch : release) if (!isxdigit((unsigned char)ch)) { prefs.end(); return; }
   const esp_partition_t *slot = esp_ota_get_next_update_partition(nullptr);
   if (!slot || !cfg.size || cfg.size > slot->size) { otaCode = -10; prefs.end(); return; }
+  // Verify a detached signature over version, whole-file digest and size BEFORE
+  // erasing flash. The portal supplies metadata, never a trusted verification key.
+  code = c.get("/api/device/firmware/" + release + "/signature");
+  uint8_t metadata[192] = {}; BufSink metadataSink(metadata, sizeof(metadata) - 1);
+  bool metadataOk = code == 200 && writeResponse(c, metadataSink) >= 0 && !metadataSink.overflow;
+  c.close();
+  char *signedVersion = (char *)metadata;
+  char *signatureHex = strchr(signedVersion, '\n');
+  if (!metadataOk || !signatureHex) { otaCode = -18; prefs.end(); return; }
+  *signatureHex++ = 0;
+  String floor = prefs.getString("signedFloor", FW_VERSION);
+  if (!otasign::newer(signedVersion, FW_VERSION) || !otasign::newer(signedVersion, floor.c_str())) {
+    otaCode = -19; prefs.end(); return;
+  }
+  uint8_t signature[72]; size_t signatureSize = 0;
+  char manifest[160];
+  int manifestSize = otasign::manifest(manifest, sizeof(manifest), signedVersion, release.c_str(), cfg.size);
+  if (!otasign::unhex(signatureHex, signature, sizeof(signature), signatureSize) ||
+      manifestSize <= 0 || manifestSize >= (int)sizeof(manifest)) { otaCode = -18; prefs.end(); return; }
+  uint8_t signedHash[32];
+  mbedtls_sha256((const uint8_t *)manifest, manifestSize, signedHash, 0);
+  mbedtls_pk_context signingKey; mbedtls_pk_init(&signingKey);
+  int verified = mbedtls_pk_parse_public_key(&signingKey, (const uint8_t *)OTA_SIGNING_PUBLIC_KEY, sizeof(OTA_SIGNING_PUBLIC_KEY));
+  if (!verified && !mbedtls_pk_can_do(&signingKey, MBEDTLS_PK_ECDSA)) verified = -1;
+  if (!verified) verified = mbedtls_pk_verify(&signingKey, MBEDTLS_MD_SHA256, signedHash, sizeof(signedHash), signature, signatureSize);
+  mbedtls_pk_free(&signingKey);
+  if (verified) { otaCode = -18; prefs.end(); return; }
   Serial.printf("[ota] downloading %u bytes into %s\n", (unsigned)cfg.size, slot->label);
   code = c.get("/api/device/firmware/" + release);
   if (code != 200 || c.http.getSize() != (int)cfg.size) { otaCode = code == 200 ? -11 : code; c.close(); prefs.end(); return; }
@@ -1460,7 +1493,8 @@ void manage(Conn &c) {
   for (int i = 0; i < 32; i++) snprintf(ihx + i * 2, 3, "%02x", ih[i]);
   if (sound::playing()) { otaCode = -17; prefs.end(); return; }
   // Persist the candidate before selecting it, so a rolled-back image is never retried forever.
-  bool saved = prefs.putString("attempted", release) && prefs.putString("target", ihx);
+  bool saved = prefs.putString("signedFloor", signedVersion) &&
+    prefs.putString("attempted", release) && prefs.putString("target", ihx);
   prefs.end();
   if (!saved || esp_ota_set_boot_partition(slot) != ESP_OK) { otaCode = -16; return; }
   Serial.println("[ota] verified firmware; rebooting into trial image");

@@ -36,6 +36,14 @@ image=bytearray(256);image[0]=0xe9;image[12]=9;image[32:36]=b'\x32\x54\xcd\xab'
 raw,_=req('/api/management/firmware','PUT',bytes(image));release=json.loads(raw)
 assert release['release']==hashlib.sha256(image).hexdigest()
 raw,_=req('/api/management');assert json.loads(raw)['approved'] is None
+signature_path='/api/management/firmware/'+release['release']+'/signature'
+device_signature='/api/device/firmware/'+release['release']+'/signature'
+signed={'version':'0.11.2','signature':'30'*70}
+req(device_signature,device=True,expect=404)
+req(signature_path,'PUT',{},expect=400)
+req(signature_path,'PUT',signed)
+raw,hdr=req(device_signature,device=True)
+assert raw.decode()==signed['version']+'\n'+signed['signature'] and hdr['cache-control']=='no-store'
 req('/api/management/install','POST',{'release':'wrong'},expect=400)
 req('/api/management/install','POST',release)
 raw,_=req('/api/device/firmware/'+release['release'],device=True);assert raw==image

@@ -336,6 +336,14 @@ class Default(WorkerEntrypoint):
             await self.env.CLOCK.put("firmware:" + release["release"], base64.b64encode(data).decode())
             await self.env.CLOCK.put("management:release", json.dumps(release))
             return json_response(release)
+        signed_upload = re.fullmatch(r"/api/management/firmware/([0-9a-f]{64})/signature", path)
+        if signed_upload and method == "PUT":
+            h = signed_upload.group(1)
+            if missing(await self.env.CLOCK.get("firmware:" + h)):
+                raise HttpError(404, "Upload firmware first; retry after KV propagation.")
+            metadata = management.signature(await read_json(request))
+            await self.env.CLOCK.put("firmware-signature:" + h, json.dumps(metadata))
+            return json_response(metadata)
         if path == "/api/management/install" and method == "POST":
             requested = await read_json(request)
             release = await self.kv_json("management:release")
@@ -660,6 +668,14 @@ class Default(WorkerEntrypoint):
             release = await self.kv_json("management:approved") or {}
             out = pb.Management(diagnostic_interval=cfg["interval"], release=release.get("release", ""), size=release.get("size", 0))
             return Response(out.SerializeToString(), headers={"content-type": wire.CONTENT_TYPE, "cache-control": "no-store"})
+        signed_download = re.fullmatch(r"/api/device/firmware/([0-9a-f]{64})/signature", path)
+        if signed_download and method == "GET":
+            metadata = await self.kv_json("firmware-signature:" + signed_download.group(1))
+            if not metadata:
+                raise HttpError(404, "Signed metadata is still propagating; retry later.")
+            metadata = management.signature(metadata)
+            return Response(metadata['version'] + "\n" + metadata['signature'],
+                            headers={"content-type": "text/plain", "cache-control": "no-store"})
         if path.startswith("/api/device/firmware/") and method == "GET":
             h = path.removeprefix("/api/device/firmware/")
             if not re.fullmatch(r"[0-9a-f]{64}", h):

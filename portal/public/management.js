@@ -17,7 +17,19 @@
   }
   async function run(fn) { try {await fn(); el('managementResult').textContent='Saved. Allow a minute for the clock to check in.'; await refresh();} catch(e) {el('managementResult').textContent=e.message;} }
   el('saveDiagnostics').onclick=()=>run(()=>api('/settings','PUT',{interval:Number(el('diagnosticInterval').value)}));
-  el('uploadFirmware').onclick=()=>run(()=>{const f=el('firmwareFile').files[0]; if(!f) throw Error('Choose an application .bin first.'); if(f.size>6291456) throw Error('Firmware exceeds 6 MB.'); return api('/firmware','PUT',f);});
+  el('uploadFirmware').onclick=()=>run(async()=>{
+    const f=el('firmwareFile').files[0], sidecar=el('firmwareSignature').files[0];
+    if(!f || !sidecar) throw Error('Choose an application .bin and its matching signature .json.');
+    if(f.size>6291456 || sidecar.size>2048) throw Error('Firmware or signature file is too large.');
+    const signed=JSON.parse(await sidecar.text());
+    const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',await f.arrayBuffer())),b=>b.toString(16).padStart(2,'0')).join('');
+    if(signed.release!==digest || signed.size!==f.size) throw Error('Signature metadata does not match this firmware.');
+    const uploaded=await api('/firmware','PUT',f);
+    for(let attempt=0;attempt<7;attempt++) {
+      try {await api('/firmware/'+uploaded.release+'/signature','PUT',{version:signed.version,signature:signed.signature});return;}
+      catch(e) {if(attempt===6) throw e; await new Promise(resolve=>setTimeout(resolve,15000));}
+    }
+  });
   el('installFirmware').onclick=()=>run(()=>api('/install','POST',{release:candidate.release}));
   el('cancelFirmware').onclick=()=>run(()=>api('/install','DELETE'));
   window.loadManagement=()=>refresh().catch(e=>{el('managementResult').textContent=e.message;});

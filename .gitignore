@@ -6,3 +6,4 @@ build/
 .vscode/
 portal_config.h
 __pycache__/
+.ota-secrets/

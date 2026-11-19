@@ -25,7 +25,7 @@ The Arduino sketch is in `firmware/BhoomiClock/`; its folder name matches `Bhoom
 ./build.sh flash    # compile + upload to the first /dev/cu.usbmodem* port
 ```
 
-The root `build.sh` wrapper compiles `firmware/BhoomiClock/` and leaves build outputs under the root `build/` directory. It copies `firmware/BhoomiClock/lv_conf.h` next to the LVGL library when the files differ, because Arduino can't point a library at a config file inside the sketch. Always edit the copy in this repo.
+The root `build.sh` wrapper compiles `firmware/BhoomiClock/` and leaves build outputs under the root `build/` directory. It copies `firmware/BhoomiClock/lv_conf.h` next to the LVGL library when the files differ, because Arduino can't point a library at a config file inside the sketch. Always edit the copy in this repo. `ARDUINO_CLI` and `ARDUINO_LIBRARIES` override the Mac defaults for Linux CI; `tools/ci_dependencies.sh` installs ESP32 core 3.3.12, LVGL 9.2.2, audioI2S 3.4.7 and Nanopb 0.4.9.1.
 
 If uploads fail with "No serial data received", close the Arduino IDE Serial Monitor. Or hold **BOOT**, replug USB, and release.
 
@@ -111,19 +111,43 @@ This took a workaround. This Arduino-ESP32 core builds mbedTLS with `CONFIG_MBED
 
 ## Firmware updates and diagnostics
 
-Firmware 0.9.1 adds authenticated, outbound OTA management. `./build.sh` exports **`build/BhoomiClock.ino.bin`**. Upload that application file in the admin page's **Clock health & firmware** card, then click **Install uploaded firmware**. Never upload the merged image or bootloader. Uploading alone does not install. A management poll runs every minute; KV propagation may add another minute. Cancel stops future polls from discovering an install, but cannot stop a download already started.
+Firmware 0.9.1 adds authenticated, outbound OTA management. `./build.sh` exports **`build/BhoomiClock.ino.bin`**. With signing enabled, upload that application file and its matching signature JSON in the admin page's **Clock health & firmware** card, then click **Install uploaded firmware**. Never upload the merged image or bootloader. Uploading alone does not install. A management poll runs every minute; KV propagation may add another minute. Cancel stops future polls from discovering an install, but cannot stop a download already started.
 
 The custom 16 MB partition table has two 6 MB app slots, 3.875 MB FFat and a coredump partition. Install this layout once over USB before relying on OTA. Migrating the layout resets the internal filesystem; NVS Wi-Fi credentials and the microSD are preserved. Normal OTA only writes the inactive app slot, never the partition table or bootloader. Keep a USB recovery path available during initial testing.
 
-Downloads use the existing verified HTTPS connection and device/Access credentials, stream into flash, check exact size and SHA-256 against the authenticated management response, and pass ESP image validation before selecting a boot slot. An incomplete or corrupt download leaves the old app selected. Firmware is authenticated through the portal; independent signed firmware is not implemented. Updates defer while sound is playing.
+Downloads use the existing verified HTTPS connection and device/Access credentials. Signing-enabled firmware first verifies ECDSA P-256/SHA-256 metadata against its built-in public key, then streams into flash, checks exact size and whole-file SHA-256, and passes ESP image validation before selecting a boot slot. An incomplete or corrupt download leaves the old app selected. Updates defer while sound is playing. Signing is application-level verification of remote updates; hardware Secure Boot and flash encryption are not enabled.
 
 The Arduino core's `verifyRollbackLater` hook defers its otherwise automatic early acceptance. Trial firmware has three minutes to finish startup, execute at least 1,000 main-loop ticks, run for a minute, and receive a successful authenticated state response. An independent timer reboots into the previous image if it cannot pass; a crash/reset also triggers bootloader rollback. This checks liveness and cloud access, not visual correctness or every peripheral. A rejected candidate is remembered in NVS and not automatically retried. Publish a new build to retry after fixing it. Offline trial boots deliberately roll back.
 
 Diagnostics default to hourly, with off / 5 min / 15 min / 30 min / 1 hour / 6 hours available in the admin card. Changes arrive on the next management poll. The first report is sent after connecting. Reports contain firmware version and image digest, uptime, reset reason, RSSI, free/minimum heap, largest free internal block, free PSRAM, last state HTTP code, last OTA result, trial state, installed upload digest and failed candidate digest. No passwords, network names, messages or raw logs are sent. The portal stores the latest snapshot with receipt time; refresh the page to see a newer report. Failed uploads retry after five minutes. A server guard allows at most one routine report per five minutes; firmware/update transitions may report after one minute (eventual KV consistency is not a strict global rate limiter).
 
-OTA result codes: `-10` no room/slot; `-11` length mismatch; `-12` flash begin failed; `-13` interrupted download/hash mismatch/write failed; `-14` invalid image; `-15` image digest unavailable; `-16` NVS/boot selection failed; `-17` alarm started before reboot. Other values are HTTP status codes; zero means no OTA error recorded this boot.
+OTA result codes: `-10` no room/slot; `-11` length mismatch; `-12` flash begin failed; `-13` interrupted download/hash mismatch/write failed; `-14` invalid image; `-15` image digest unavailable; `-16` NVS/boot selection failed; `-17` alarm started before reboot; `-18` missing/invalid signature or public key; `-19` invalid/replayed/downgraded version. Other values are HTTP status codes; zero means no OTA error recorded this boot.
 
 From this checkout, `python3 tools/firmware_release.py upload` uploads the build without installing it; `python3 tools/firmware_release.py install <SHA256>` approves that exact upload. `status`, `cancel`, and `interval 3600` inspect the clock, cancel pending discovery, or change report frequency. The tool reads existing gitignored local credentials without printing them. `python3 tools/check_management_http.py` exercises the local Worker on port 8788; do not point it at production.
+
+### Scheduled signed releases
+
+`.github/workflows/ota.yml` checks the default branch at **09:17 India time on Monday, Wednesday and Friday** (03:47 UTC), and supports a manual Actions run. GitHub schedules can be delayed. Firmware, protocol, build and release-tool changes since the last `clock-ota/<version>` tag trigger a release; documentation and portal-only changes do not. The first run publishes the current source. This workflow does not deploy portal code.
+
+For changed firmware it checks the clock's reported public-key fingerprint, chooses a semantic version higher than the source, published tags and latest clock report, runs portal/signing/host tests, compiles, signs, uploads the binary and detached metadata, and approves that exact digest for automatic installation. An annotated Git tag records source, version, digest, size and signature only after approval succeeds. No source version bump is committed by CI. Failed publishes remain eligible for the next scheduled/manual run. A tag means installation was queued; check the portal's device report for healthy installation or rollback. Rejected trials require a newer version; the clock remembers the highest accepted signed version in NVS even across rollback.
+
+The signed bytes are the ASCII text `bhoomi-clock-ota-v1\n<version>\n<whole-file-sha256>\n<size>\n`. Metadata is stored separately so the application `.bin` stays a normal ESP image. The clock trusts only `firmware/BhoomiClock/ota_signing_key.h`, never a key from the portal. Missing signatures, an empty key, and invalid signatures fail closed. The existing HTTPS, Access and password gates still apply. The signing key belongs only on the trusted development machine and in GitHub Actions; the portal never receives it. GitHub repository write access and Actions secrets remain trusted. Firmware contains device credentials, so the workflow does not upload build artifacts to GitHub.
+
+One-time activation (requires approval for secrets, deployment, flash and push):
+
+1. Run `python3 tools/ota_signing.py keygen`. It creates `.ota-secrets/signing.pem` with mode 600 and updates the public header. Back up the private key securely; never commit it. The tool refuses to overwrite an existing key.
+2. With GitHub CLI authenticated, run `python3 tools/configure_actions.py` to add repository Actions secrets `OTA_SIGNING_PRIVATE_KEY` (the PEM file), `PORTAL_URL`, `PORTAL_DEVICE_TOKEN`, `PORTAL_ACCESS_CLIENT_ID`, `PORTAL_ACCESS_CLIENT_SECRET`, and `ADMIN_PASSWORD`, using existing local credentials without printing them. The workflow requests permission to write release tags; other workflows retain their existing permissions. Actions are pinned to immutable commits.
+3. Deploy the portal changes. Bump `FW_VERSION` above the installed version, build with the real public key and USB-flash this trusted baseline. Verify normal operation and the diagnostic `signing_key` fingerprint. The bootstrap compile with the empty placeholder key must not be installed. The schedule refuses to release until the reported fingerprint matches the committed public key.
+4. Commit/push the workflow, public header and source to the default branch, then run the workflow manually to verify the complete signed OTA path. Record the actual installed version and size in `HANDOFF.md`. No eFuses or partition changes are required.
+
+For a manual release, bump `FW_VERSION` before building, then sign and upload without approving installation:
+
+```bash
+python3 tools/ota_signing.py sign build/BhoomiClock.ino.bin --version <FW_VERSION> --private-key .ota-secrets/signing.pem --output build/signature.json
+python3 tools/firmware_release.py upload --signature build/signature.json
+```
+
+The admin page accepts the same `.bin` and `.json` pair. Retries reuse the same artifact; Cloudflare KV propagation is handled by bounded retries. Public-key rotation needs a deliberately staged trusted update; replacing the header and secret alone is insufficient. Keep the old private key backed up until migration is verified.
 
 The clock firmware also contains a local five-point mindfulness check-in, an offline response queue and a JPEG-frame video player with audio. The portal retains responses for 30 days. Both portals prepare videos in the browser; the clock downloads remote uploads to its SD card. Type `checkin` in the serial monitor to show the prompt. See the portal README for limits and details.
 

@@ -1,0 +1,94 @@
+name: Scheduled signed clock OTA
+
+on:
+  schedule:
+    # 09:17 Asia/Kolkata, Monday/Wednesday/Friday (GitHub cron uses UTC).
+    - cron: '47 3 * * 1,3,5'
+  workflow_dispatch:
+
+permissions:
+  contents: write # Annotated source/version marker after successful publish.
+
+concurrency:
+  group: clock-ota-production
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check for firmware changes and reserve a higher version
+        id: release
+        env:
+          PORTAL_URL: ${{ secrets.PORTAL_URL }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          PORTAL_ACCESS_CLIENT_ID: ${{ secrets.PORTAL_ACCESS_CLIENT_ID }}
+          PORTAL_ACCESS_CLIENT_SECRET: ${{ secrets.PORTAL_ACCESS_CLIENT_SECRET }}
+        run: python3 tools/scheduled_ota.py prepare
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        if: steps.release.outputs.changed == 'true'
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.release.outputs.changed == 'true'
+        with:
+          node-version: '22'
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        if: steps.release.outputs.changed == 'true'
+      - uses: arduino/setup-arduino-cli@b3cda96fddef6af6c56b4c5efb5c47e2357935db # v2
+        if: steps.release.outputs.changed == 'true'
+        with:
+          version: '1.5.1'
+      - name: Install pinned firmware and portal test dependencies
+        if: steps.release.outputs.changed == 'true'
+        run: |
+          bash tools/ci_dependencies.sh
+          uv sync --frozen --no-dev --project portal
+      - name: Run portal, signing and firmware host checks
+        if: steps.release.outputs.changed == 'true'
+        run: |
+          python3 -m unittest discover -s tools/tests
+          cd portal
+          npm test
+          cd ..
+          bash tools/check_face_rules.sh
+          bash tools/check_face_motion.sh
+          bash tools/check_weather_icons.sh
+          c++ -std=c++11 tools/check_cooperative_client.cpp -o /tmp/check_cooperative_client
+          /tmp/check_cooperative_client
+          c++ -std=c++17 tools/check_ota_signature.cpp -o /tmp/check_ota_signature
+          /tmp/check_ota_signature
+      - name: Build the versioned application
+        if: steps.release.outputs.changed == 'true'
+        env:
+          PORTAL_URL: ${{ secrets.PORTAL_URL }}
+          PORTAL_DEVICE_TOKEN: ${{ secrets.PORTAL_DEVICE_TOKEN }}
+          PORTAL_ACCESS_CLIENT_ID: ${{ secrets.PORTAL_ACCESS_CLIENT_ID }}
+          PORTAL_ACCESS_CLIENT_SECRET: ${{ secrets.PORTAL_ACCESS_CLIENT_SECRET }}
+        run: |
+          python3 tools/scheduled_ota.py config
+          ./build.sh
+      - name: Sign, upload and approve automatic installation
+        if: steps.release.outputs.changed == 'true'
+        env:
+          PORTAL_URL: ${{ secrets.PORTAL_URL }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          PORTAL_ACCESS_CLIENT_ID: ${{ secrets.PORTAL_ACCESS_CLIENT_ID }}
+          PORTAL_ACCESS_CLIENT_SECRET: ${{ secrets.PORTAL_ACCESS_CLIENT_SECRET }}
+          OTA_SIGNING_PRIVATE_KEY: ${{ secrets.OTA_SIGNING_PRIVATE_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: python3 tools/scheduled_ota.py publish --version "$RELEASE_VERSION"
+        # Keep user-controlled expressions out of shell source.
+        # Version comes from the canonical version validator in prepare.
+      - name: Remove generated credentials and binaries
+        if: always()
+        run: |
+          rm -f firmware/BhoomiClock/portal_config.h
+          rm -rf build

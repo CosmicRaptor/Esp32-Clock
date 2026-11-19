@@ -252,22 +252,24 @@ This is what the pages use. Requests need the session cookie from `POST /api/log
 
 ## Firmware and clock diagnostics
 
-The main admin page's **Clock health & firmware** card uploads a candidate application `.bin`, explicitly requests its installation, cancels future discovery, and configures diagnostic reports (hourly by default, minimum five minutes, or off). It displays the latest report and its server receipt time. Refresh the page for new data. Firmware headers must identify an ESP32-S3 application; the device additionally validates the complete image and SHA-256.
+The main admin page's **Clock health & firmware** card uploads a candidate application `.bin` and matching detached signature `.json`, explicitly requests its installation, cancels future discovery, and configures diagnostic reports (hourly by default, minimum five minutes, or off). It displays the latest report and its server receipt time. Refresh the page for new data. Firmware headers must identify an ESP32-S3 application; signing-enabled firmware additionally verifies the signature using its own public key, rejects old versions, and validates the complete image and SHA-256. The browser checks that the metadata matches the selected binary before uploading. The server validates metadata shape; cryptographic trust is enforced on the clock. See the main README's scheduled signed releases section for provisioning and GitHub Actions setup.
 
 Admin routes (existing session and Access checks apply):
 
 - `GET /api/management`: settings, latest uploaded release, approved release and latest diagnostics.
 - `PUT /api/management/settings`: JSON `{"interval":3600}`. Supported seconds: 0, 300, 900, 1800, 3600, 21600.
 - `PUT /api/management/firmware`: raw application binary, at most 6 MB. Returns `{release: SHA256, size}`; does not approve it.
+- `PUT /api/management/firmware/<sha256>/signature`: JSON `{version, signature}` for an already uploaded binary; signature is ECDSA P-256 DER encoded as lowercase hex (at most 72 bytes). The version is canonical `major.minor.patch`, each component at most uint32. A propagation-time 404 needs a retry before approving installation.
 - `POST /api/management/install`: JSON `{"release":"<uploaded SHA256>"}` approves the exact candidate. `DELETE` clears approval.
 
 Device routes (existing bearer token and Access checks apply):
 
 - `GET /api/device/management`: uncached `Management` protobuf with interval, approved digest and size. Independent one-minute poll; no state schema changes.
 - `GET /api/device/firmware/<sha256>`: immutable raw firmware, with Content-Length. A propagation-time 404 is retried later.
+- `GET /api/device/firmware/<sha256>/signature`: uncached plain text `<version>\n<signature-hex>`, no trailing newline. Missing metadata returns 404. Signing firmware rejects candidates without a valid signature; older firmware lacks this enforcement and needs a trusted initial upgrade.
 - `PUT /api/device/diagnostics`: allowlisted JSON snapshot; receipt time is assigned by the server. Routine reports within five minutes of the last stored snapshot return 429; firmware/update transitions are allowed after one minute. Unknown fields are discarded.
 
-KV stores base64 firmware under `firmware:<sha256>`, plus `management:release`, `management:approved`, `management:settings`, and `management:diagnostics`. Each upload stores its immutable binary before publishing metadata. Firmware releases are retained for recovery; there is currently no release garbage collection. Five-minute diagnostics add at most about 288 writes/day for one clock, alongside existing check-ins, weather and token writes. Do not add per-poll writes. See the firmware README for rollback behavior and error codes.
+KV stores base64 firmware under `firmware:<sha256>`, detached metadata under `firmware-signature:<sha256>`, plus `management:release`, `management:approved`, `management:settings`, and `management:diagnostics`. Diagnostics include `signing_key`, the SHA-256 fingerprint of the built-in public PEM, for CI activation checks. Each upload stores its immutable binary before publishing metadata. Firmware releases are retained for recovery; there is currently no release garbage collection. Five-minute diagnostics add at most about 288 writes/day for one clock, alongside existing check-ins, weather and token writes. Do not add per-poll writes. See the firmware README for rollback behavior and error codes.
 
 Spotify and weather refreshes are driven by clock requests; the server does not schedule background polling when the clock is offline. The Spotify admin overview uses the current Worker instance’s cached playback, so it may be unavailable or stale. Weather settings show the cached reading.
 

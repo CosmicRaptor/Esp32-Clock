@@ -9,6 +9,14 @@ from model import Invalid
 from test_wire import nanopb_size
 
 class ManagementTests(unittest.TestCase):
+    def test_detached_signature_metadata_bounds(self):
+        signed = {'version': '0.11.2', 'signature': '30' * 70}
+        self.assertEqual(management.signature(dict(signed, private_key='ignored')), signed)
+        for bad in (None, {}, dict(signed, version='01.11.2'),
+                    dict(signed, version='0.11.4294967296'), dict(signed, signature='30'*73),
+                    dict(signed, signature='abc'), dict(signed, signature='GG'*70)):
+            with self.assertRaises(Invalid): management.signature(bad)
+
     def test_intervals(self):
         for n in management.INTERVALS:
             self.assertEqual(management.settings({'interval': n}), {'interval': n})

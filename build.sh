@@ -7,9 +7,9 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 SKETCH="$ROOT/firmware/BhoomiClock"
 cd "$ROOT"
 
-CLI="/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli"
+CLI="${ARDUINO_CLI:-/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli}"
 FQBN="esp32:esp32:esp32s3:CDCOnBoot=cdc,FlashSize=16M,PSRAM=opi,PartitionScheme=custom"
-LIBS="$HOME/Documents/Arduino/libraries"
+LIBS="${ARDUINO_LIBRARIES:-$HOME/Documents/Arduino/libraries}"
 
 # LVGL looks for lv_conf.h next to its library folder. Avoid touching the
 # installed copy when it already matches the repository version.
