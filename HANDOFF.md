@@ -1,6 +1,6 @@
 # Handoff: Bhoomi's Clock
 
-## Scheduled signed OTA — active, transfer repair verification pending, 19 November 2026
+## Scheduled signed OTA — active and verified, 19 November 2026
 
 Monday/Wednesday/Friday 09:17 IST Actions workflow is pushed and active. It skips unchanged firmware inputs, tests/builds, assigns a higher version, signs ECDSA P-256/SHA-256 metadata, uploads and approves the exact digest. The clock verifies its own public key and version/hash/size before writing flash, and keeps an NVS version floor across rollback. Actions are pinned to commits. All six GitHub repository secrets are configured. Private signing key stays gitignored in `.ota-secrets/signing.pem`, mode 600; back it up securely. Portal deployed as Worker `cd21d40a-dac0-497c-99e1-1e57a1ed5b9a`.
 
@@ -8,7 +8,9 @@ Trusted baseline 0.11.2 was USB-flashed (3,036,730 bytes, globals 85,616); user 
 
 OTA now uses the existing yielding response helper with 100 ms socket waits and a ten-minute body deadline; zero-byte short reads do not call flash writes. Added regression checks for long transfers, zero-byte reads, overflow and flash failures. Corrected baseline **0.11.4** was USB-flashed with hash verification from isolated `/private/tmp/clock-ota-activation`: **3,036,702 bytes (48% of a 6 MB slot), globals 85,616 bytes**. Partition offsets/sizes are unchanged. Concurrent Focus/Night work remains unreleased and is excluded from this baseline and commit. Build/cache collision evidence is retained under `build/ota-investigation/`; use isolated sketch/build paths for simultaneous work. Next CI release should be 0.11.5.
 
-Validation: 176 portal Python + 78 JS tests, six release/signing tests, host checks and local authenticated HTTP integration pass. Signing-key fingerprint matches the physical clock. Final verification of the repaired download path and unchanged-source skip is pending. Preserve the separate user `AGENTS.md` edit and Focus/Night changes.
+Final verification: GitHub run `44567926134` published **0.11.5**, source `486e2f3`, tag `clock-ota/0.11.5`, whole-file SHA-256 `894bc3678a29561860aaa5280b3ccf259a1b0ae02bf9946c06beffe82ff481bd`. Compile **3,036,490 bytes (48% of 6 MB), globals 85,616 bytes**; uploaded application 3,036,640 bytes. The repaired download completed over weak Wi-Fi without a watchdog reset, serial reported verified firmware and passed startup health checks, and portal diagnostics confirmed firmware 0.11.5, that exact installed digest, `ota_state=0`, `ota_code=0`, and the matching signing-key fingerprint. Latest report: heap 64,972, lifetime minimum 51,548, largest block 31,732, RSSI −89 dBm. User confirmed the corrected USB baseline screen/touch was normal.
+
+Unchanged-source run `44568798052` succeeded with `changed=false`, skipping all build/sign/upload/approval steps. Validation: 176 portal Python + 78 JS tests, six release/signing tests, host checks and local authenticated HTTP integration pass. Main is pushed and scheduling is active. Temporary serial capture stopped; repaired-run log is `/private/tmp/clock-ota-activation/build/repaired-signed-ota-serial.log`. Preserve the separate user `AGENTS.md` edit and unreleased Focus/Night files/README/workflow/handoff changes. Back up the private signing key securely.
 
 ## Message box — deployed and flashed, 8 November 2026
 
