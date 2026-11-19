@@ -43,18 +43,19 @@ namespace display {constexpr int WIDTH=320,HEIGHT=240; void beginScrollMetrics()
 enum class Mode {Clock,Focus,Night};Mode mode=Mode::Focus;int requested=-1;
 lv_obj_t *scr,*pager,*pages[3],*pageTitles[3];
 lv_obj_t *clockView=nullptr,*photoView=nullptr,*noteButton=nullptr,*modeRoot=nullptr;
-bool pagerMoving=false;uint32_t revealAt=0;
+bool pagerMoving=false;uint32_t revealAt=0,pagerRecoveries=0;
 namespace faceview {lv_obj_t *root(){return nullptr;}}
 const lv_color_t BG=lv_color_hex(0xFBF7F2),INK=lv_color_hex(0x2B2420);
 void requestMode(Mode m){requested=(int)m;}
 lv_obj_t *label(lv_obj_t *p,const lv_font_t *f,lv_color_t c){auto *l=lv_label_create(p);lv_obj_set_style_text_font(l,f,0);lv_obj_set_style_text_color(l,c,0);return l;}
+void updatePagerMotion();
 static uint32_t ticks=0;uint32_t millis(){return ticks;}
 unsigned artworkLoads=0;
 namespace focusart {uint8_t *load(){++artworkLoads;auto *px=(uint8_t *)malloc(153600);FILE *f=fopen("art.rgb565","rb");assert(f);assert(fread(px,1,153600,f)==153600);fclose(f);return px;}}
 static uint16_t framebuffer[320*240];
 static lv_point_t point={160,90};static bool down=false;
 void readPointer(lv_indev_t *,lv_indev_data_t *d){d->point=point;d->state=down?LV_INDEV_STATE_PRESSED:LV_INDEV_STATE_RELEASED;}
-void pump(unsigned n=1){while(n--){ticks+=16;lv_tick_inc(16);lv_timer_handler();}}
+void pump(unsigned n=1){while(n--){ticks+=16;updatePagerMotion();lv_tick_inc(16);lv_timer_handler();}}
 void drag(int from,int to){point={from,203};down=true;pump(3);int sign=to>from?1:-1;for(int x=from;sign*(to-x)>0;x+=sign*8){point.x=x;pump(2);}point.x=to;pump(2);down=false;pump(70);}
 void tap(int x,int y){point={x,y};down=true;pump(3);down=false;pump(3);}
 focus::Timer timer;unsigned actions=0;
@@ -87,12 +88,22 @@ int main(){
  tap(216,148);assert(timer.state==focus::State::Break);build(true);assert(artworkLoads==1);save("break.rgb565");
  tap(215,195);assert(timer.state==focus::State::Idle);build(true);assert(artworkLoads==1);
  puts("PASS: illustrated screen scrolls/cancels; Start/End/break work; same-page rebuilds reuse artwork");
- lv_obj_delete(content);focusview::clear();
+ lv_obj_delete(content);content=nullptr;modeRoot=nullptr;focusview::clear();pump(5);
+ lv_mem_monitor_t baseline={};lv_mem_monitor(&baseline);
+ for(unsigned i=0;i<200;++i){
+   timer.done();build();timer.start(millis(),15);build(true);
+   timer.tick(timer.started+timer.duration);build(true);
+   lv_obj_delete(content);content=nullptr;modeRoot=nullptr;focusview::clear();pump(5);
+ }
+ lv_mem_monitor_t finalMemory={};lv_mem_monitor(&finalMemory);
+ printf("Focus UI soak: LVGL free bytes before %u, after %u\n",(unsigned)baseline.free_size,(unsigned)finalMemory.free_size);
+ assert(finalMemory.free_size==baseline.free_size);
+
 }
 '''
 (work/'check.cpp').write_text(cpp+pager+main)
 subprocess.run(['c++','-std=c++17',*flags,str(work/'check.cpp'),str(ROOT/'firmware/BhoomiClock/focus_view.cpp'),*[str(p) for p in objs],'-o',str(work/'check')],check=True)
-subprocess.run([str(work/'check')],cwd=work,check=True,timeout=20)
+subprocess.run([str(work/'check')],cwd=work,check=True,timeout=60)
 out=ROOT/'assets/focus-study/previews';out.mkdir(exist_ok=True)
 for state in ['idle','selected','active','complete','break']:
     data=(work/f'{state}.rgb565').read_bytes();rgb=bytearray()

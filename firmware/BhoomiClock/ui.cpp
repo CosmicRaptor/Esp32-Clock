@@ -45,6 +45,7 @@ Mode mode = Mode::Clock;
 focus::Timer focusTimer;
 bool nightDim = false, homeLoaded = true;
 bool pagerMoving = false;
+uint32_t pagerRecoveries = 0;
 int requestedMode = -1;
 uint32_t revealAt = 0;
 lv_obj_t *modeRoot = nullptr, *modeTime = nullptr, *modeRing = nullptr, *modePanda = nullptr;
@@ -1144,6 +1145,26 @@ void setPagerContentVisible(bool visible) {
     lv_obj_set_style_opa(root, visible ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
 }
 
+
+void finishPagerScroll() {
+  pagerMoving = false;
+  display::endScrollMetrics();
+  int x = lv_obj_get_scroll_x(pager);
+  int index = constrain((x + display::WIDTH / 2) / display::WIDTH, 0, 2);
+  if (index != (int)mode) requestMode((Mode)index);
+  else if (!revealAt) setPagerContentVisible(true);
+}
+
+void updatePagerMotion() {
+  // LVGL emits BEGIN before registering an animation. If that animation is
+  // cancelled before its first tick, it deliberately omits END. Reconcile with
+  // the real input/animation state instead of leaving all UI updates paused.
+  if (pagerMoving && !lv_obj_is_scrolling(pager) && !lv_anim_get(pager, nullptr)) {
+    ++pagerRecoveries;
+    finishPagerScroll();
+  }
+}
+
 void buildPager() {
   pager = lv_obj_create(scr); lv_obj_remove_style_all(pager);
   lv_obj_set_size(pager, display::WIDTH, display::HEIGHT);
@@ -1173,12 +1194,7 @@ void buildPager() {
       return;
     }
     if (lv_event_get_code(e) != LV_EVENT_SCROLL_END) return;
-    pagerMoving = false;
-    display::endScrollMetrics();
-    int x = lv_obj_get_scroll_x(pager);
-    int index = constrain((x + display::WIDTH / 2) / display::WIDTH, 0, 2);
-    if (index != (int)mode) requestMode((Mode)index);
-    else if (!revealAt) setPagerContentVisible(true);
+    finishPagerScroll();
   }, LV_EVENT_ALL, nullptr);
 }
 
@@ -1206,6 +1222,14 @@ void begin(const char *apName) {
   video_player::begin();
   buildAlarm();  // alarms take priority over check-ins and clips
   showMsg(true, "Waking up...", "");
+}
+
+void printStats() {
+  Serial.printf("[uistats] {\"mode\":\"%s\",\"pager_moving\":%s,\"pager_busy\":%s,\"offset\":%ld,\"recoveries\":%u,\"focus_art_bytes\":%u}\n",
+    mode == Mode::Clock ? "Clock" : mode == Mode::Focus ? "Focus" : "Night",
+    pagerMoving ? "true" : "false",
+    (lv_obj_is_scrolling(pager) || lv_anim_get(pager,nullptr)) ? "true" : "false",
+    (long)lv_obj_get_scroll_x(pager),(unsigned)pagerRecoveries,(unsigned)focusview::artworkBytes());
 }
 
 void testMindfulness() { if (timeValid() && mode == Mode::Clock && !focusTimer.quiet()) showMood(); else Serial.println("[mindfulness] waiting for clock time"); }
@@ -1256,6 +1280,7 @@ void showWifi(const wifisetup::Status &s) {
 }
 
 void loop() {
+  updatePagerMotion();
   updateModes();
   static uint32_t last = 0, lastFaceTick = 0;
   if (!pagerMoving && portal::revision() != seenPortalRev) {

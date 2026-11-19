@@ -85,7 +85,7 @@ static void serialCommands() {
     }
     if (line == "memstats") {
       lv_mem_monitor_t lv = {};
-      { app::Lock lock; lv_mem_monitor(&lv); }
+      { app::Lock lock; lv_mem_monitor(&lv); ui::printStats(); }
       constexpr uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
       Serial.printf("[memstats] {\"uptime_s\":%llu,\"heap\":%u,\"min_heap\":%u,\"largest_block\":%u,\"psram\":%u,\"min_psram\":%u,\"largest_psram\":%u,\"lv_free\":%u,\"lv_largest\":%u,\"lv_frag_pct\":%u,\"reset\":%d,\"rssi\":%d}\n",
           (unsigned long long)(esp_timer_get_time() / 1000000),

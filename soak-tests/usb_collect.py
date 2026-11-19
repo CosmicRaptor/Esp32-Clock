@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Record USB serial locally for 24 hours; requests read-only memstats once a minute."""
+import argparse
 import datetime as dt
 import glob
 import json
@@ -9,9 +10,15 @@ import select
 import termios
 import time
 
-folder = Path(__file__).resolve().parent / ('usb-' + dt.datetime.now().strftime('%Y%m%d-%H%M%S'))
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--duration', type=float, default=86400, help='Capture seconds (default: 24 hours)')
+parser.add_argument('--interval', type=float, default=60, help='Seconds between read-only memstats requests')
+args = parser.parse_args()
+if args.duration <= 0 or args.interval < 5:
+    parser.error('duration must be positive and interval at least 5 seconds')
+folder = Path(__file__).resolve().parent / ('usb-' + dt.datetime.now().astimezone().strftime('%Y%m%d-%H%M%S'))
 folder.mkdir()
-end = time.monotonic() + 86400
+end = time.monotonic() + args.duration
 print(str(folder), flush=True)
 with (folder / 'serial.jsonl').open('a', buffering=1) as out:
     def log(kind, text):
@@ -36,7 +43,7 @@ with (folder / 'serial.jsonl').open('a', buffering=1) as out:
             while time.monotonic() < end:
                 if time.monotonic() >= next_sample:
                     os.write(fd, b'memstats\n')
-                    next_sample = time.monotonic() + 60
+                    next_sample = time.monotonic() + args.interval
                 if not select.select([fd], [], [], 1)[0]:
                     continue
                 data = os.read(fd, 8192)
@@ -62,4 +69,4 @@ with (folder / 'serial.jsonl').open('a', buffering=1) as out:
         finally:
             if fd is not None:
                 os.close(fd)
-    log('event', '24-hour capture complete')
+    log('event', 'capture complete')

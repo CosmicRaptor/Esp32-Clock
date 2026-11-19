@@ -10,4 +10,5 @@ void tick(const focus::Timer &timer, uint32_t now);
 // Parent owns objects; call after deleting parent so the image no longer references pixels.
 void clear(bool releaseArtwork = true);
 bool active();
+uint32_t artworkBytes();
 }

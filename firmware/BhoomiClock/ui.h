@@ -12,5 +12,6 @@ void loop();  // refreshes the clock text once a second, rings alarms
 // Triggered by typing `ring` or `ring <file>` in the serial monitor.
 void testAlarm(const char *soundFile);
 void testMindfulness();
+void printStats(); // serial diagnostics; caller holds app lock
 
 }  // namespace ui

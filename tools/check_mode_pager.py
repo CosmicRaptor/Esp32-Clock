@@ -51,7 +51,7 @@ Mode mode=Mode::Clock;
 int requested=-1;
 lv_obj_t *scr,*pager,*pages[3],*pageTitles[3];
 lv_obj_t *clockView=nullptr,*photoView=nullptr,*noteButton=nullptr,*modeRoot=nullptr;
-bool pagerMoving=false;uint32_t revealAt=0;
+bool pagerMoving=false;uint32_t revealAt=0,pagerRecoveries=0;
 namespace faceview {lv_obj_t *root(){return nullptr;}}
 const lv_color_t BG=lv_color_hex(0xFBF7F2),INK=lv_color_hex(0x2B2420);
 void requestMode(Mode m){requested=(int)m;}
@@ -64,7 +64,7 @@ static lv_point_t point={160,90};
 static bool down=false;
 static int clicks=0;
 void readPointer(lv_indev_t *,lv_indev_data_t *d){d->point=point;d->state=down?LV_INDEV_STATE_PRESSED:LV_INDEV_STATE_RELEASED;}
-void pump(unsigned count=1){while(count--){lv_tick_inc(16);lv_timer_handler();}}
+void pump(unsigned count=1){while(count--){updatePagerMotion();lv_tick_inc(16);lv_timer_handler();}}
 void drag(int from,int to){
  point={from,90};down=true;pump(3);
  int sign=to>from?1:-1;
@@ -93,6 +93,24 @@ int main(){
  drag(40,280);assert(lv_obj_get_scroll_x(pager)==0);assert(requested==-1);
  assert(clicks==0); // a horizontal drag must not start/cancel a timer button
  point={160,90};down=true;pump(3);down=false;pump(3);assert(clicks==1);
+ // An animated move can be cancelled before LVGL's first animation tick.
+ // BEGIN is synchronous, but LVGL then omits END: this must not freeze UI work.
+ lv_obj_scroll_to_x(pager,320,LV_ANIM_ON);
+ assert(pagerMoving);
+ lv_obj_scroll_to_x(pager,0,LV_ANIM_ON);
+ pump(100);
+ if(pagerMoving){fprintf(stderr,"REPRODUCED: cancelled animation left pagerMoving latched\n");return 2;}
+ assert(pagerRecoveries==1);
+ lv_mem_monitor_t before={};lv_mem_monitor(&before);
+ for(unsigned i=0;i<1000;++i){
+   lv_obj_scroll_to_x(pager,320,LV_ANIM_ON);
+   lv_obj_scroll_to_x(pager,0,LV_ANIM_ON);
+   pump(2);
+   assert(!pagerMoving && !lv_anim_get(pager,nullptr));
+ }
+ lv_mem_monitor_t after={};lv_mem_monitor(&after);
+ assert(after.free_size==before.free_size);
+ printf("PASS: 1000 interrupted animations recovered; LVGL free bytes stable at %u\n",(unsigned)after.free_size);
  puts("PASS: pointer drags Clock -> Focus -> Night -> Focus -> Clock; page bounds respected");
 }
 '''

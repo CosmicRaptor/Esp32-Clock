@@ -38,6 +38,7 @@ void paintChoices() {
 }
 void clear(bool releaseArtwork){if(releaseArtwork){free(pixels);pixels=nullptr;}digits=clockLabel=dateLabel=ring=nullptr;for(auto &p:choices)p=nullptr;onAction=nullptr;}
 bool active(){return clockLabel!=nullptr;}
+uint32_t artworkBytes(){return pixels ? 153600 : 0;}
 void build(lv_obj_t *p,const focus::Timer &timer,Callback callback) {
   onAction=callback;
   if(!pixels) pixels=focusart::load();
