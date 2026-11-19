@@ -44,6 +44,30 @@ constexpr uint32_t FACE_TICK_MS = 66;  // portal faces animate at 15 ticks a sec
 enum class Mode { Clock, Focus, Night };
 Mode mode = Mode::Clock;
 focus::Timer focusTimer;
+bool gardenOpen = false;
+// Seven dated slots survive restarts without requiring network access.
+unsigned gardenSessions() {
+  time_t now=time(nullptr); if(now<=1700000000) return 0;
+  struct tm today; localtime_r(&now,&today);
+  Preferences prefs; if(!prefs.begin("study-garden",true)) return 0;
+  unsigned total=0;
+  for(int i=0;i<7;++i) {
+    struct tm day=today; day.tm_hour=12; day.tm_min=day.tm_sec=0; day.tm_mday-=i;
+    time_t stamp=mktime(&day); localtime_r(&stamp,&day);
+    unsigned key=(day.tm_year+1900)*1000+day.tm_yday;
+    char name[4]; snprintf(name,sizeof name,"d%d",day.tm_wday);
+    if(prefs.getUInt(name,0)==key) { snprintf(name,sizeof name,"c%d",day.tm_wday); total+=prefs.getUInt(name,0); }
+  }
+  prefs.end(); return total;
+}
+void recordGardenSession() {
+  time_t now=time(nullptr); if(now<=1700000000) return;
+  struct tm day; localtime_r(&now,&day); unsigned key=(day.tm_year+1900)*1000+day.tm_yday;
+  char dateKey[4],countKey[4]; snprintf(dateKey,sizeof dateKey,"d%d",day.tm_wday); snprintf(countKey,sizeof countKey,"c%d",day.tm_wday);
+  Preferences prefs; if(!prefs.begin("study-garden",false)) return;
+  unsigned count=prefs.getUInt(dateKey,0)==key ? prefs.getUInt(countKey,0) : 0;
+  prefs.putUInt(dateKey,key); prefs.putUInt(countKey,count+1); prefs.end();
+}
 bool nightDim = false, homeLoaded = true;
 bool pagerMoving = false;
 uint32_t pagerRecoveries = 0;
@@ -1038,8 +1062,10 @@ void buildMode() {
         case focusview::Action::End: focusTimer.done(); requestMode(Mode::Focus); break;
         case focusview::Action::TakeBreak: focusTimer.takeBreak(millis()); requestMode(Mode::Focus); break;
         case focusview::Action::Done: focusTimer.done(); requestMode(Mode::Clock); break;
+        case focusview::Action::Garden: gardenOpen=true; requestMode(Mode::Focus); break;
+        case focusview::Action::CloseGarden: gardenOpen=false; requestMode(Mode::Focus); break;
       }
-    });
+    },gardenOpen,gardenSessions());
     return;
   }
   if (mode == Mode::Night && (focusTimer.state == focus::State::Idle || focusTimer.running())) {
@@ -1075,8 +1101,10 @@ void buildMode() {
   }
 }
 void updateModes() {
+  bool studying = focusTimer.state == focus::State::Studying;
   bool ended = focusTimer.tick(millis());
   if (ended) {
+    if (studying) { recordGardenSession(); gardenOpen=false; }
     if (!ringing) sound::chime();
     requestMode(mode == Mode::Night ? Mode::Night : Mode::Focus);
   }
@@ -1088,6 +1116,7 @@ void updateModes() {
       return;
     }
     bool changed = next != mode;
+    if (changed) gardenOpen=false;
     if (next == Mode::Night) nightDim = true;
     if (next == Mode::Clock) nightDim = false;
     mode = next; onlineAt = 0;

@@ -1,5 +1,9 @@
 # Handoff: Bhoomi's Clock
 
+## Illustrated study garden — source update, 20 November 2026
+
+Focus now has a Garden button with the user-approved panda illustration and four bamboo growth stages, precomposed from generated source art. It counts naturally completed study sessions, not cancelled sessions or breaks, in seven local-day NVS slots. A completion before clock time is valid is not counted. The scene reaches its final stage at four sessions; the rolling seven-day count can grow beyond that. Artwork is embedded as five JPEGs and decoded into PSRAM on entry; switching between Focus and Garden frees the previous decoded image. Source assets and regeneration script are `assets/study-garden/` and `tools/prepare_garden_art.py`. Real LVGL host render and touch checks include Garden and Back; focus/pager host checks pass. Firmware **0.12.4** USB-flashed with application hash verification; bootloader and partition images verified unchanged. Build: **3,206,998 bytes (50% of 6 MB), globals 85,816 bytes**. No portal deployment. No portal countdown or Google Calendar integration was added. Preserve unrelated pending changes.
+
 ## White-on-black mode titles — source update, 20 November 2026
 
 Clock, Focus and Night transition pages now consistently use white mode-name text on black backgrounds, both during dragging and the settled title reveal. Removed mode-dependent color overrides. Screen contents, dim backlight behavior and navigation timing are unchanged. Native pager/interrupted-animation checks pass; `./build.sh` succeeds: **3,079,906 bytes (48% of 6 MB), globals 85,816 bytes**. Compile-only change: source/running version remains 0.12.3; this build must not be installed under the same version. No USB flash or manual CI release triggered for the styling change; the next signed OTA must reserve a higher version. User requested pushing the change. Preserve unrelated pending edits.

@@ -1,11 +1,13 @@
 #include "focus_view.h"
 #include "focus_art.h"
+#include "garden_art.h"
 #include <Arduino.h>
 namespace focusview {
 namespace {
 const lv_color_t INK=lv_color_hex(0x502C24), PEACH=lv_color_hex(0xDBA38C), PINK=lv_color_hex(0xF49CA9);
 const lv_color_t CREAM=lv_color_hex(0xFFF0DE), MUTED=lv_color_hex(0xA5786E);
 uint8_t *pixels=nullptr;
+bool gardenPixels=false;
 lv_image_dsc_t image={};
 lv_obj_t *digits=nullptr,*clockLabel=nullptr,*dateLabel=nullptr,*ring=nullptr,*choices[3]={};
 unsigned selected=25;
@@ -36,10 +38,27 @@ void paintChoices() {
   }
 }
 }
-void clear(bool releaseArtwork){if(releaseArtwork){free(pixels);pixels=nullptr;}digits=clockLabel=dateLabel=ring=nullptr;for(auto &p:choices)p=nullptr;onAction=nullptr;}
+void clear(bool releaseArtwork){if(releaseArtwork){free(pixels);pixels=nullptr;gardenPixels=false;}digits=clockLabel=dateLabel=ring=nullptr;for(auto &p:choices)p=nullptr;onAction=nullptr;}
 bool active(){return clockLabel!=nullptr;}
 uint32_t artworkBytes(){return pixels ? 153600 : 0;}
-void build(lv_obj_t *p,const focus::Timer &timer,Callback callback) {
+void build(lv_obj_t *p,const focus::Timer &timer,Callback callback,bool garden,unsigned sessions) {
+  if (garden) {
+    onAction=callback;
+    if(pixels && !gardenPixels) { free(pixels); pixels=nullptr; }
+    if(!pixels) { pixels=gardenart::load(sessions); gardenPixels=true; }
+    if(pixels) {
+      image={};image.header.magic=LV_IMAGE_HEADER_MAGIC;image.header.cf=LV_COLOR_FORMAT_RGB565;
+      image.header.w=320;image.header.h=240;image.header.stride=640;image.data_size=153600;image.data=pixels;
+      auto *bg=lv_image_create(p);lv_image_set_src(bg,&image);lv_obj_set_pos(bg,0,0);
+    } else { lv_obj_set_style_bg_color(p,lv_color_hex(0x76547B),0);lv_obj_set_style_bg_opa(p,LV_OPA_COVER,0); }
+    const lv_color_t light=lv_color_hex(0xFFF0D8);
+    text(p,"Your little garden",0,10,320,&lv_font_montserrat_20,light);
+    char count[48]; snprintf(count,sizeof count,"%u focus sessions in 7 days",sessions);
+    text(p,count,0,36,320,&lv_font_montserrat_14,light);
+    button(p,"Back",105,198,110,32,false,action,(uintptr_t)Action::CloseGarden);
+    return;
+  }
+  if(pixels && gardenPixels) { free(pixels); pixels=nullptr; gardenPixels=false; }
   onAction=callback;
   if(!pixels) pixels=focusart::load();
   if(pixels) {
@@ -61,6 +80,7 @@ void build(lv_obj_t *p,const focus::Timer &timer,Callback callback) {
   dateLabel=text(badge,"",0,34,102,&lv_font_montserrat_14,MUTED);
   text(p,timer.state==focus::State::Break ? "Take a breather" : "Study Mode",128,23,177,&lv_font_montserrat_20,INK);
   if(timer.state==focus::State::Idle) {
+    button(p,"Garden",10,194,102,30,false,action,(uintptr_t)Action::Garden);
     text(p,"A little time for you",130,55,174,&lv_font_montserrat_14,MUTED);
     digits=text(p,"",129,84,176,&lv_font_montserrat_48,INK);
     const char *names[]={"15 min","25 min","45 min"};const unsigned values[]={15,25,45};

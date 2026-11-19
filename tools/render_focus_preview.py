@@ -27,6 +27,11 @@ raw=bytearray()
 for r,g,b in art.get_flattened_data():
     v=((r>>3)<<11)|((g>>2)<<5)|(b>>3);raw.extend(v.to_bytes(2,'little'))
 (work/'art.rgb565').write_bytes(raw)
+garden=Image.open(ROOT/'assets/study-garden/stages/garden-4.jpg').convert('RGB')
+garden_raw=bytearray()
+for r,g,b in garden.get_flattened_data():
+    v=((r>>3)<<11)|((g>>2)<<5)|(b>>3); garden_raw.extend(v.to_bytes(2,'little'))
+(work/'garden.rgb565').write_bytes(garden_raw)
 ui=(ROOT/'firmware/BhoomiClock/ui.cpp').read_text()
 pager=ui[ui.index('void setPagerContentVisible(bool visible) {'):ui.index('\n}  // namespace\n\nvoid begin')]
 cpp=r'''
@@ -52,16 +57,17 @@ void updatePagerMotion();
 static uint32_t ticks=0;uint32_t millis(){return ticks;}
 unsigned artworkLoads=0;
 namespace focusart {uint8_t *load(){++artworkLoads;auto *px=(uint8_t *)malloc(153600);FILE *f=fopen("art.rgb565","rb");assert(f);assert(fread(px,1,153600,f)==153600);fclose(f);return px;}}
+namespace gardenart {uint8_t *load(unsigned){auto *px=(uint8_t *)malloc(153600); FILE *f=fopen("garden.rgb565","rb"); assert(f); assert(fread(px,1,153600,f)==153600); fclose(f); return px;}}
 static uint16_t framebuffer[320*240];
 static lv_point_t point={160,90};static bool down=false;
 void readPointer(lv_indev_t *,lv_indev_data_t *d){d->point=point;d->state=down?LV_INDEV_STATE_PRESSED:LV_INDEV_STATE_RELEASED;}
 void pump(unsigned n=1){while(n--){ticks+=16;updatePagerMotion();lv_tick_inc(16);lv_timer_handler();}}
 void drag(int from,int to){point={from,203};down=true;pump(3);int sign=to>from?1:-1;for(int x=from;sign*(to-x)>0;x+=sign*8){point.x=x;pump(2);}point.x=to;pump(2);down=false;pump(70);}
 void tap(int x,int y){point={x,y};down=true;pump(3);down=false;pump(3);}
-focus::Timer timer;unsigned actions=0;
-void action(focusview::Action a,unsigned minutes){++actions;if(a==focusview::Action::Start)timer.start(millis(),minutes);else if(a==focusview::Action::End)timer.done();else if(a==focusview::Action::TakeBreak)timer.takeBreak(millis());else timer.done();}
+focus::Timer timer;unsigned actions=0;bool garden=false;
+void action(focusview::Action a,unsigned minutes){++actions;if(a==focusview::Action::Garden){garden=true;return;}if(a==focusview::Action::CloseGarden){garden=false;return;}if(a==focusview::Action::Start)timer.start(millis(),minutes);else if(a==focusview::Action::End)timer.done();else if(a==focusview::Action::TakeBreak)timer.takeBreak(millis());else timer.done();}
 lv_obj_t *content=nullptr;
-void build(bool keep=false){if(content)lv_obj_delete(content);focusview::clear(!keep);content=lv_obj_create(pages[1]);lv_obj_remove_style_all(content);lv_obj_set_size(content,320,240);lv_obj_remove_flag(content,LV_OBJ_FLAG_SCROLLABLE);focusview::build(content,timer,action);modeRoot=content;pump(5);}
+void build(bool keep=false){if(content)lv_obj_delete(content);focusview::clear(!keep);content=lv_obj_create(pages[1]);lv_obj_remove_style_all(content);lv_obj_set_size(content,320,240);lv_obj_remove_flag(content,LV_OBJ_FLAG_SCROLLABLE);focusview::build(content,timer,action,garden,4);modeRoot=content;pump(5);}
 void save(const char *path){focusview::tick(timer,millis());pump(5);FILE *f=fopen(path,"wb");assert(f);fwrite(framebuffer,1,sizeof framebuffer,f);fclose(f);}
 '''
 main=r'''
@@ -80,13 +86,15 @@ int main(){
  drag(280,40);assert(requested==2);assert(actions==0);mode=Mode::Night;requested=-1;
  drag(40,280);assert(requested==1);mode=Mode::Focus;requested=-1;setPagerContentVisible(true);
  drag(200,176);assert(!pagerMoving && requested==-1);assert(lv_obj_get_style_opa(modeRoot,0)==LV_OPA_COVER);
+ tap(60,208);assert(actions==1 && garden);build(true);save("garden.rgb565");
+ tap(160,209);assert(actions==2 && !garden);build(true);actions=0;
  tap(153,161);assert(actions==0);focusview::tick(timer,millis());save("selected.rgb565");
- tap(216,203);assert(actions==1 && timer.quiet() && timer.duration==900000);build(true);assert(artworkLoads==1);save("active.rgb565");
+ tap(216,203);assert(actions==1 && timer.quiet() && timer.duration==900000);build(true);assert(artworkLoads==2);save("active.rgb565");
  drag(40,280);assert(requested==0 && timer.quiet());mode=Mode::Clock;requested=-1;
  drag(280,40);assert(requested==1);mode=Mode::Focus;requested=-1;setPagerContentVisible(true);
- timer.tick(timer.started+timer.duration);build(true);assert(artworkLoads==1);save("complete.rgb565");
- tap(216,148);assert(timer.state==focus::State::Break);build(true);assert(artworkLoads==1);save("break.rgb565");
- tap(215,195);assert(timer.state==focus::State::Idle);build(true);assert(artworkLoads==1);
+ timer.tick(timer.started+timer.duration);build(true);assert(artworkLoads==2);save("complete.rgb565");
+ tap(216,148);assert(timer.state==focus::State::Break);build(true);assert(artworkLoads==2);save("break.rgb565");
+ tap(215,195);assert(timer.state==focus::State::Idle);build(true);assert(artworkLoads==2);
  puts("PASS: illustrated screen scrolls/cancels; Start/End/break work; same-page rebuilds reuse artwork");
  lv_obj_delete(content);content=nullptr;modeRoot=nullptr;focusview::clear();pump(5);
  lv_mem_monitor_t baseline={};lv_mem_monitor(&baseline);
@@ -105,7 +113,7 @@ int main(){
 subprocess.run(['c++','-std=c++17',*flags,str(work/'check.cpp'),str(ROOT/'firmware/BhoomiClock/focus_view.cpp'),*[str(p) for p in objs],'-o',str(work/'check')],check=True)
 subprocess.run([str(work/'check')],cwd=work,check=True,timeout=60)
 out=ROOT/'assets/focus-study/previews';out.mkdir(exist_ok=True)
-for state in ['idle','selected','active','complete','break']:
+for state in ['idle','selected','active','complete','break','garden']:
     data=(work/f'{state}.rgb565').read_bytes();rgb=bytearray()
     for at in range(0,len(data),2):
         v=int.from_bytes(data[at:at+2],'little');rgb.extend((((v>>11)&31)*255//31,((v>>5)&63)*255//63,(v&31)*255//31))
