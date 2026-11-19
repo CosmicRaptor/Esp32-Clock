@@ -1,5 +1,15 @@
 # Handoff: Bhoomi's Clock
 
+## Focus and manual night modes — built, awaiting release, 19 November 2026
+
+Added horizontal Clock → Focus → Night navigation with a 450 ms name reveal and a timer shortcut. Focus offers 15/25/45 minutes, a large countdown, thin ring and a small LVGL panda reading a book. Study suppresses Spotify, the note inbox and mindfulness prompts. One gentle flash-resident chime fires at study completion; Take 5 min is opt-in, Done exits, and End cancels a running timer. Timers survive screen changes and NTP adjustments, handle millis rollover, and reset on reboot. No streaks.
+
+Per the user's clarification, Night is **manual only**, always showing dim red HH:MM on black at 4% LCD backlight; no schedule or tap-to-peek. Playing Spotify titles appear as red text without covers. Running study/break countdowns replace the time; Focus retains the dim palette when entered from Night. Clock restores normal brightness. Alarms retain priority and restore the selected brightness afterward.
+
+Leaving Clock deletes its clock/photo/Spotify widgets, decoded images and rendered face/font caches. Other mode roots are deleted on departure; timer state and cached portal source assets remain separate. Setup, note and alarm overlays remain allocated. README documents operation and limitations. Added wraparound/completion/cancellation checks in `tools/check_focus_timer.cpp`, also run by OTA CI.
+
+Validation: final isolated Arduino compile **3,042,550 bytes (48% of a 6 MB slot), globals 85,680 bytes**; focus host checks, 176 Python + 78 JS portal tests, six release tests and diff whitespace checks pass. The normal `./build.sh` was attempted but collided with another task's concurrent Arduino cache writes (truncated archives); the successful build used `/private/tmp/bhoomi-focus-build` and exports to `build/focus-review/`. The OTA transfer repair is now committed separately and verified through signed OTA 0.11.5. User subsequently authorized pushing these mode changes and manually triggering the signed release. CI will reserve the next version above the installed/published version before building; the source header is intentionally left for CI to version. Physical swipe, brightness, audio and memory-recovery checks remain for after OTA installation.
+
 ## Scheduled signed OTA — active and verified, 19 November 2026
 
 Monday/Wednesday/Friday 09:17 IST Actions workflow is pushed and active. It skips unchanged firmware inputs, tests/builds, assigns a higher version, signs ECDSA P-256/SHA-256 metadata, uploads and approves the exact digest. The clock verifies its own public key and version/hash/size before writing flash, and keeps an NVS version floor across rollback. Actions are pinned to commits. All six GitHub repository secrets are configured. Private signing key stays gitignored in `.ota-secrets/signing.pem`, mode 600; back it up securely. Portal deployed as Worker `cd21d40a-dac0-497c-99e1-1e57a1ed5b9a`.

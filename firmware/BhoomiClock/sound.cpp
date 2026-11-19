@@ -34,7 +34,7 @@ Audio *audio = nullptr;
 SemaphoreHandle_t reqLock = nullptr;
 
 // ---- request from other tasks (reqLock) ----
-bool reqPlay = false, reqStop = false, reqClip = false;
+bool reqPlay = false, reqStop = false, reqClip = false, reqChime = false;
 char reqFile[72] = "";
 uint8_t reqAlarmVolume = DEFAULT_VOLUME, reqVideoVolume = DEFAULT_VOLUME;
 bool reqVolumeChanged = false;
@@ -43,7 +43,7 @@ bool reqVolumeChanged = false;
 volatile bool active = false;
 bool trackRunning = false;
 bool usingBeep = false;
-bool clipMode = false;
+bool clipMode = false, chimeMode = false;
 uint8_t alarmVolume = DEFAULT_VOLUME, videoVolume = DEFAULT_VOLUME;
 bool giveUpOnFile = false;
 int shortPlays = 0;
@@ -107,6 +107,27 @@ bool ensureBeep() {
   return ok;
 }
 
+constexpr const char *CHIME_FILE = "/focus-chime1.wav";
+void ensureChime() {
+  if (FFat.exists(CHIME_FILE)) return;
+  constexpr uint32_t samples = BEEP_RATE * 9 / 10, bytes = samples * 2;
+  File f = FFat.open("/focus-chime.tmp", FILE_WRITE); if (!f) return;
+  uint8_t h[44] = {'R','I','F','F',0,0,0,0,'W','A','V','E','f','m','t',' ',16,0,0,0,1,0,1,0};
+  put32(h+4,36+bytes); put32(h+24,BEEP_RATE); put32(h+28,BEEP_RATE*2);
+  put16(h+32,2); put16(h+34,16); memcpy(h+36,"data",4); put32(h+40,bytes);
+  bool ok = f.write(h,sizeof h) == sizeof h;
+  int16_t chunk[256]; unsigned n=0;
+  for (uint32_t i=0; ok && i<samples; ++i) {
+    float t = (float)i/BEEP_RATE;
+    float env = fminf(1.0f,t/0.025f) * expf(-5*t) * (1.0f-(float)i/samples);
+    chunk[n++] = (int16_t)(9000*env*(sinf(2*M_PI*660*t)+0.25f*sinf(2*M_PI*1320*t)));
+    if (n==256 || i+1==samples) { ok=f.write((uint8_t *)chunk,n*2)==n*2; n=0; }
+  }
+  f.close();
+  if (ok) ok=FFat.rename("/focus-chime.tmp",CHIME_FILE);
+  if (!ok) FFat.remove("/focus-chime.tmp");
+}
+
 void onAudioEvent(Audio::msg_t m) {
   if (m.e == Audio::evt_info || m.e == Audio::evt_log || m.e == Audio::evt_eof)
     Serial.printf("[audio] %s: %s\n", m.s ? m.s : "", m.msg ? m.msg : "");
@@ -115,6 +136,10 @@ void onAudioEvent(Audio::msg_t m) {
 bool startTrack() {
   bool ok = false;
   usingBeep = true;
+  if (chimeMode) {
+    ok = audio->connecttoFS(FFat, CHIME_FILE);
+    trackRunning = ok; trackStartedAt = millis(); return ok;
+  }
   if (clipMode) {
     if (current[0] && storage::mounted()) ok = audio->connecttoFS(SD_MMC, current);
     trackRunning = ok;
@@ -144,13 +169,13 @@ bool startTrack() {
 }
 
 void handleRequests() {
-  bool doPlay, doStop, doClip, volumeChanged;
+  bool doPlay, doStop, doClip, doChime, volumeChanged;
   uint8_t nextAlarm, nextVideo;
   char file[sizeof reqFile];
   xSemaphoreTake(reqLock, portMAX_DELAY);
   doPlay = reqPlay;
   doStop = reqStop;
-  doClip = reqClip;
+  doClip = reqClip; doChime = reqChime;
   volumeChanged = reqVolumeChanged; reqVolumeChanged = false;
   nextAlarm = reqAlarmVolume; nextVideo = reqVideoVolume;
   strlcpy(file, reqFile, sizeof file);
@@ -167,22 +192,22 @@ void handleRequests() {
   }
   if (doPlay) {  // a play after a stop in the same tick wins
     strlcpy(current, file, sizeof current);
-    clipMode = doClip;
-    audio->setVolume(clipMode ? videoVolume : alarmVolume);
+    clipMode = doClip; chimeMode = doChime;
+    audio->setVolume(chimeMode ? min<uint8_t>(alarmVolume, 10) : clipMode ? videoVolume : alarmVolume);
     giveUpOnFile = false;
     shortPlays = 0;
     active = true;
     startTrack();
     if (!trackRunning) active = false;
   } else if (volumeChanged && active) {
-    audio->setVolume(clipMode ? videoVolume : alarmVolume);
+    audio->setVolume(chimeMode ? min<uint8_t>(alarmVolume, 10) : clipMode ? videoVolume : alarmVolume);
   }
 }
 
 // Called when a track finished on its own: loop it, unless it never really played.
 void trackEnded() {
   trackRunning = false;
-  if (clipMode) { active = false; restartAt = 0; return; }
+  if (clipMode || chimeMode) { active = false; restartAt = 0; return; }
   uint32_t len = millis() - trackStartedAt;
   if (!usingBeep) {
     if (len < MIN_GOOD_PLAY_MS) {
@@ -231,6 +256,7 @@ void begin() {
   audio->setPinout(PIN_BCLK, PIN_LRC, PIN_DOUT);
   audio->setVolume(DEFAULT_VOLUME);
   ensureBeep();
+  ensureChime();
   // Core 1 like the Arduino loop, but above it (priority 2 vs 1) so playback never starves while
   // the screen is drawing. The library runs its decoder in its own task on core 0.
   xTaskCreatePinnedToCore(task, "sound", 8 * 1024, nullptr, 2, nullptr, 1);
@@ -241,7 +267,7 @@ void play(const char *fileName) {
   xSemaphoreTake(reqLock, portMAX_DELAY);
   strlcpy(reqFile, fileName ? fileName : "", sizeof reqFile);
   reqPlay = true;
-  reqClip = false;
+  reqClip = false; reqChime = false;
   xSemaphoreGive(reqLock);
 }
 
@@ -250,7 +276,14 @@ void playClip(const char *path) {
   xSemaphoreTake(reqLock, portMAX_DELAY);
   strlcpy(reqFile, path, sizeof reqFile);
   reqPlay = true;
-  reqClip = true;
+  reqClip = true; reqChime = false;
+  xSemaphoreGive(reqLock);
+}
+
+void chime() {
+  if (!reqLock) return;
+  xSemaphoreTake(reqLock, portMAX_DELAY);
+  reqFile[0] = 0; reqPlay = true; reqClip = false; reqChime = true;
   xSemaphoreGive(reqLock);
 }
 

@@ -64,6 +64,8 @@ jobs:
           /tmp/check_cooperative_client
           c++ -std=c++17 tools/check_ota_signature.cpp -o /tmp/check_ota_signature
           /tmp/check_ota_signature
+          c++ -std=c++11 tools/check_focus_timer.cpp -o /tmp/check_focus_timer
+          /tmp/check_focus_timer
       - name: Build the versioned application
         if: steps.release.outputs.changed == 'true'
         env:

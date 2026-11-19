@@ -8,6 +8,7 @@
 
 #include "app_lock.h"
 #include "mindfulness.h"
+#include "focus_timer.h"
 #include "video_player.h"
 
 #include "display.h"
@@ -37,6 +38,17 @@ const lv_color_t ERR = lv_color_hex(0xC0392B);
 constexpr uint32_t SPLASH_MS = 2500;  // "I'm online!" before switching to the clock
 constexpr uint32_t FACE_TICK_MS = 66;  // portal faces animate at 15 ticks a second (portal's ANIM_FPS: the budget assumes it)
 
+enum class Mode { Clock, Focus, Night };
+Mode mode = Mode::Clock;
+focus::Timer focusTimer;
+bool nightDim = false, homeLoaded = true;
+int requestedMode = -1;
+uint32_t revealAt = 0;
+lv_obj_t *modeRoot = nullptr, *modeTime = nullptr, *modeRing = nullptr, *modePanda = nullptr;
+lv_obj_t *modeCaption = nullptr, *nightSpotify = nullptr, *timerButton = nullptr;
+void requestMode(Mode next);
+void updateModes();
+void applyBrightness();
 String ap;
 lv_font_t *bigFont = nullptr;
 lv_font_t *photoFont = nullptr;
@@ -91,6 +103,7 @@ lv_obj_t *fullColumn(lv_obj_t *parent) {
 }
 
 void show(lv_obj_t *o, bool on) {
+  if (!o) return;
   if (on) lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
   else lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
 }
@@ -281,7 +294,7 @@ void updateClock() {
     time_t now = time(nullptr);
     struct tm t;
     localtime_r(&now, &t);
-    if (t.tm_min != lastMin || settings::timezone() != lastZone) {
+    if (t.tm_min != lastMin || settings::timezone() != lastZone || !lv_label_get_text(timeLabel)[0]) {
       lastMin = t.tm_min;
       char buf[40];
       lv_obj_set_style_text_font(timeLabel, bigFont ? bigFont : &lv_font_montserrat_48, 0);
@@ -313,7 +326,7 @@ uint32_t seenPortalRev = 0;
 
 enum class View { Setup, Msg, Clock, Photo, Face };
 View current = View::Msg;
-bool inClock() { return current == View::Clock || current == View::Photo || current == View::Face; }
+bool inClock() { return homeLoaded && mode == Mode::Clock && (current == View::Clock || current == View::Photo || current == View::Face); }
 bool faceSuspendedForVideo = false;
 bool faceShown = false;  // a portal face is built and is what "the clock" means right now (see refreshFace())
 bool npVisible = false;  // the now-playing strip is on screen (see below)
@@ -413,6 +426,7 @@ void openInbox(lv_event_t *) {
 void closeInbox(lv_event_t *) { inboxOpen = false; show(noteCard, false); }
 
 void applyPortal() {
+  if (!homeLoaded) return;
   size_t n = 0;
   const uint8_t *jpg = portal::photo(&n);
   const char *note = portal::note();
@@ -443,9 +457,11 @@ constexpr int NP_H = 46;  // the now-playing strip's height (below)
 
 // Existing faces automatically choose the corner opposite their Spotify strip.
 void updateNote() {
-  bool clock = inClock();
+  bool clock = inClock() && mode == Mode::Clock && !focusTimer.quiet();
+  show(timerButton, inClock() && mode == Mode::Clock);
   if (!clock && inboxOpen) { inboxOpen = false; show(noteCard, false); }
   show(noteButton, clock);
+  if (clock) { lv_obj_move_foreground(noteButton); lv_obj_move_foreground(timerButton); }
   show(noteDot, noteIdentity && noteIdentity != readIdentity);
   if (!clock) return;
   int x = 272, y = 8;
@@ -613,6 +629,7 @@ bool decodeCover(NpSide &n, const uint8_t *jpg, size_t len, const char *id) {
 
 // New answer or cover from the portal: update the texts and covers (visibility is updateNowPlaying()'s job).
 void applyNowPlaying() {
+  if (!homeLoaded) return;
   const portal::NowPlaying &now = portal::nowPlaying();
   for (int i = 0; i < 2; i++) {
     NpSide &n = np[i];
@@ -647,6 +664,7 @@ void applyNowPlaying() {
 
 // Shows or hides each side and the strip itself. Cheap; runs with the clock's 250 ms tick.
 void updateNowPlaying() {
+  if (!homeLoaded) return;
   bool fresh = portal::nowPlayingFresh();  // not heard from the portal in a while: better nothing than stale
   const portal::NowPlaying &now = portal::nowPlaying();
   bool any = false;
@@ -670,7 +688,7 @@ void updateNowPlaying() {
                   !on ? "hidden" : st == bhoomi_clock_v1_Listener_Status_PAUSED ? "paused (dimmed)" : "playing");
   }
   const auto *slot = current == View::Face ? faceview::nowPlayingSlot() : nullptr;
-  bool want = any && inClock() && !(slot && !slot->show);  // a face can switch the strip off
+  bool want = any && inClock() && mode == Mode::Clock && !focusTimer.quiet() && !(slot && !slot->show);  // a face can switch the strip off
   if (want != npVisible) {
     npVisible = want;
     show(npStrip, want);
@@ -693,7 +711,7 @@ void stopRing(const char *why) {
   ringing = false;
   sound::stop();
   show(alarmView, false);
-  display::setBacklight(display::BACKLIGHT_PCT);
+  applyBrightness();
   Serial.printf("[alarm] stopped (%s)\n", why);
 }
 
@@ -708,7 +726,7 @@ void startRing(unsigned hour, unsigned minute, const char *text, const char *sou
   lv_obj_set_style_bg_color(alarmView, ACCENT, 0);
   show(alarmView, true);
   lv_obj_move_foreground(alarmView);
-  display::setBacklight(100);
+  applyBrightness();
   sound::play(soundFile);
   Serial.printf("[alarm] RING %02u:%02u \"%s\" sound=%s\n", hour, minute, text, soundFile[0] ? soundFile : "(beep)");
 }
@@ -834,7 +852,7 @@ void showMood() {
 }
 void updateMood() {
   if (moodVisible && millis() - moodSince >= 300000) { moodVisible = false; show(moodView, false); }
-  if (!timeValid()) return;
+  if (!timeValid() || mode != Mode::Clock || focusTimer.quiet()) return;
   time_t now = time(nullptr); struct tm t; localtime_r(&now, &t);
   if (!mindfulness::shouldPrompt(now, t)) return;
   showMood();
@@ -871,7 +889,7 @@ int faceShownWeather = -1;
 int faceCheckedMin = -1;
 
 void refreshFace() {
-  if (faceSuspendedForVideo || !timeValid()) return;
+  if (!homeLoaded || mode != Mode::Clock || faceSuspendedForVideo || !timeValid()) return;
   time_t now = time(nullptr);
   struct tm t;
   localtime_r(&now, &t);
@@ -911,6 +929,7 @@ void playMoodVideo(unsigned mood) {
 }
 
 void showView(View v) {
+  if (!homeLoaded) return;
   // "Clock" = whichever face applies: a portal face, else the photo, else the plain clock
   if (v == View::Clock) v = faceShown ? View::Face : slotInUse >= 0 ? View::Photo : View::Clock;
   current = v;
@@ -936,6 +955,154 @@ void showMsg(bool busy, const char *title, const String &body) {
   showView(View::Msg);
 }
 
+
+// Only the selected mode owns a rendered screen. Cached portal source assets stay
+// available so returning to the clock never needs a network round trip.
+void unloadHome() {
+  if (!homeLoaded) return;
+  closeInbox(nullptr); show(noteButton, false); show(timerButton, false);
+  lv_obj_delete(npStrip); npStrip = nullptr; npVisible = false;
+  for (auto &n : np) { free(n.px); n = NpSide{}; }
+  faceview::clear(); faceShown = false;
+  removePhoto();
+  lv_obj_delete(clockView); lv_obj_delete(photoView);
+  clockView = photoView = nullptr;
+  homeLoaded = false;
+}
+void loadHome() {
+  if (homeLoaded) return;
+  buildClock(); buildPhoto(); buildStrip(); homeLoaded = true;
+  // Force text refresh even when returning in the same minute.
+  lv_label_set_text(timeLabel, "");
+  applyPortal(); applyNowPlaying(); refreshFace(); showView(View::Clock);
+}
+void applyBrightness() {
+  static int previous = -1;
+  int wanted = ringing ? 100 : nightDim ? 4 : display::BACKLIGHT_PCT;
+  if (wanted != previous) { display::setBacklight(wanted); previous = wanted; }
+}
+void requestMode(Mode next) { requestedMode = (int)next; }
+lv_obj_t *modeText(const char *text, int y, const lv_font_t *font = &lv_font_montserrat_16) {
+  auto *l = label(modeRoot, font, nightDim ? lv_color_hex(0x990D0D) : INK);
+  lv_label_set_text(l, text); lv_obj_set_pos(l, 0, y); return l;
+}
+void modeButton(const char *text, int x, int y, int width, void (*action)()) {
+  auto *b = lv_button_create(modeRoot); lv_obj_set_size(b, width, 38); lv_obj_set_pos(b, x, y);
+  lv_obj_set_style_bg_color(b, nightDim ? lv_color_hex(0x240000) : lv_color_hex(0xEFE1DB), 0);
+  auto *l = label(b, &lv_font_montserrat_14, nightDim ? lv_color_hex(0xAA2222) : INK);
+  lv_label_set_text(l, text); lv_obj_center(l);
+  lv_obj_add_event_cb(b, [](lv_event_t *e) { ((void (*)())lv_event_get_user_data(e))(); }, LV_EVENT_CLICKED, (void *)action);
+}
+void newModeRoot() {
+  if (modeRoot) lv_obj_delete(modeRoot);
+  modeTime = modeRing = modeCaption = modePanda = nightSpotify = nullptr;
+  modeRoot = lv_obj_create(scr); lv_obj_remove_style_all(modeRoot);
+  lv_obj_set_size(modeRoot, 320, 240); lv_obj_remove_flag(modeRoot, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_bg_color(modeRoot, nightDim ? lv_color_black() : BG, 0);
+  lv_obj_set_style_bg_opa(modeRoot, LV_OPA_COVER, 0);
+}
+void startFocus(unsigned minutes) { focusTimer.start(millis(), minutes); requestMode(Mode::Focus); }
+void drawPanda() {
+  // Small LVGL primitives: no bitmap allocation or dependency on downloaded art.
+  modePanda = box(modeRoot, LV_FLEX_FLOW_ROW); lv_obj_set_size(modePanda, 56, 42);
+  lv_obj_set_pos(modePanda, 132, 143); lv_obj_set_layout(modePanda, LV_LAYOUT_NONE);
+  auto ellipse = [](lv_obj_t *p, int x, int y, int w, int h, uint32_t col) {
+    auto *o = lv_obj_create(p); lv_obj_remove_style_all(o); lv_obj_set_pos(o,x,y); lv_obj_set_size(o,w,h);
+    lv_obj_set_style_radius(o, LV_RADIUS_CIRCLE, 0); lv_obj_set_style_bg_color(o,lv_color_hex(col),0);
+    lv_obj_set_style_bg_opa(o,LV_OPA_COVER,0); lv_obj_remove_flag(o,LV_OBJ_FLAG_CLICKABLE);
+  };
+  ellipse(modePanda,4,0,14,14,0x292424); ellipse(modePanda,38,0,14,14,0x292424);
+  ellipse(modePanda,7,5,42,30,0xFFFFFF);
+  ellipse(modePanda,15,14,10,12,0x292424); ellipse(modePanda,32,14,10,12,0x292424);
+  ellipse(modePanda,19,17,3,3,0xFFFFFF); ellipse(modePanda,35,17,3,3,0xFFFFFF);
+  ellipse(modePanda,26,25,5,3,0x292424);
+  auto *book = lv_obj_create(modePanda); lv_obj_remove_style_all(book); lv_obj_set_pos(book,8,30); lv_obj_set_size(book,40,10);
+  lv_obj_set_style_bg_color(book,ACCENT,0); lv_obj_set_style_bg_opa(book,LV_OPA_COVER,0);
+}
+void buildMode() {
+  newModeRoot();
+  if (mode == Mode::Night && (focusTimer.state == focus::State::Idle || focusTimer.running())) {
+    modeTime = modeText("", 65, bigFont ? bigFont : &lv_font_montserrat_48);
+    nightSpotify = modeText("", 191, &lv_font_montserrat_14);
+    lv_label_set_long_mode(nightSpotify, LV_LABEL_LONG_CLIP);
+    return;
+  }
+  if (focusTimer.state == focus::State::Idle) {
+    modeText("FOCUS", 28, &lv_font_montserrat_20);
+    modeText("A little time, just for studying", 65);
+    modeButton("15 min", 15, 108, 90, [](){ startFocus(15); });
+    modeButton("25 min", 115, 108, 90, [](){ startFocus(25); });
+    modeButton("45 min", 215, 108, 90, [](){ startFocus(45); });
+    modeText("Tap a time to start", 181); return;
+  }
+  if (focusTimer.running()) {
+    modeCaption = modeText(focusTimer.quiet() ? "A LITTLE FOCUS" : "TAKE A BREATHER", 8, &lv_font_montserrat_14);
+    modeRing = lv_arc_create(modeRoot); lv_obj_set_size(modeRing,190,190); lv_obj_set_pos(modeRing,65,28);
+    lv_arc_set_bg_angles(modeRing,0,360); lv_arc_set_rotation(modeRing,270); lv_arc_set_range(modeRing,0,1000);
+    lv_obj_remove_style(modeRing,nullptr,LV_PART_KNOB); lv_obj_remove_flag(modeRing,LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_arc_width(modeRing,2,LV_PART_MAIN); lv_obj_set_style_arc_width(modeRing,3,LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(modeRing,nightDim ? lv_color_hex(0x240000) : lv_color_hex(0xE9DCD4),LV_PART_MAIN);
+    lv_obj_set_style_arc_color(modeRing,nightDim ? lv_color_hex(0x990D0D) : ACCENT,LV_PART_INDICATOR);
+    modeTime = modeText("", 75, photoFont ? photoFont : &lv_font_montserrat_48);
+    if (!nightDim) drawPanda();
+    modeButton("End", 124, 200, 72, [](){ focusTimer.done(); requestMode(Mode::Focus); });
+  } else {
+    modeText(focusTimer.state == focus::State::Complete ? "A little progress. Well done." : "Break finished", 48, &lv_font_montserrat_20);
+    if (focusTimer.state == focus::State::Complete)
+      modeButton("Take 5 min", 26, 124, 130, [](){ focusTimer.takeBreak(millis()); requestMode(Mode::Focus); });
+    modeButton("Done", 170, 124, 120, [](){ focusTimer.done(); requestMode(Mode::Clock); });
+  }
+}
+void updateModes() {
+  bool ended = focusTimer.tick(millis());
+  if (ended) {
+    if (!ringing) sound::chime();
+    requestMode(mode == Mode::Night ? Mode::Night : Mode::Focus);
+  }
+  if (requestedMode >= 0 && !ringing && !video_player::playing() && !moodVisible && !noteVisible) {
+    Mode next = (Mode)requestedMode; requestedMode = -1;
+    bool changed = next != mode;
+    if (next == Mode::Night) nightDim = true;
+    if (next == Mode::Clock) nightDim = false;
+    mode = next; onlineAt = 0;
+    if (next != Mode::Clock) unloadHome();
+    // A short name reveal precedes construction of the destination screen.
+    newModeRoot();
+    modeText(next == Mode::Clock ? "Clock" : next == Mode::Focus ? "Focus" : "Night", 91, &lv_font_montserrat_28);
+    revealAt = millis() | 1;
+    if (!changed) revealAt = millis() - 451;
+    applyBrightness();
+  }
+  if (revealAt && millis() - revealAt >= 450) {
+    revealAt = 0;
+    if (mode == Mode::Clock) {
+      lv_obj_delete(modeRoot); modeRoot = nullptr; modeTime = modeRing = modeCaption = modePanda = nightSpotify = nullptr;
+      loadHome(); applyPortal(); applyNowPlaying(); refreshFace(); showView(View::Clock);
+    } else buildMode();
+  }
+  static uint32_t lastPaint = 0;
+  if (!revealAt && modeRoot && modeTime && millis() - lastPaint >= 250) {
+    lastPaint = millis();
+    if (focusTimer.running()) {
+      uint32_t seconds = (focusTimer.remaining(millis()) + 999) / 1000;
+      lv_label_set_text_fmt(modeTime,"%02u:%02u",(unsigned)(seconds/60),(unsigned)(seconds%60));
+      if (modeRing) lv_arc_set_value(modeRing, (uint64_t)focusTimer.remaining(millis()) * 1000 / focusTimer.duration);
+    } else if (mode == Mode::Night) {
+      time_t now = time(nullptr); struct tm t; localtime_r(&now,&t);
+      if (timeValid()) lv_label_set_text_fmt(modeTime,"%02d:%02d",t.tm_hour,t.tm_min);
+      else lv_label_set_text(modeTime,"--:--");
+    }
+    if (nightSpotify) {
+      const auto &n = portal::nowPlaying();
+      bool visible = !focusTimer.quiet() && portal::nowPlayingFresh();
+      const char *left = visible && n.left.status == bhoomi_clock_v1_Listener_Status_PLAYING ? n.left.title : "";
+      const char *right = visible && n.right.status == bhoomi_clock_v1_Listener_Status_PLAYING ? n.right.title : "";
+      lv_label_set_text_fmt(nightSpotify, "%s%s%s", left, left[0] && right[0] ? "\n" : "", right);
+    }
+  }
+  applyBrightness();
+}
+
 }  // namespace
 
 void begin(const char *apName) {
@@ -953,6 +1120,19 @@ void begin(const char *apName) {
   faceview::begin(scr);
   buildStrip();
   buildNote();
+  timerButton = lv_button_create(scr);
+  lv_obj_set_size(timerButton, 40, 36); lv_obj_align(timerButton, LV_ALIGN_BOTTOM_LEFT, 8, -8);
+  lv_obj_t *timerIcon = label(timerButton, &lv_font_montserrat_20, INK);
+  lv_label_set_text(timerIcon, "");
+  lv_obj_t *dial = lv_arc_create(timerButton); lv_obj_set_size(dial, 24, 24); lv_obj_center(dial);
+  lv_arc_set_bg_angles(dial, 0, 360); lv_arc_set_angles(dial, 270, 320);
+  lv_obj_set_style_arc_width(dial, 2, LV_PART_MAIN); lv_obj_set_style_arc_width(dial, 2, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_color(dial, INK, LV_PART_MAIN); lv_obj_set_style_arc_color(dial, INK, LV_PART_INDICATOR);
+  lv_obj_remove_style(dial, nullptr, LV_PART_KNOB); lv_obj_remove_flag(dial, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_t *hand = lv_obj_create(timerButton); lv_obj_remove_style_all(hand); lv_obj_set_size(hand, 2, 8);
+  lv_obj_align(hand, LV_ALIGN_CENTER, 0, -3); lv_obj_set_style_bg_color(hand, INK, 0);
+  lv_obj_set_style_bg_opa(hand, LV_OPA_COVER, 0); lv_obj_remove_flag(hand, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(timerButton, [](lv_event_t *) { requestMode(Mode::Focus); }, LV_EVENT_CLICKED, nullptr);
   mindfulness::begin();
   buildMood();
   video_player::begin();
@@ -960,7 +1140,24 @@ void begin(const char *apName) {
   showMsg(true, "Waking up...", "");
 }
 
-void testMindfulness() { if (timeValid()) showMood(); else Serial.println("[mindfulness] waiting for clock time"); }
+void navigationTouch(bool down, int x, int y) {
+  static bool wasDown = false, eligible = false;
+  static int startX = 0, startY = 0;
+  if (down && !wasDown) {
+    startX = x; startY = y;
+    eligible = !ringing && !moodVisible && !noteVisible && !inboxOpen && !video_player::playing() && (mode != Mode::Clock || inClock());
+  }
+  if (!down && wasDown && eligible && !revealAt) {
+    int dx = x - startX, dy = y - startY;
+    if (abs(dx) >= 60 && abs(dx) > abs(dy) * 2) {
+      int next = (int)mode + (dx < 0 ? 1 : -1);
+      if (next >= 0 && next <= 2) requestMode((Mode)next);
+    }
+  }
+  wasDown = down;
+}
+
+void testMindfulness() { if (timeValid() && mode == Mode::Clock && !focusTimer.quiet()) showMood(); else Serial.println("[mindfulness] waiting for clock time"); }
 
 void testAlarm(const char *soundFile) {
   time_t now = time(nullptr);
@@ -971,6 +1168,7 @@ void testAlarm(const char *soundFile) {
 
 void showWifi(const wifisetup::Status &s) {
   phase = s.phase;
+  if (mode != Mode::Clock) return;
   switch (s.phase) {
     case Phase::Portal:
       lv_obj_set_style_text_color(hint, MUTE, 0);
@@ -1007,6 +1205,7 @@ void showWifi(const wifisetup::Status &s) {
 }
 
 void loop() {
+  updateModes();
   static uint32_t last = 0, lastFaceTick = 0;
   if (portal::revision() != seenPortalRev) {
     seenPortalRev = portal::revision();
@@ -1034,7 +1233,7 @@ void loop() {
     onlineAt = 0;
     if (phase == Phase::Online) showView(View::Clock);
   }
-  if (inClock() && millis() - last >= 250) {
+  if (homeLoaded && mode == Mode::Clock && inClock() && millis() - last >= 250) {
     last = millis();
     updateClock();
     updateNowPlaying();
@@ -1044,7 +1243,7 @@ void loop() {
     localtime_r(&now, &t);
     if (timeValid() && t.tm_min != faceCheckedMin) refreshFace();
   }
-  if (current == View::Face && millis() - lastFaceTick >= FACE_TICK_MS) {  // the face's own, faster animation tick
+  if (homeLoaded && mode == Mode::Clock && current == View::Face && millis() - lastFaceTick >= FACE_TICK_MS) {  // the face's own, faster animation tick
     lastFaceTick = millis();
     time_t now = time(nullptr);
     struct tm t;

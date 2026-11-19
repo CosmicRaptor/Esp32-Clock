@@ -16,6 +16,7 @@ void play(const char *fileName);  // "" = built-in beep; plays on repeat
 // Plays one SD-card clip once, without alarm fallback or looping.
 void playClip(const char *path);
 void setLevels(uint8_t alarm, uint8_t video); // 0..21, applied on the sound task
+void chime(); // one soft flash-resident tone, no loop or SD dependency
 void stop();
 bool playing();
 

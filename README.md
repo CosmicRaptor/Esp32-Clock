@@ -40,6 +40,16 @@ If uploads fail with "No serial data received", close the Arduino IDE Serial Mon
 - **Alarms:** set them in the portal. At the alarm time the screen turns pink and pulses, and the sound repeats until you touch the screen (or press **BOOT**). It stops by itself after 5 minutes. The sound is the file picked in the portal from `/sounds` (mp3, m4a, aac, flac, ogg/opus, wav). No pick, no card, a missing file, or a file that won't decode all fall back to the built-in beep (kept in the internal flash, so it works without a card). Try it without waiting: type `ring` (or `ring <file name>`) in the serial monitor at 115200 baud.
 - **Screen upside down?** Set `FLIP_180` in `display.cpp`.
 
+## Focus and night modes
+
+Swipe left through Clock → Focus → Night, or right to go back. A brief mode name appears before the destination opens. The little timer button on the clock also opens Focus. Choose 15, 25 or 45 minutes to start immediately; a large countdown, thin progress ring and small studying panda appear. End stops a session. Spotify, the message inbox and mindfulness prompts stay hidden during study, including if you return to the clock. New portal notes stay unread and become available when study ends (the portal retains its one current note, not a message history).
+
+One soft, flash-resident chime plays at completion, without repeating. Choose **Take 5 min** to start an optional break or **Done** to return to the clock. The break also ends with one chime. Timers use monotonic elapsed time, keep running when you swipe away, and tolerate NTP corrections and millis rollover. A reboot cancels a session. There are no streaks.
+
+Night is manual: swipe to Night to dim the LCD backlight to 4%; swipe back to Clock for normal brightness. It shows red HH:MM on black, without seconds or artwork, and currently playing Spotify titles in red when available. An active study or break replaces the time with its countdown. Returning from Night to Focus keeps the dim palette; study artwork is omitted there. Alarms still ring and temporarily raise brightness, then restore it. There is no schedule or tap-to-peek setting. Timekeeping and focus work offline after time has been set; reboot starts in Clock mode.
+
+Leaving Clock deletes its rendered clock/photo/Spotify widgets, decoded photo and covers, and rendered face including font caches. Focus and Night are built on demand and deleted on departure. Portal source assets and the fixed LVGL PSRAM pool remain cached for offline reconstruction; timer state lives separately from the screen. Setup and alarm overlays remain ready. Host timer checks: `c++ -std=c++11 tools/check_focus_timer.cpp -o /tmp/check_focus_timer && /tmp/check_focus_timer`.
+
 ## Weather
 
 The admin portal and the clock’s LAN settings page both have a searchable city picker and an off button. They change the same server-side location, independently of the clock’s time zone. Weather starts off until a city is chosen. The LAN picker searches Open-Meteo directly from the browser; changes are queued on the clock until the portal accepts them (a pending change is lost if the clock reboots before it is sent).

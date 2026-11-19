@@ -6,6 +6,7 @@
 #include <algorithm>
 
 #include "display.h"
+#include "ui.h"
 
 namespace touch {
 namespace {
@@ -142,6 +143,7 @@ void readCb(lv_indev_t *, lv_indev_data_t *data) {
   } else if (missed < 1000) {
     missed++;
   }
+  ui::navigationTouch(missed < 3, lastX, lastY);
   data->point.x = lastX;
   data->point.y = lastY;
   data->state = missed < 3 ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
