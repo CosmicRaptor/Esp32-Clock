@@ -43,6 +43,7 @@ bool install() {
   return ok;
 }
 uint8_t *load() {
+  uint32_t started=millis();
   if (!storage::mounted()) return nullptr;
   File f=SD_MMC.open(PATH, FILE_READ);
   if (!f || !f.size() || f.size()>64*1024) return nullptr;
@@ -65,7 +66,7 @@ uint8_t *load() {
     if(px){cfg.outbuf=px;cfg.outbuf_size=PIXELS;if(esp_jpeg_decode(&cfg,&info)!=ESP_OK){free(px);px=nullptr;}}
   }
   free(jpg);
-  Serial.printf("[focus-art] SD decode %s\n",px ? "ok" : "failed");
+  Serial.printf("[focus-art] SD decode %s (%u ms)\n",px ? "ok" : "failed",(unsigned)(millis()-started));
   return px;
 }
 }

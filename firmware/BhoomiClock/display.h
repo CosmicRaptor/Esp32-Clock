@@ -19,5 +19,8 @@ constexpr uint8_t BACKLIGHT_PCT = 80;  // normal brightness
 void begin();
 void loop();
 void setBacklight(uint8_t percent);
+// Main-loop-only timing for page drags; no ISR logging.
+void beginScrollMetrics();
+void endScrollMetrics();
 
 }  // namespace display

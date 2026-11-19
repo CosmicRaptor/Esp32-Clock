@@ -37,12 +37,14 @@ const lv_color_t OK = lv_color_hex(0x3A8F5C);
 const lv_color_t ERR = lv_color_hex(0xC0392B);
 
 constexpr uint32_t SPLASH_MS = 2500;  // "I'm online!" before switching to the clock
+constexpr uint32_t MODE_REVEAL_MS = 120; // the title is already visible throughout the drag
 constexpr uint32_t FACE_TICK_MS = 66;  // portal faces animate at 15 ticks a second (portal's ANIM_FPS: the budget assumes it)
 
 enum class Mode { Clock, Focus, Night };
 Mode mode = Mode::Clock;
 focus::Timer focusTimer;
 bool nightDim = false, homeLoaded = true;
+bool pagerMoving = false;
 int requestedMode = -1;
 uint32_t revealAt = 0;
 lv_obj_t *modeRoot = nullptr, *modeTime = nullptr, *modeRing = nullptr, *modePanda = nullptr;
@@ -51,6 +53,7 @@ lv_obj_t *pager = nullptr, *pages[3] = {}, *pageTitles[3] = {};
 void requestMode(Mode next);
 void updateModes();
 void applyBrightness();
+void setPagerContentVisible(bool visible);
 String ap;
 lv_font_t *bigFont = nullptr;
 lv_font_t *photoFont = nullptr;
@@ -973,10 +976,12 @@ void unloadHome() {
 }
 void loadHome() {
   if (homeLoaded) return;
+  uint32_t started = millis();
   buildClock(); buildPhoto(); buildStrip(); homeLoaded = true;
   // Force text refresh even when returning in the same minute.
   lv_label_set_text(timeLabel, "");
   applyPortal(); applyNowPlaying(); refreshFace(); showView(View::Clock);
+  Serial.printf("[pager] clock build %u ms\n",(unsigned)(millis()-started));
 }
 void applyBrightness() {
   static int previous = -1;
@@ -997,7 +1002,7 @@ void modeButton(const char *text, int x, int y, int width, void (*action)()) {
 }
 void newModeRoot() {
   if (modeRoot) lv_obj_delete(modeRoot);
-  focusview::clear();
+  focusview::clear(false);
   modeTime = modeRing = modeCaption = modePanda = nightSpotify = nullptr;
   modeRoot = lv_obj_create(pages[(int)mode]); lv_obj_remove_style_all(modeRoot);
   lv_obj_set_size(modeRoot, 320, 240); lv_obj_remove_flag(modeRoot, LV_OBJ_FLAG_SCROLLABLE);
@@ -1073,7 +1078,7 @@ void updateModes() {
     if (!ringing) sound::chime();
     requestMode(mode == Mode::Night ? Mode::Night : Mode::Focus);
   }
-  if (requestedMode >= 0 && !ringing && !video_player::playing() && !moodVisible && !noteVisible) {
+  if (!pagerMoving && requestedMode >= 0 && !ringing && !video_player::playing() && !moodVisible && !noteVisible) {
     Mode next = (Mode)requestedMode; requestedMode = -1;
     // Programmatic actions (Done/completion) use the very same pager as touch.
     if (abs(lv_obj_get_scroll_x(pager) - (int)next * display::WIDTH) > 1) {
@@ -1088,24 +1093,26 @@ void updateModes() {
     // Adjacent pages contain only a title while dragging. Release the old
     // content only after snapping; construct the new screen after its reveal.
     if (modeRoot) { lv_obj_delete(modeRoot); modeRoot = nullptr; }
-    focusview::clear();
+    focusview::clear(changed || mode != Mode::Focus || nightDim);
     modeTime = modeRing = modeCaption = modePanda = nightSpotify = nullptr;
     lv_obj_set_style_bg_color(pages[(int)mode], nightDim ? lv_color_black() : BG, 0);
     lv_obj_set_style_text_color(pageTitles[(int)mode], nightDim ? lv_color_hex(0x990D0D) : INK, 0);
     Serial.printf("[ui] page %s (focus=%d)\n", next == Mode::Clock ? "Clock" : next == Mode::Focus ? "Focus" : "Night", (int)focusTimer.state);
     revealAt = millis() | 1;
-    if (!changed) revealAt = millis() - 451;
+    if (!changed) revealAt = millis() - MODE_REVEAL_MS - 1;
     applyBrightness();
   }
-  if (revealAt && millis() - revealAt >= 450) {
+  if (!pagerMoving && revealAt && millis() - revealAt >= MODE_REVEAL_MS) {
     revealAt = 0;
     if (mode == Mode::Clock) {
       modeTime = modeRing = modeCaption = modePanda = nightSpotify = nullptr;
-      loadHome(); applyPortal(); applyNowPlaying(); refreshFace(); showView(View::Clock);
+      if (!homeLoaded) loadHome();
+      else { applyPortal(); applyNowPlaying(); refreshFace(); showView(View::Clock); }
     } else buildMode();
+    setPagerContentVisible(true);
   }
   static uint32_t lastPaint = 0;
-  if (!revealAt && modeRoot && millis() - lastPaint >= 250) {
+  if (!pagerMoving && !revealAt && modeRoot && millis() - lastPaint >= 250) {
     lastPaint = millis();
     if (focusview::active()) focusview::tick(focusTimer,millis());
     if (modeTime && focusTimer.running()) {
@@ -1129,6 +1136,14 @@ void updateModes() {
 }
 
 
+void setPagerContentVisible(bool visible) {
+  // Opacity avoids reflow or cancelling the pointer's active scroll object.
+  // Keep objects alive until the snap ends so a cancelled drag is instant.
+  lv_obj_t *roots[] = {clockView, photoView, faceview::root(), noteButton, modeRoot};
+  for (auto *root : roots) if (root)
+    lv_obj_set_style_opa(root, visible ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+}
+
 void buildPager() {
   pager = lv_obj_create(scr); lv_obj_remove_style_all(pager);
   lv_obj_set_size(pager, display::WIDTH, display::HEIGHT);
@@ -1151,10 +1166,20 @@ void buildPager() {
   }
   lv_obj_add_event_cb(pager, [](lv_event_t *e) {
     if (lv_event_get_target(e) != pager) return;
+    if (lv_event_get_code(e) == LV_EVENT_SCROLL_BEGIN) {
+      pagerMoving = true;
+      setPagerContentVisible(false);
+      display::beginScrollMetrics();
+      return;
+    }
+    if (lv_event_get_code(e) != LV_EVENT_SCROLL_END) return;
+    pagerMoving = false;
+    display::endScrollMetrics();
     int x = lv_obj_get_scroll_x(pager);
     int index = constrain((x + display::WIDTH / 2) / display::WIDTH, 0, 2);
     if (index != (int)mode) requestMode((Mode)index);
-  }, LV_EVENT_SCROLL_END, nullptr);
+    else if (!revealAt) setPagerContentVisible(true);
+  }, LV_EVENT_ALL, nullptr);
 }
 
 }  // namespace
@@ -1194,7 +1219,7 @@ void testAlarm(const char *soundFile) {
 
 void showWifi(const wifisetup::Status &s) {
   phase = s.phase;
-  if (mode != Mode::Clock || !homeLoaded || revealAt) return;
+  if (pagerMoving || mode != Mode::Clock || !homeLoaded || revealAt) return;
   switch (s.phase) {
     case Phase::Portal:
       lv_obj_set_style_text_color(hint, MUTE, 0);
@@ -1233,22 +1258,22 @@ void showWifi(const wifisetup::Status &s) {
 void loop() {
   updateModes();
   static uint32_t last = 0, lastFaceTick = 0;
-  if (portal::revision() != seenPortalRev) {
+  if (!pagerMoving && portal::revision() != seenPortalRev) {
     seenPortalRev = portal::revision();
     applyPortal();
   }
-  if (portal::nowPlayingRevision() != seenNpRev) {
+  if (!pagerMoving && portal::nowPlayingRevision() != seenNpRev) {
     seenNpRev = portal::nowPlayingRevision();
     applyNowPlaying();
     updateNowPlaying();
   }
-  if (portal::facesRevision() != seenFacesRev || (faceShown && portal::weatherFaceGroup() != faceShownWeather)) {
+  if (!pagerMoving && (portal::facesRevision() != seenFacesRev || (faceShown && portal::weatherFaceGroup() != faceShownWeather))) {
     seenFacesRev = portal::facesRevision();
     refreshFace();
   }
   checkAlarms();
   updateAlarm();
-  updateMood();
+  if (!pagerMoving) updateMood();
   if (noteVisible && millis() - noteSince >= 5000) finishMoodNote();
   video_player::tick();
   if (faceSuspendedForVideo && !video_player::playing()) {
@@ -1259,7 +1284,7 @@ void loop() {
     onlineAt = 0;
     if (phase == Phase::Online) showView(View::Clock);
   }
-  if (homeLoaded && mode == Mode::Clock && inClock() && millis() - last >= 250) {
+  if (!pagerMoving && homeLoaded && mode == Mode::Clock && inClock() && millis() - last >= 250) {
     last = millis();
     updateClock();
     updateNowPlaying();
@@ -1269,7 +1294,7 @@ void loop() {
     localtime_r(&now, &t);
     if (timeValid() && t.tm_min != faceCheckedMin) refreshFace();
   }
-  if (homeLoaded && mode == Mode::Clock && current == View::Face && millis() - lastFaceTick >= FACE_TICK_MS) {  // the face's own, faster animation tick
+  if (!pagerMoving && homeLoaded && mode == Mode::Clock && current == View::Face && millis() - lastFaceTick >= FACE_TICK_MS) {  // the face's own, faster animation tick
     lastFaceTick = millis();
     time_t now = time(nullptr);
     struct tm t;

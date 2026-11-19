@@ -36,11 +36,11 @@ void paintChoices() {
   }
 }
 }
-void clear(){free(pixels);pixels=nullptr;digits=clockLabel=dateLabel=ring=nullptr;for(auto &p:choices)p=nullptr;onAction=nullptr;}
+void clear(bool releaseArtwork){if(releaseArtwork){free(pixels);pixels=nullptr;}digits=clockLabel=dateLabel=ring=nullptr;for(auto &p:choices)p=nullptr;onAction=nullptr;}
 bool active(){return clockLabel!=nullptr;}
 void build(lv_obj_t *p,const focus::Timer &timer,Callback callback) {
   onAction=callback;
-  pixels=focusart::load();
+  if(!pixels) pixels=focusart::load();
   if(pixels) {
     image={};image.header.magic=LV_IMAGE_HEADER_MAGIC;image.header.cf=LV_COLOR_FORMAT_RGB565;
     image.header.w=320;image.header.h=240;image.header.stride=640;image.data_size=153600;image.data=pixels;

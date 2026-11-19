@@ -38,18 +38,21 @@ try:
 except subprocess.CalledProcessError as error:
     sys.stderr.write(error.stderr.decode()); raise
 source = (root/'firmware/BhoomiClock/ui.cpp').read_text()
-pager = source[source.index('void buildPager() {'):source.index('\n}  // namespace\n\nvoid begin')]
+pager = source[source.index('void setPagerContentVisible(bool visible) {'):source.index('\n}  // namespace\n\nvoid begin')]
 harness = r'''
 #include <lvgl.h>
 #include <cassert>
 #include <cstdio>
 #include <algorithm>
 #define constrain(x,a,b) std::max(a,std::min(b,x))
-namespace display {constexpr int WIDTH=320, HEIGHT=240;}
+namespace display {constexpr int WIDTH=320, HEIGHT=240; void beginScrollMetrics(){} void endScrollMetrics(){}}
 enum class Mode {Clock,Focus,Night};
 Mode mode=Mode::Clock;
 int requested=-1;
 lv_obj_t *scr,*pager,*pages[3],*pageTitles[3];
+lv_obj_t *clockView=nullptr,*photoView=nullptr,*noteButton=nullptr,*modeRoot=nullptr;
+bool pagerMoving=false;uint32_t revealAt=0;
+namespace faceview {lv_obj_t *root(){return nullptr;}}
 const lv_color_t BG=lv_color_hex(0xFBF7F2),INK=lv_color_hex(0x2B2420);
 void requestMode(Mode m){requested=(int)m;}
 lv_obj_t *label(lv_obj_t *p,const lv_font_t *font,lv_color_t col){

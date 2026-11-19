@@ -1,5 +1,13 @@
 # Handoff: Bhoomi's Clock
 
+## Scrolling performance — USB flashed 0.12.1, 19 November 2026
+
+User reported lag after the illustrated Focus UI. Pager motion now draws only lightweight mode titles; the illustrated screen/clock face roots are made transparent without deleting or reflowing them, so cancelled drags restore instantly. After snapping, the old page is unloaded and the new page opens following a 120 ms title pause (previously 450 ms). UI image application, face animation/check-in rendering and screen builds defer while the pager moves. Timer completion and alarms remain active. Start/End/break transitions within Focus retain its existing decoded PSRAM artwork, avoiding repeated SD reads; leaving Focus still frees it. Removed duplicate clock-restore calls.
+
+Added `[pager]` scroll UI-pass and clock-build timing; SD decode logs include elapsed time. Native LVGL tests verify forward/backward navigation, cancelled drags restoring opacity, button input and same-page artwork reuse. A host software-redraw comparison for 30 frames measured illustration 25,188 us vs titles 5,168 us; this is CPU draw time on the Mac, not an on-device frame-rate claim. Hardware capture shows real scrolling max UI passes 37.5–38.9 ms, SD load/decode 130–134 ms after scrolling, and clock reconstruction 259–261 ms after scrolling. User confirmed **Smooth now**. Capture: `build/scroll-performance-0.12.1-serial.log`.
+
+`./build.sh` succeeds: **3,079,414 bytes (48% of a 6 MB slot), globals 85,808 bytes**; application file 3,079,568 bytes. Firmware **0.12.1** USB-flashed with hashes verified; bootloader/partition files unchanged. Timer host checks, native pager checks, rendered UI input/reuse tests and diff checks pass. Existing illustration and Night palette retained. No CI release triggered. Preserve unrelated pending Wi-Fi diagnostic, CI caching and AGENTS.md changes.
+
 ## Illustrated panda focus UI — USB flashed 0.12.0, 19 November 2026
 
 Rebuilt normal Focus from the user's cozy study-room references. Generated new art with a black-and-white panda writing in a notebook (no bear), lavender window, lamp, plants and cream timer panel. Native LVGL clock/date, 15/25/45 duration chips, selected-duration preview and Start studying button overlay the art. Running sessions show the countdown, thin ring and End; completion offers Take 5 min and Done. No pause/reset/streak behavior was added. Native horizontal scrolling is retained. Focus entered from Night keeps the dim red UI without artwork.

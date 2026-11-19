@@ -23,6 +23,8 @@ constexpr int BUF_LINES = 40;
 
 esp_lcd_panel_handle_t panel = nullptr;
 lv_display_t *disp = nullptr;
+bool measuringScroll = false;
+uint32_t scrollStarted=0, scrollFrames=0, scrollMaxUs=0, scrollPixels=0;
 
 bool IRAM_ATTR onTransDone(esp_lcd_panel_io_handle_t, esp_lcd_panel_io_event_data_t *, void *ctx) {
   lv_display_flush_ready((lv_display_t *)ctx);
@@ -30,6 +32,7 @@ bool IRAM_ATTR onTransDone(esp_lcd_panel_io_handle_t, esp_lcd_panel_io_event_dat
 }
 
 void flush(lv_display_t *d, const lv_area_t *a, uint8_t *px) {
+  if(measuringScroll) scrollPixels += lv_area_get_width(a)*lv_area_get_height(a);
   // LVGL renders little-endian RGB565; the panel wants big-endian over SPI.
   lv_draw_sw_rgb565_swap(px, lv_area_get_width(a) * lv_area_get_height(a));
   esp_lcd_panel_draw_bitmap(panel, a->x1, a->y1, a->x2 + 1, a->y2 + 1, px);
@@ -93,9 +96,20 @@ void begin() {
   lv_display_set_flush_cb(disp, flush);
 }
 
+void beginScrollMetrics() {
+  measuringScroll=true;scrollStarted=millis();scrollFrames=scrollMaxUs=scrollPixels=0;
+}
+void endScrollMetrics() {
+  if(!measuringScroll)return;
+  measuringScroll=false;
+  Serial.printf("[pager] scroll %u ms, ui passes %u, max UI %u us, pixels %u\n",
+    (unsigned)(millis()-scrollStarted),(unsigned)scrollFrames,(unsigned)scrollMaxUs,(unsigned)scrollPixels);
+}
 void loop() {
   static bool lit = false;
+  uint32_t started=micros();
   lv_timer_handler();
+  if(measuringScroll){++scrollFrames;scrollMaxUs=max(scrollMaxUs,(uint32_t)(micros()-started));}
   if (!lit) {  // first frame is out: now turn the light on (no flash of garbage at boot)
     lit = true;
     setBacklight(BACKLIGHT_PCT);
