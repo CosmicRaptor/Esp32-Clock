@@ -1097,8 +1097,6 @@ void updateModes() {
     if (modeRoot) { lv_obj_delete(modeRoot); modeRoot = nullptr; }
     focusview::clear(changed || mode != Mode::Focus || nightDim);
     modeTime = modeRing = modeCaption = modePanda = nightSpotify = nullptr;
-    lv_obj_set_style_bg_color(pages[(int)mode], nightDim ? lv_color_black() : BG, 0);
-    lv_obj_set_style_text_color(pageTitles[(int)mode], nightDim ? lv_color_hex(0x990D0D) : INK, 0);
     debuglog::printf("[ui] page %s (focus=%d)\n", next == Mode::Clock ? "Clock" : next == Mode::Focus ? "Focus" : "Night", (int)focusTimer.state);
     revealAt = millis() | 1;
     if (!changed) revealAt = millis() - MODE_REVEAL_MS - 1;
@@ -1181,9 +1179,9 @@ void buildPager() {
     lv_obj_set_pos(pages[i], i * display::WIDTH, 0);
     lv_obj_remove_flag(pages[i], LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(pages[i], LV_OBJ_FLAG_SNAPPABLE);
-    lv_obj_set_style_bg_color(pages[i], i == 2 ? lv_color_black() : BG, 0);
+    lv_obj_set_style_bg_color(pages[i], lv_color_black(), 0);
     lv_obj_set_style_bg_opa(pages[i], LV_OPA_COVER, 0);
-    pageTitles[i] = label(pages[i], &lv_font_montserrat_28, i == 2 ? lv_color_hex(0x990D0D) : INK);
+    pageTitles[i] = label(pages[i], &lv_font_montserrat_28, lv_color_white());
     lv_label_set_text(pageTitles[i], names[i]); lv_obj_center(pageTitles[i]);
   }
   lv_obj_add_event_cb(pager, [](lv_event_t *e) {

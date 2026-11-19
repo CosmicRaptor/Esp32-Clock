@@ -1,5 +1,9 @@
 # Handoff: Bhoomi's Clock
 
+## White-on-black mode titles — source update, 20 November 2026
+
+Clock, Focus and Night transition pages now consistently use white mode-name text on black backgrounds, both during dragging and the settled title reveal. Removed mode-dependent color overrides. Screen contents, dim backlight behavior and navigation timing are unchanged. Native pager/interrupted-animation checks pass; `./build.sh` succeeds: **3,079,906 bytes (48% of 6 MB), globals 85,816 bytes**. Compile-only change: source/running version remains 0.12.3; this build must not be installed under the same version. No USB flash or manual CI release triggered for the styling change; the next signed OTA must reserve a higher version. User requested pushing the change. Preserve unrelated pending edits.
+
 ## End-button stall / USB debug output — USB flashed 0.12.3, 20 November 2026
 
 After the 0.12.2 capture ended, user reported another End-button freeze with delayed scrolling followed by recovery. Live snapshot showed healthy memory and no latched scroll flag; attaching a USB reader was followed by a successful swipe. Installed HWCDC writer can wait seconds for host consumption, and my page diagnostics plus other app logs were synchronous UI/task writes. The continuous reader could mask this path. Do not describe the 0.12.2 memory results as a final resolution of all freezes.
