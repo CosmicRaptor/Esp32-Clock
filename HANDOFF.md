@@ -1,6 +1,6 @@
 # Handoff: Bhoomi's Clock
 
-## Focus and manual night modes — built, awaiting release, 19 November 2026
+## Focus and manual night modes — signed OTA installed, 19 November 2026
 
 Added horizontal Clock → Focus → Night navigation with a 450 ms name reveal and a timer shortcut. Focus offers 15/25/45 minutes, a large countdown, thin ring and a small LVGL panda reading a book. Study suppresses Spotify, the note inbox and mindfulness prompts. One gentle flash-resident chime fires at study completion; Take 5 min is opt-in, Done exits, and End cancels a running timer. Timers survive screen changes and NTP adjustments, handle millis rollover, and reset on reboot. No streaks.
 
@@ -9,6 +9,8 @@ Per the user's clarification, Night is **manual only**, always showing dim red H
 Leaving Clock deletes its clock/photo/Spotify widgets, decoded images and rendered face/font caches. Other mode roots are deleted on departure; timer state and cached portal source assets remain separate. Setup, note and alarm overlays remain allocated. README documents operation and limitations. Added wraparound/completion/cancellation checks in `tools/check_focus_timer.cpp`, also run by OTA CI.
 
 Validation: final isolated Arduino compile **3,042,550 bytes (48% of a 6 MB slot), globals 85,680 bytes**; focus host checks, 176 Python + 78 JS portal tests, six release tests and diff whitespace checks pass. The normal `./build.sh` was attempted but collided with another task's concurrent Arduino cache writes (truncated archives); the successful build used `/private/tmp/bhoomi-focus-build` and exports to `build/focus-review/`. The OTA transfer repair is now committed separately and verified through signed OTA 0.11.5. User subsequently authorized pushing these mode changes and manually triggering the signed release. CI will reserve the next version above the installed/published version before building; the source header is intentionally left for CI to version. Physical swipe, brightness, audio and memory-recovery checks remain for after OTA installation.
+
+Release completed: source `dbbd560` pushed to main; manually triggered [GitHub Actions run 44569983636](https://github.com/CosmicRaptor/Esp32-Clock/actions/runs/44569983636) passed all checks and published signed **0.11.6**, tag `clock-ota/0.11.6`. CI compile: **3,042,322 bytes (48% of 6 MB), globals 85,680 bytes**; uploaded signed application **3,042,464 bytes**, SHA-256 `f99dc481698adf14bf5fefccdbf084a7a65635ec3cc7b2026aed1abd12451bee`. Device diagnostics confirmed firmware 0.11.6, the exact installed digest, `ota_state=0`, `ota_code=0`, and successful authenticated polling. At 68 seconds uptime: heap 64,932, minimum 51,220, largest block 31,732, RSSI −95 dBm. No USB flash was performed. Physical visual/touch/audio confirmation remains with the user. Preserved the separate AGENTS.md edit.
 
 ## Scheduled signed OTA — active and verified, 19 November 2026
 
