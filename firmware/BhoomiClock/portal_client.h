@@ -24,7 +24,7 @@ namespace portal {
 
 bool healthy();
 
-constexpr const char *FW_VERSION = "0.11.4";  // sent as ?fw=
+constexpr const char *FW_VERSION = "0.11.7";  // sent as ?fw=
 
 using State = bhoomi_clock_v1_DeviceState;  // .has_note/.note.text, .has_photo/.photo, .alarms[0..alarms_count)
 using Alarm = bhoomi_clock_v1_Alarm;

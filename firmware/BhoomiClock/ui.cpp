@@ -45,7 +45,8 @@ bool nightDim = false, homeLoaded = true;
 int requestedMode = -1;
 uint32_t revealAt = 0;
 lv_obj_t *modeRoot = nullptr, *modeTime = nullptr, *modeRing = nullptr, *modePanda = nullptr;
-lv_obj_t *modeCaption = nullptr, *nightSpotify = nullptr, *timerButton = nullptr;
+lv_obj_t *modeCaption = nullptr, *nightSpotify = nullptr;
+lv_obj_t *pager = nullptr, *pages[3] = {}, *pageTitles[3] = {};
 void requestMode(Mode next);
 void updateModes();
 void applyBrightness();
@@ -174,7 +175,7 @@ void buildMsg() {
 
 // ---------- clock view ----------
 void buildClock() {
-  clockView = fullColumn(scr);
+  clockView = fullColumn(pages[0]);
   lv_obj_set_style_pad_row(clockView, 0, 0);
   lv_obj_set_flex_align(clockView, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
@@ -188,7 +189,7 @@ void buildClock() {
 
 // ---------- photo view: the portal's photo with the time on a dark bar ----------
 void buildPhoto() {
-  photoView = lv_obj_create(scr);
+  photoView = lv_obj_create(pages[0]);
   lv_obj_remove_style_all(photoView);
   lv_obj_set_size(photoView, lv_pct(100), lv_pct(100));
   lv_obj_remove_flag(photoView, LV_OBJ_FLAG_SCROLLABLE);
@@ -225,7 +226,7 @@ void buildPhoto() {
 void buildNote() {
   Preferences prefs;
   if (prefs.begin("note-inbox", true)) { readIdentity = prefs.getULong64("read", 0); prefs.end(); }
-  noteButton = lv_obj_create(scr);
+  noteButton = lv_obj_create(pages[0]);
   lv_obj_remove_style_all(noteButton);
   lv_obj_set_size(noteButton, 40, 40);
   lv_obj_set_style_bg_color(noteButton, lv_color_hex(0x231E1E), 0);
@@ -458,10 +459,9 @@ constexpr int NP_H = 46;  // the now-playing strip's height (below)
 // Existing faces automatically choose the corner opposite their Spotify strip.
 void updateNote() {
   bool clock = inClock() && mode == Mode::Clock && !focusTimer.quiet();
-  show(timerButton, inClock() && mode == Mode::Clock);
   if (!clock && inboxOpen) { inboxOpen = false; show(noteCard, false); }
   show(noteButton, clock);
-  if (clock) { lv_obj_move_foreground(noteButton); lv_obj_move_foreground(timerButton); }
+  if (clock) lv_obj_move_foreground(noteButton);
   show(noteDot, noteIdentity && noteIdentity != readIdentity);
   if (!clock) return;
   int x = 272, y = 8;
@@ -933,6 +933,7 @@ void showView(View v) {
   // "Clock" = whichever face applies: a portal face, else the photo, else the plain clock
   if (v == View::Clock) v = faceShown ? View::Face : slotInUse >= 0 ? View::Photo : View::Clock;
   current = v;
+  show(pager, inClock());
   show(setupView, v == View::Setup);
   show(msgView, v == View::Msg);
   show(clockView, v == View::Clock);
@@ -960,7 +961,7 @@ void showMsg(bool busy, const char *title, const String &body) {
 // available so returning to the clock never needs a network round trip.
 void unloadHome() {
   if (!homeLoaded) return;
-  closeInbox(nullptr); show(noteButton, false); show(timerButton, false);
+  closeInbox(nullptr); show(noteButton, false);
   lv_obj_delete(npStrip); npStrip = nullptr; npVisible = false;
   for (auto &n : np) { free(n.px); n = NpSide{}; }
   faceview::clear(); faceShown = false;
@@ -987,7 +988,7 @@ lv_obj_t *modeText(const char *text, int y, const lv_font_t *font = &lv_font_mon
   lv_label_set_text(l, text); lv_obj_set_pos(l, 0, y); return l;
 }
 void modeButton(const char *text, int x, int y, int width, void (*action)()) {
-  auto *b = lv_button_create(modeRoot); lv_obj_set_size(b, width, 38); lv_obj_set_pos(b, x, y);
+  auto *b = lv_button_create(modeRoot); lv_obj_remove_flag(b, LV_OBJ_FLAG_SCROLLABLE); lv_obj_set_size(b, width, 38); lv_obj_set_pos(b, x, y);
   lv_obj_set_style_bg_color(b, nightDim ? lv_color_hex(0x240000) : lv_color_hex(0xEFE1DB), 0);
   auto *l = label(b, &lv_font_montserrat_14, nightDim ? lv_color_hex(0xAA2222) : INK);
   lv_label_set_text(l, text); lv_obj_center(l);
@@ -996,7 +997,7 @@ void modeButton(const char *text, int x, int y, int width, void (*action)()) {
 void newModeRoot() {
   if (modeRoot) lv_obj_delete(modeRoot);
   modeTime = modeRing = modeCaption = modePanda = nightSpotify = nullptr;
-  modeRoot = lv_obj_create(scr); lv_obj_remove_style_all(modeRoot);
+  modeRoot = lv_obj_create(pages[(int)mode]); lv_obj_remove_style_all(modeRoot);
   lv_obj_set_size(modeRoot, 320, 240); lv_obj_remove_flag(modeRoot, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_bg_color(modeRoot, nightDim ? lv_color_black() : BG, 0);
   lv_obj_set_style_bg_opa(modeRoot, LV_OPA_COVER, 0);
@@ -1061,14 +1062,23 @@ void updateModes() {
   }
   if (requestedMode >= 0 && !ringing && !video_player::playing() && !moodVisible && !noteVisible) {
     Mode next = (Mode)requestedMode; requestedMode = -1;
+    // Programmatic actions (Done/completion) use the very same pager as touch.
+    if (abs(lv_obj_get_scroll_x(pager) - (int)next * display::WIDTH) > 1) {
+      lv_obj_scroll_to_x(pager, (int)next * display::WIDTH, LV_ANIM_ON);
+      return;
+    }
     bool changed = next != mode;
     if (next == Mode::Night) nightDim = true;
     if (next == Mode::Clock) nightDim = false;
     mode = next; onlineAt = 0;
     if (next != Mode::Clock) unloadHome();
-    // A short name reveal precedes construction of the destination screen.
-    newModeRoot();
-    modeText(next == Mode::Clock ? "Clock" : next == Mode::Focus ? "Focus" : "Night", 91, &lv_font_montserrat_28);
+    // Adjacent pages contain only a title while dragging. Release the old
+    // content only after snapping; construct the new screen after its reveal.
+    if (modeRoot) { lv_obj_delete(modeRoot); modeRoot = nullptr; }
+    modeTime = modeRing = modeCaption = modePanda = nightSpotify = nullptr;
+    lv_obj_set_style_bg_color(pages[(int)mode], nightDim ? lv_color_black() : BG, 0);
+    lv_obj_set_style_text_color(pageTitles[(int)mode], nightDim ? lv_color_hex(0x990D0D) : INK, 0);
+    Serial.printf("[ui] page %s (focus=%d)\n", next == Mode::Clock ? "Clock" : next == Mode::Focus ? "Focus" : "Night", (int)focusTimer.state);
     revealAt = millis() | 1;
     if (!changed) revealAt = millis() - 451;
     applyBrightness();
@@ -1076,7 +1086,7 @@ void updateModes() {
   if (revealAt && millis() - revealAt >= 450) {
     revealAt = 0;
     if (mode == Mode::Clock) {
-      lv_obj_delete(modeRoot); modeRoot = nullptr; modeTime = modeRing = modeCaption = modePanda = nightSpotify = nullptr;
+      modeTime = modeRing = modeCaption = modePanda = nightSpotify = nullptr;
       loadHome(); applyPortal(); applyNowPlaying(); refreshFace(); showView(View::Clock);
     } else buildMode();
   }
@@ -1103,6 +1113,35 @@ void updateModes() {
   applyBrightness();
 }
 
+
+void buildPager() {
+  pager = lv_obj_create(scr); lv_obj_remove_style_all(pager);
+  lv_obj_set_size(pager, display::WIDTH, display::HEIGHT);
+  lv_obj_set_scroll_dir(pager, LV_DIR_HOR);
+  lv_obj_set_scroll_snap_x(pager, LV_SCROLL_SNAP_START);
+  lv_obj_set_scrollbar_mode(pager, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_add_flag(pager, LV_OBJ_FLAG_SCROLL_ONE);
+  lv_obj_remove_flag(pager, LV_OBJ_FLAG_SCROLL_ELASTIC);
+  const char *names[] = {"Clock", "Focus", "Night"};
+  for (int i = 0; i < 3; ++i) {
+    pages[i] = lv_obj_create(pager); lv_obj_remove_style_all(pages[i]);
+    lv_obj_set_size(pages[i], display::WIDTH, display::HEIGHT);
+    lv_obj_set_pos(pages[i], i * display::WIDTH, 0);
+    lv_obj_remove_flag(pages[i], LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(pages[i], LV_OBJ_FLAG_SNAPPABLE);
+    lv_obj_set_style_bg_color(pages[i], i == 2 ? lv_color_black() : BG, 0);
+    lv_obj_set_style_bg_opa(pages[i], LV_OPA_COVER, 0);
+    pageTitles[i] = label(pages[i], &lv_font_montserrat_28, i == 2 ? lv_color_hex(0x990D0D) : INK);
+    lv_label_set_text(pageTitles[i], names[i]); lv_obj_center(pageTitles[i]);
+  }
+  lv_obj_add_event_cb(pager, [](lv_event_t *e) {
+    if (lv_event_get_target(e) != pager) return;
+    int x = lv_obj_get_scroll_x(pager);
+    int index = constrain((x + display::WIDTH / 2) / display::WIDTH, 0, 2);
+    if (index != (int)mode) requestMode((Mode)index);
+  }, LV_EVENT_SCROLL_END, nullptr);
+}
+
 }  // namespace
 
 void begin(const char *apName) {
@@ -1113,48 +1152,20 @@ void begin(const char *apName) {
   scr = lv_screen_active();
   lv_obj_set_style_bg_color(scr, BG, 0);
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+  lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+  buildPager();
   buildSetup();
   buildMsg();
   buildClock();
   buildPhoto();
-  faceview::begin(scr);
+  faceview::begin(pages[0]);
   buildStrip();
   buildNote();
-  timerButton = lv_button_create(scr);
-  lv_obj_set_size(timerButton, 40, 36); lv_obj_align(timerButton, LV_ALIGN_BOTTOM_LEFT, 8, -8);
-  lv_obj_t *timerIcon = label(timerButton, &lv_font_montserrat_20, INK);
-  lv_label_set_text(timerIcon, "");
-  lv_obj_t *dial = lv_arc_create(timerButton); lv_obj_set_size(dial, 24, 24); lv_obj_center(dial);
-  lv_arc_set_bg_angles(dial, 0, 360); lv_arc_set_angles(dial, 270, 320);
-  lv_obj_set_style_arc_width(dial, 2, LV_PART_MAIN); lv_obj_set_style_arc_width(dial, 2, LV_PART_INDICATOR);
-  lv_obj_set_style_arc_color(dial, INK, LV_PART_MAIN); lv_obj_set_style_arc_color(dial, INK, LV_PART_INDICATOR);
-  lv_obj_remove_style(dial, nullptr, LV_PART_KNOB); lv_obj_remove_flag(dial, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_t *hand = lv_obj_create(timerButton); lv_obj_remove_style_all(hand); lv_obj_set_size(hand, 2, 8);
-  lv_obj_align(hand, LV_ALIGN_CENTER, 0, -3); lv_obj_set_style_bg_color(hand, INK, 0);
-  lv_obj_set_style_bg_opa(hand, LV_OPA_COVER, 0); lv_obj_remove_flag(hand, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_event_cb(timerButton, [](lv_event_t *) { requestMode(Mode::Focus); }, LV_EVENT_CLICKED, nullptr);
   mindfulness::begin();
   buildMood();
   video_player::begin();
   buildAlarm();  // alarms take priority over check-ins and clips
   showMsg(true, "Waking up...", "");
-}
-
-void navigationTouch(bool down, int x, int y) {
-  static bool wasDown = false, eligible = false;
-  static int startX = 0, startY = 0;
-  if (down && !wasDown) {
-    startX = x; startY = y;
-    eligible = !ringing && !moodVisible && !noteVisible && !inboxOpen && !video_player::playing() && (mode != Mode::Clock || inClock());
-  }
-  if (!down && wasDown && eligible && !revealAt) {
-    int dx = x - startX, dy = y - startY;
-    if (abs(dx) >= 60 && abs(dx) > abs(dy) * 2) {
-      int next = (int)mode + (dx < 0 ? 1 : -1);
-      if (next >= 0 && next <= 2) requestMode((Mode)next);
-    }
-  }
-  wasDown = down;
 }
 
 void testMindfulness() { if (timeValid() && mode == Mode::Clock && !focusTimer.quiet()) showMood(); else Serial.println("[mindfulness] waiting for clock time"); }
@@ -1168,7 +1179,7 @@ void testAlarm(const char *soundFile) {
 
 void showWifi(const wifisetup::Status &s) {
   phase = s.phase;
-  if (mode != Mode::Clock) return;
+  if (mode != Mode::Clock || !homeLoaded || revealAt) return;
   switch (s.phase) {
     case Phase::Portal:
       lv_obj_set_style_text_color(hint, MUTE, 0);
