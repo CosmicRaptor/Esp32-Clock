@@ -1559,6 +1559,56 @@ void syncMoodNotes(Conn &c) {
   p.end();
 }
 
+// Download immutable alarm sounds to temporary files, then expose only verified files.
+void syncAlarmUploads(Conn &c) {
+  static uint32_t next = 0;
+  if (next && (int32_t)(millis() - next) < 0) return;
+  next = (millis() + 5 * 60 * 1000) | 1;
+  if (!storage::mounted() || sound::playing()) return;
+  if (c.get("/api/device/alarm-sounds") != 200) { c.close(); return; }
+  constexpr size_t CAP = 16000;
+  uint8_t *body = bigAlloc(CAP);
+  if (!body) { c.close(); return; }
+  BufSink sink(body, CAP - 1);
+  int got = writeResponse(c, sink); c.close();
+  if (got < 0 || sink.overflow) { free(body); return; }
+  body[sink.len] = 0;
+  char *save = nullptr;
+  for (char *line = strtok_r((char *)body, "\n", &save); line; line = strtok_r(nullptr, "\n", &save)) {
+    char hash[65] = {}, name[65] = {}, extra; unsigned size;
+    if (sscanf(line, "%64s %u %64s %c", hash, &size, name, &extra) != 3 ||
+        strlen(hash) != 64 || !size || size > 8 * 1024 * 1024) continue;
+    bool safe = true;
+    for (const char *p = hash; *p; ++p) if (!isdigit((unsigned char)*p) && !(*p >= 'a' && *p <= 'f')) safe = false;
+    for (const char *p = name; *p; ++p) if (!isalnum((unsigned char)*p) && *p != '-' && *p != '_' && *p != '.') safe = false;
+    if (!safe || name[0] == '.' || strstr(name, "..")) continue;
+    String target = String("/sounds/") + name;
+    if (SD_MMC.exists(target)) continue;
+    String temp = String("/mood-staging/sound-") + hash + ".part";
+    SD_MMC.remove(temp);
+    File file = SD_MMC.open(temp, FILE_WRITE);
+    if (!file) break;
+    int code = c.get(String("/api/device/alarm-sounds/") + hash);
+    int count = code == 200 ? writeResponse(c, file, 600000) : -1;
+    c.close(); file.close();
+    if (count < 0 || (unsigned)count != size) { SD_MMC.remove(temp); break; }
+    file = SD_MMC.open(temp, FILE_READ);
+    if (!file) { SD_MMC.remove(temp); break; }
+    mbedtls_sha256_context sha; mbedtls_sha256_init(&sha); mbedtls_sha256_starts(&sha, 0);
+    uint8_t buf[2048], digest[32]; size_t n;
+    while ((n = file.read(buf, sizeof buf)) != 0) { mbedtls_sha256_update(&sha, buf, n); vTaskDelay(1); }
+    file.close(); mbedtls_sha256_finish(&sha, digest); mbedtls_sha256_free(&sha);
+    char actual[65]; for (int i=0; i<32; ++i) snprintf(actual+i*2, 3, "%02x", digest[i]);
+    if (!strcmp(actual, hash) && SD_MMC.rename(temp, target)) {
+      storage::touch();
+      debuglog::printf("[sounds] installed %s\n", name);
+      next = (millis() + POLL_MS) | 1;
+    } else SD_MMC.remove(temp);
+    break; // One large transfer per poll.
+  }
+  free(body);
+}
+
 // Slow, content-addressed SD-card transfers; a failed or interrupted transfer keeps the old clip.
 void syncMoodVideos(Conn &c) {
   static uint32_t next = 0;
@@ -1575,7 +1625,7 @@ void syncMoodVideos(Conn &c) {
   char *save = nullptr;
   for (char *line = strtok_r((char *)manifest, "\n", &save); line; line = strtok_r(nullptr, "\n", &save)) {
     unsigned mood, size; char hash[65] = {};
-    if (sscanf(line, "%u %64s %u", &mood, hash, &size) != 3 || mood < 1 || mood > 5 ||
+    if (sscanf(line, "%u %64s %u", &mood, hash, &size) != 3 || mood < 1 || mood > 6 ||
         strlen(hash) != 64 || size < 16 || size > 12 * 1024 * 1024) continue;
     bool hex = true; for (size_t i=0; i<64; ++i) if (!isxdigit((unsigned char)hash[i]) || isupper((unsigned char)hash[i])) hex = false;
     if (!hex) continue;
@@ -1686,6 +1736,7 @@ void task(void *) {
       syncCovers(c);
       if (syncFaces(c)) wait = FACES_MORE_MS;  // more faces or images to fetch: don't wait out the whole interval
       syncSounds(c);
+      syncAlarmUploads(c);
       syncVolume(c);
       syncMood(c);
       syncMoodNotes(c);

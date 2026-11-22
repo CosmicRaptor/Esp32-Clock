@@ -24,7 +24,7 @@ bool copy(File &source, const String &path, uint32_t length) {
 }
 }
 bool install(const char *path, unsigned mood) {
-  if (mood < 1 || mood > 5 || xSemaphoreTake(mutex(), 0) != pdTRUE) return false;
+  if (mood < 1 || mood > 6 || xSemaphoreTake(mutex(), 0) != pdTRUE) return false;
   bool result=false; File in=SD_MMC.open(path, FILE_READ);
   String root="/mindfulness", active=root+"/"+String(mood), temp=active+".new", backup=active+".old";
   do {

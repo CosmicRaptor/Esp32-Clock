@@ -40,7 +40,7 @@ bool begin() {
   for (const char *d : {"/photos", "/sounds", "/mood-staging"})
     if (!SD_MMC.exists(d)) SD_MMC.mkdir(d);
   // Recover a clip if power failed between moving the old directory and activating the new one.
-  for (int mood = 1; mood <= 5; ++mood) {
+  for (int mood = 1; mood <= 6; ++mood) {
     String active = "/mindfulness/" + String(mood), backup = active + ".old";
     if (!SD_MMC.exists(active) && SD_MMC.exists(backup)) SD_MMC.rename(backup, active);
   }

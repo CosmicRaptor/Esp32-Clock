@@ -95,6 +95,7 @@ import weather
 import management
 import mindfulness
 import mood_video
+import alarm_audio
 import volume
 import clock_pb2 as pb
 from model import Invalid
@@ -298,8 +299,8 @@ class Default(WorkerEntrypoint):
 
         if path.startswith("/api/mood-video/") and method in ("GET", "PUT"):
             mood = path.removeprefix("/api/mood-video/")
-            if mood not in ("1", "2", "3", "4", "5"):
-                raise Invalid("Choose a mood from 1 to 5.")
+            if mood not in ("1", "2", "3", "4", "5", "6"):
+                raise Invalid("Unknown video slot.")
             key = "mood-video:" + mood
             if method == "GET":
                 return json_response({"video": await self.kv_json(key)})
@@ -311,6 +312,24 @@ class Default(WorkerEntrypoint):
             if old and old.get("sha256") != meta["sha256"]:
                 await self.env.CLOCK.delete("mood-video-data:" + mood + ":" + old["sha256"])
             return json_response({"video": meta})
+
+        if path == "/api/alarm-sounds" and method == "POST":
+            name = request.headers.get("x-file-name") or ""
+            data = bytes(await request.bytes())
+            meta = alarm_audio.prepare(name, data)
+            existing = await self.kv_json("alarm-sound-meta:" + meta["sha256"])
+            if existing:
+                return json_response({"sound": existing})
+            listing = await self.env.CLOCK.list(js_obj({"prefix": "alarm-sound-meta:", "limit": 100}))
+            if hasattr(listing, "to_py"):
+                listing = listing.to_py()
+            if len(listing["keys"]) >= 100:
+                raise Invalid("The remote alarm sound library is full (100 files).")
+            # Each upload is immutable and has its own key; publishing data first
+            # lets the clock retry safely while KV changes propagate.
+            await self.env.CLOCK.put("alarm-sound-data:" + meta["sha256"], base64.b64encode(data).decode())
+            await self.env.CLOCK.put("alarm-sound-meta:" + meta["sha256"], json.dumps(meta))
+            return json_response({"sound": meta})
 
         if path == "/api/moods" and method == "GET":
             listing = await self.env.CLOCK.list(js_obj({"prefix": "mood:", "limit": 1000}))
@@ -637,18 +656,34 @@ class Default(WorkerEntrypoint):
             levels = await self.kv_json("volume") or volume.DEFAULT
             return Response(f"{levels['alarm']} {levels['video']}\n", headers={"content-type": "text/plain", "cache-control": "no-store"})
 
+        if path == "/api/device/alarm-sounds" and method == "GET":
+            listing = await self.env.CLOCK.list(js_obj({"prefix": "alarm-sound-meta:", "limit": 100}))
+            if hasattr(listing, "to_py"):
+                listing = listing.to_py()
+            entries = await asyncio.gather(*(self.kv_json(k["name"]) for k in listing["keys"]))
+            text = "".join(f"{e['sha256']} {e['size']} {e['name']}\n" for e in entries if e)
+            return Response(text, headers={"content-type": "text/plain", "cache-control": "no-store"})
+        if path.startswith("/api/device/alarm-sounds/") and method == "GET":
+            digest = path.removeprefix("/api/device/alarm-sounds/")
+            if not re.fullmatch(r"[0-9a-f]{64}", digest):
+                raise HttpError(404, "Unknown sound.")
+            raw = await self.env.CLOCK.get("alarm-sound-data:" + digest)
+            if missing(raw):
+                raise HttpError(404, "Sound is still propagating; retry later.")
+            return binary_response(base64.b64decode(str(raw)), "application/octet-stream")
+
         if path == "/api/device/mood-notes" and method == "GET":
             notes = await asyncio.gather(*(self.kv_json("mood-note:" + str(i)) for i in range(1, 6)))
             text = "".join(str(i) + " " + base64.b64encode((note or "").encode()).decode() + "\n" for i, note in enumerate(notes, 1))
             return Response(text, headers={"content-type": "text/plain", "cache-control": "no-store"})
 
         if path == "/api/device/mood-videos" and method == "GET":
-            entries = await asyncio.gather(*(self.kv_json("mood-video:" + str(i)) for i in range(1, 6)))
+            entries = await asyncio.gather(*(self.kv_json("mood-video:" + str(i)) for i in range(1, 7)))
             text = "".join(f"{i} {e['sha256']} {e['size']}\n" for i, e in enumerate(entries, 1) if e)
             return Response(text, headers={"content-type": "text/plain", "cache-control": "no-store"})
         if path.startswith("/api/device/mood-video/") and method == "GET":
             parts = path.removeprefix("/api/device/mood-video/").split("/")
-            if len(parts) != 2 or parts[0] not in ("1", "2", "3", "4", "5") or not re.fullmatch(r"[0-9a-f]{64}", parts[1]):
+            if len(parts) != 2 or parts[0] not in ("1", "2", "3", "4", "5", "6") or not re.fullmatch(r"[0-9a-f]{64}", parts[1]):
                 raise HttpError(404, "Unknown video.")
             raw = await self.env.CLOCK.get("mood-video-data:" + parts[0] + ":" + parts[1])
             if missing(raw):

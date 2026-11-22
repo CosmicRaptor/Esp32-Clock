@@ -690,3 +690,54 @@ $('moodNoteSave').onclick = () => busy($('moodNoteSave'), async () => {
   try { await sendJson('/api/mood-note/' + mood, 'PUT', {note:$('moodNoteText').value}); $('moodNoteStatus').textContent = 'Saved. The clock will pick it up when online.'; }
   catch (e) { $('moodNoteStatus').textContent = e.message; }
 });
+
+// Each dashboard card has its own native, keyboard-accessible disclosure.
+for (const card of document.querySelectorAll('#app > .card')) {
+  const heading = card.firstElementChild;
+  if (!heading) continue;
+  const details = document.createElement('details');
+  const summary = document.createElement('summary');
+  summary.append(heading);
+  details.append(summary);
+  while (card.firstChild) details.append(card.firstChild);
+  card.append(details);
+}
+const preview = document.querySelector('#app > .screen-wrap');
+if (preview) {
+  const details = document.createElement('details');
+  details.className = 'card dashboard-preview';
+  const summary = document.createElement('summary');
+  summary.textContent = 'Clock preview';
+  details.append(summary);
+  preview.before(details);
+  details.append(preview);
+}
+$('videoNoteSend').onclick = () => busy($('videoNoteSend'), async () => {
+  const status = $('videoNoteStatus');
+  try {
+    const clip = await MoodVideo.prepare($('videoNoteFile').files[0], text => { status.textContent = text; });
+    status.textContent = 'Uploading prepared video…';
+    await api('/api/mood-video/6', {method:'PUT', headers:{'content-type':'application/octet-stream'}, body:clip});
+    status.textContent = 'Sent! The clock will download it when online.';
+  } catch (e) { status.textContent = e.message; }
+});
+
+$('alarmSoundUpload').onclick = () => busy($('alarmSoundUpload'), async () => {
+  const file = $('alarmSoundFile').files[0], status = $('alarmSoundStatus');
+  if (!file) { status.textContent = 'Choose an audio file first.'; return; }
+  if (!file.size || file.size > 8 * 1024 * 1024) { status.textContent = 'Choose a nonempty file no larger than 8 MB.'; return; }
+  // The server uses a safe ASCII name for the clock.
+  const name = file.name.replace(/[^A-Za-z0-9._-]/g, '-');
+  try {
+    status.textContent = 'Uploading…';
+    const result = await api('/api/alarm-sounds', {method:'POST', headers:{'content-type':'application/octet-stream', 'x-file-name':name}, body:file});
+    status.textContent = `Uploaded ${result.sound.name}. The clock will download it when online; refresh the sound list to check.`;
+  } catch (e) { status.textContent = e.message; }
+});
+$('alarmSoundRefresh').onclick = () => busy($('alarmSoundRefresh'), async () => {
+  try {
+    const j = await api('/api/state'); device = j.device; renderStatus();
+    if (editing) fillSounds($('aSound').value);
+    $('alarmSoundStatus').textContent = 'Sound list refreshed from the clock’s latest report.';
+  } catch (e) { $('alarmSoundStatus').textContent = e.message; }
+});

@@ -55,7 +55,7 @@
   <p class="hint">Set alarms and mood videos separately. Zero mutes that sound.</p>
   <label for="volumeAlarm">Alarms <output id="volumeAlarmValue">18 / 21</output></label>
   <input type="range" id="volumeAlarm" min="0" max="21" value="18" step="1">
-  <label for="volumeVideo">Mood videos <output id="volumeVideoValue">18 / 21</output></label>
+  <label for="volumeVideo">Videos <output id="volumeVideoValue">18 / 21</output></label>
   <input type="range" id="volumeVideo" min="0" max="21" value="18" step="1">
   <button class="btn primary" id="volumeSave" type="button">Save volume</button>
   <p class="hint" id="volumeStatus" role="status"></p>
@@ -168,6 +168,14 @@
     </form>
   </div>
 
+  <div class="card" id="videoNoteCard">
+    <h2>Video note</h2>
+    <p class="hint">Send a video with sound to her inbox. The first 20 seconds will play full screen.</p>
+    <input id="videoNoteFile" type="file" accept="video/*" aria-label="Choose a video note">
+    <button class="btn primary" id="videoNoteSend" type="button">Prepare and send video</button>
+    <p class="hint" id="videoNoteStatus" role="status"></p>
+  </div>
+
   <!-- music -->
   <div class="card" id="spotifyCard">
     <div class="row">
@@ -186,6 +194,13 @@
       <span class="meta" id="alarmTz"></span>
     </div>
     <ul class="alarms" id="alarms"></ul>
+    <details class="panel"><summary>Upload an alarm song</summary>
+      <p class="hint">Choose an audio file up to 8 MB. It will appear in the sound picker after the clock downloads it.</p>
+      <input id="alarmSoundFile" type="file" accept=".mp3,.wav,.m4a,.aac,.flac,.ogg,.opus" aria-label="Choose an alarm song">
+      <button class="btn primary" id="alarmSoundUpload" type="button">Send song to clock</button>
+      <button class="btn ghost small" id="alarmSoundRefresh" type="button">Refresh sound list</button>
+      <p class="hint" id="alarmSoundStatus" role="status"></p>
+    </details>
 
     <form class="editor" id="editor" hidden>
       <input type="time" id="aTime" required aria-label="Alarm time">

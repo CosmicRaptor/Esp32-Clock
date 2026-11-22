@@ -211,3 +211,10 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, .btn:focus-vi
 #volumeCard output { color:var(--mute); font-weight:400; }
 #volumeCard input[type=range] { width:100%; padding:0; accent-color:var(--accent); }
 #volumeCard .btn { margin-top:12px; }
+
+/* Dashboard disclosures */
+#app > .card > details > summary, .dashboard-preview > summary { cursor:pointer; font-weight:600; }
+#app > .card > details > summary > * { display:inline-block; vertical-align:middle; }
+#app > .card > details[open] > summary, .dashboard-preview[open] > summary { margin-bottom:14px; }
+#app > .card > details > summary .row, #app > .card > details > summary .card-heading { display:inline-flex; width:calc(100% - 24px); }
+#videoNoteSend { margin-top:12px; }

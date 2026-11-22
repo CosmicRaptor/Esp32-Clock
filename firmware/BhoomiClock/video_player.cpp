@@ -71,7 +71,7 @@ void begin() {
   lv_obj_add_flag(view, LV_OBJ_FLAG_HIDDEN);
 }
 bool play(unsigned mood) {
-  if (!storage::mounted() || mood < 1 || mood > 5) return false;
+  if (!storage::mounted() || mood < 1 || mood > 6) return false;
   selected = mood; frame = 0; active = -1;
   if (!nextFrame()) { stop(); return false; }
   running = true; started = lastFrame = millis();

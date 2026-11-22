@@ -94,7 +94,9 @@ lv_obj_t *clockView, *dateLabel, *timeLabel, *footLabel;
 // clock view over the photo: full-screen image, dark bar at the bottom with time + date
 lv_obj_t *photoView, *photoImg, *photoTime, *photoDate, *photoFoot;
 // the message card, floating above whichever clock view is showing
-lv_obj_t *noteCard, *noteLabel, *noteButton, *noteDot;
+lv_obj_t *noteCard, *noteLabel, *noteButton, *noteDot, *noteVideoButton;
+String noteVideoHash, readVideoHash;
+void playMoodVideo(unsigned mood);
 bool inboxOpen = false;
 uint64_t noteIdentity = 0, readIdentity = 0;
 void openInbox(lv_event_t *);
@@ -279,9 +281,25 @@ void buildNote() {
   lv_obj_t *title = label(noteCard, &lv_font_montserrat_16, ACCENT);
   lv_label_set_text(title, "A NOTE FOR YOU"); lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 14);
   lv_obj_t *content = lv_obj_create(noteCard); lv_obj_remove_style_all(content);
-  lv_obj_set_size(content, 272, 130); lv_obj_align(content, LV_ALIGN_TOP_MID, 0, 42);
+  lv_obj_set_size(content, 272, 94); lv_obj_align(content, LV_ALIGN_TOP_MID, 0, 42);
   lv_obj_set_scroll_dir(content, LV_DIR_VER);
   noteLabel = label(content, &lv_font_montserrat_16, INK);
+  noteVideoButton = lv_obj_create(noteCard); lv_obj_remove_style_all(noteVideoButton);
+  lv_obj_set_size(noteVideoButton, 180, 32); lv_obj_align(noteVideoButton, LV_ALIGN_BOTTOM_MID, 0, -36);
+  lv_obj_set_style_bg_color(noteVideoButton, ACCENT, 0); lv_obj_set_style_bg_opa(noteVideoButton, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(noteVideoButton, 8, 0); lv_obj_add_flag(noteVideoButton, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(noteVideoButton, [](lv_event_t *) {
+    closeInbox(nullptr); playMoodVideo(6);
+    if (video_player::playing()) {
+      Preferences p; if (p.begin("note-inbox", false)) {
+        if (p.putString("video-read", noteVideoHash)) readVideoHash = noteVideoHash;
+        p.end();
+      }
+    }
+  }, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *videoText = label(noteVideoButton, &lv_font_montserrat_14, lv_color_white());
+  lv_label_set_text(videoText, LV_SYMBOL_PLAY "  Play video note"); lv_obj_center(videoText);
+  show(noteVideoButton, false);
   lv_obj_t *close = lv_obj_create(noteCard); lv_obj_remove_style_all(close);
   lv_obj_set_size(close, 280, 35); lv_obj_align(close, LV_ALIGN_BOTTOM_MID, 0, -2);
   lv_obj_add_flag(close, LV_OBJ_FLAG_CLICKABLE); lv_obj_add_event_cb(close, closeInbox, LV_EVENT_CLICKED, nullptr);
@@ -444,6 +462,7 @@ uint64_t identityForNote(const char *text, int64_t sentAt) {
 void openInbox(lv_event_t *) {
   inboxOpen = true;
   lv_label_set_text(noteLabel, noteShown[0] ? noteShown : "No note right now.");
+  show(noteVideoButton, !noteVideoHash.isEmpty());
   show(noteCard, true); lv_obj_move_foreground(noteCard);
   if (noteIdentity && noteIdentity != readIdentity) {
     Preferences prefs;
@@ -451,7 +470,7 @@ void openInbox(lv_event_t *) {
       if (prefs.putULong64("read", noteIdentity)) readIdentity = noteIdentity;
       prefs.end();
     }
-    show(noteDot, noteIdentity != readIdentity);
+    show(noteDot, noteIdentity != readIdentity || (!noteVideoHash.isEmpty() && noteVideoHash != readVideoHash));
   }
 }
 void closeInbox(lv_event_t *) { inboxOpen = false; show(noteCard, false); }
@@ -488,11 +507,19 @@ constexpr int NP_H = 46;  // the now-playing strip's height (below)
 
 // Existing faces automatically choose the corner opposite their Spotify strip.
 void updateNote() {
+  static uint32_t lastVideoCheck = 0;
+  if (!lastVideoCheck || millis() - lastVideoCheck >= 2000) {
+    lastVideoCheck = millis() | 1;
+    Preferences p;
+    if (p.begin("mood-videos", true)) { noteVideoHash = p.getString("m6", ""); p.end(); }
+    if (p.begin("note-inbox", true)) { readVideoHash = p.getString("video-read", ""); p.end(); }
+    if (inboxOpen) show(noteVideoButton, !noteVideoHash.isEmpty());
+  }
   bool clock = inClock() && mode == Mode::Clock && !focusTimer.quiet();
   if (!clock && inboxOpen) { inboxOpen = false; show(noteCard, false); }
   show(noteButton, clock);
   if (clock) lv_obj_move_foreground(noteButton);
-  show(noteDot, noteIdentity && noteIdentity != readIdentity);
+  show(noteDot, (noteIdentity && noteIdentity != readIdentity) || (!noteVideoHash.isEmpty() && noteVideoHash != readVideoHash));
   if (!clock) return;
   int x = 272, y = 8;
   if (current == View::Photo) y = 192;

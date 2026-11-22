@@ -275,6 +275,16 @@ KV stores base64 firmware under `firmware:<sha256>`, detached metadata under `fi
 
 Spotify and weather refreshes are driven by clock requests; the server does not schedule background polling when the clock is offline. The Spotify admin overview uses the current Worker instance’s cached playback, so it may be unavailable or stale. Weather settings show the cached reading.
 
+### Uploading an alarm song
+
+In **Alarms**, open **Upload an alarm song** and choose an MP3, WAV, M4A, AAC, FLAC, OGG or OPUS file up to 8 MB. The portal stages up to 100 uploaded files; the clock checks roughly every five minutes and fetches pending files one at a time. It verifies the size and SHA-256 before placing each file in `/sounds` on the SD card, then reports its updated sound list. Use **Refresh sound list**, open an alarm and choose the song once it appears. A short hash is added to its name so different uploads do not overwrite a sound already in use. Uploading the same content again does not create another file. The clock must be online with its SD card mounted; if a file cannot be decoded at alarm time, the built-in beep plays instead. Uploaded files remain in the remote library and are restored if deleted from the card.
+
+### Video notes
+
+The dashboard's Video note card accepts a video with sound and prepares the first 20 seconds in the browser using the same format as mood videos. The clock checks for new videos roughly every five minutes, downloads them to its SD card, and shows an unread dot on the inbox once ready. Open the inbox and tap **Play video note** to play it full screen; tapping the video skips it and alarms take priority. Video notes use the video volume setting. The portal keeps one video note at a time, independently of the text note; sending another replaces it. Identical video content does not create a new unread indicator. The clock must be online and have its SD card mounted to receive it.
+
+Dashboard cards and the clock preview can be expanded or collapsed individually.
+
 ### Mindfulness check-ins
 
 The clock quietly asks for a five-point mood response at 00:00, 03:00, 06:00, 09:00, 12:00, 15:00, 18:00 and 21:00 in its local time. The prompt closes after five minutes; no response is recorded when ignored. A tapped response is saved to a bounded persistent queue on the clock and retried through the authenticated device API. The admin portal can also save an optional short note for each mood. The clock caches these notes for offline use, displays the chosen note for five seconds before its video, and lets her tap to continue sooner. The portal's private **Mindfulness check-ins** card shows responses from the past 30 days; each KV record expires 30 days after the response time. A response older than 30 days on delivery is discarded. Clock NVS has space for 256 queued responses; if full or saving fails the prompt asks her to retry instead of claiming success. Alarms take priority.
