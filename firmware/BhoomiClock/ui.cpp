@@ -36,6 +36,8 @@ const lv_color_t MUTE = lv_color_hex(0x8A7F78);
 const lv_color_t ACCENT = lv_color_hex(0xD9667A);
 const lv_color_t OK = lv_color_hex(0x3A8F5C);
 const lv_color_t ERR = lv_color_hex(0xC0392B);
+const lv_color_t TEXT_NOTE_DOT = lv_color_hex(0xFF4444);
+const lv_color_t VIDEO_NOTE_DOT = lv_color_hex(0x4C9DFF);
 
 constexpr uint32_t SPLASH_MS = 2500;  // "I'm online!" before switching to the clock
 constexpr uint32_t MODE_REVEAL_MS = 120; // the title is already visible throughout the drag
@@ -255,6 +257,18 @@ void buildPhoto() {
   photoFoot = label(col, &lv_font_montserrat_14, lv_color_hex(0xFFB3C0), LV_TEXT_ALIGN_RIGHT);
 }
 
+void updateNoteDot() {
+  const bool unreadText = noteIdentity && noteIdentity != readIdentity;
+  const bool unreadVideo = !noteVideoHash.isEmpty() && noteVideoHash != readVideoHash;
+  if (unreadText || unreadVideo) {
+    const lv_color_t color = unreadText ? TEXT_NOTE_DOT : VIDEO_NOTE_DOT;
+    if (!lv_color_eq(lv_obj_get_style_bg_color(noteDot, LV_PART_MAIN), color)) {
+      lv_obj_set_style_bg_color(noteDot, color, 0);
+    }
+  }
+  show(noteDot, unreadText || unreadVideo);
+}
+
 void buildNote() {
   Preferences prefs;
   if (prefs.begin("note-inbox", true)) { readIdentity = prefs.getULong64("read", 0); prefs.end(); }
@@ -272,8 +286,9 @@ void buildNote() {
   noteDot = lv_obj_create(noteButton); lv_obj_remove_style_all(noteDot);
   lv_obj_set_size(noteDot, 9, 9); lv_obj_align(noteDot, LV_ALIGN_TOP_RIGHT, -4, 4);
   lv_obj_set_style_radius(noteDot, LV_RADIUS_CIRCLE, 0);
-  lv_obj_set_style_bg_color(noteDot, ACCENT, 0); lv_obj_set_style_bg_opa(noteDot, LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_opa(noteDot, LV_OPA_COVER, 0);
   lv_obj_remove_flag(noteDot, LV_OBJ_FLAG_CLICKABLE);
+  show(noteDot, false);
   noteCard = lv_obj_create(scr); lv_obj_remove_style_all(noteCard);
   lv_obj_set_size(noteCard, 296, 210); lv_obj_center(noteCard);
   lv_obj_set_style_bg_color(noteCard, lv_color_white(), 0);
@@ -295,6 +310,7 @@ void buildNote() {
         if (p.putString("video-read", noteVideoHash)) readVideoHash = noteVideoHash;
         p.end();
       }
+      updateNoteDot();
     }
   }, LV_EVENT_CLICKED, nullptr);
   lv_obj_t *videoText = label(noteVideoButton, &lv_font_montserrat_14, lv_color_white());
@@ -470,7 +486,7 @@ void openInbox(lv_event_t *) {
       if (prefs.putULong64("read", noteIdentity)) readIdentity = noteIdentity;
       prefs.end();
     }
-    show(noteDot, noteIdentity != readIdentity || (!noteVideoHash.isEmpty() && noteVideoHash != readVideoHash));
+    updateNoteDot();
   }
 }
 void closeInbox(lv_event_t *) { inboxOpen = false; show(noteCard, false); }
@@ -519,7 +535,7 @@ void updateNote() {
   if (!clock && inboxOpen) { inboxOpen = false; show(noteCard, false); }
   show(noteButton, clock);
   if (clock) lv_obj_move_foreground(noteButton);
-  show(noteDot, (noteIdentity && noteIdentity != readIdentity) || (!noteVideoHash.isEmpty() && noteVideoHash != readVideoHash));
+  updateNoteDot();
   if (!clock) return;
   int x = 272, y = 8;
   if (current == View::Photo) y = 192;
