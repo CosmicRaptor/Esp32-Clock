@@ -1,3 +1,7 @@
+## Video notes and alarm songs — deployed and USB flashed, 22 November 2026
+
+Feature commit `a7c05b8` pushed to main. The admin dashboard sections collapse individually; video notes use the full-screen mood player, and alarm songs upload through the portal to the SD card. Portal Worker version `8abbfc03-53ba-4a39-9158-15f9a0b369d5` deployed from the committed snapshot. Firmware **0.12.5** USB-flashed with hash verification; build **3,210,030 bytes (51% of 6 MB), globals 85,864 bytes**. Serial showed SD mounted, Wi-Fi online and portal polling after boot; physical screen and end-to-end playback still need user confirmation. Portal tests: 178 Python and 78 JS passed. Other pre-existing workspace edits were preserved.
+
 # Handoff: Bhoomi's Clock
 
 ## Illustrated study garden — source update, 20 November 2026
@@ -43,6 +47,18 @@ Rebuilt normal Focus from the user's cozy study-room references. Generated new a
 Artwork is installed automatically at SD `/ui/focus-study-v1.jpg` (31,513 bytes, SHA-256 `cf7bed0427ce011ef2e814d4ee59599e45184b8ff406342a0bdc52f55ddaf657`). A versioned firmware provisioning copy checks/repairs that managed file at boot, avoiding the unavailable LAN service and leaving user photos alone. Opening Focus reads the SD JPEG in 1 KB chunks, decodes 153,600 RGB565 bytes into PSRAM and frees it after deleting the screen. Source, SD JPEG, exact ImageGen prompt and real 320×240 LVGL previews are in `assets/focus-study/`. Preparation and render/test scripts are `tools/prepare_focus_art.py` and `tools/render_focus_preview.py`.
 
 Validation: `./build.sh` succeeded, **3,078,662 bytes (48% of a 6 MB slot), globals 85,792 bytes**; application file 3,078,816 bytes. Host timer checks, native LVGL pager checks and rendered UI input checks pass, including duration selection requiring Start, End, optional break, drag-over-button suppression and scrolling away during study. Firmware **0.12.0** USB-flashed with hashes verified; bootloader/partition files matched existing flash, layout unchanged. Serial confirms `[focus-art] SD install ok (31513 bytes)`, repeated successful SD decodes for idle/studying/ended states, and return to Clock. Capture: `build/focus-ui-0.12.0-serial.log`. User confirmed **Looks good and scrolling works**. No CI release triggered. Preserve separate pending Wi-Fi diagnostic, CI caching and AGENTS.md edits.
+
+## Full clock restored — USB flashed 0.11.9, 19 November 2026
+
+Restored the full clock source with the required version increment to **0.11.9**. `./build.sh` encountered the previously
+documented corrupt shared LVGL archive; isolated compile in
+`/private/tmp/bhoomi-restore-0.11.9` succeeded: **3,042,774 bytes (48% of a 6 MB app
+slot), globals 85,696 bytes**; application file 3,042,928 bytes. Artifacts are under
+`build/restore-0.11.9/`. USB upload completed and hashes verified, partition layout
+unchanged. Serial confirms full clock startup, CST3530 touch, SD mounting, photo/face
+cache loading and NTP synchronization. Saved settings and SD artwork retained.
+Startup capture: `build/restore-0.11.9/serial.log`. Physical screen confirmation is
+still needed.
 
 ## Horizontal scrolling correction — USB flashed 0.11.7, 19 November 2026
 
