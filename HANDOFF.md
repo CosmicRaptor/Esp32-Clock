@@ -1,3 +1,9 @@
+## Portal deployment in scheduled CI — prepared, 24 November 2026
+
+Added a portal job before signed firmware publication in `.github/workflows/ota.yml`. Runtime/configuration/dependency changes are compared against independent `clock-portal/<source-SHA>` deployment tags; unchanged, documentation-only and firmware-only portal inputs skip deployment. Tests run before `npm run deploy`, and a marker is created only after deployment succeeds. Failure blocks firmware publication; a retry preserves the earlier portal marker. Both jobs use the exact source SHA selected by the portal job.
+
+Pinned the live `CLOCK` KV namespace (`3de27a66d4964e5f87417ec89f62907a`) after confirming the deployed Worker binding. Configured `CLOUDFLARE_ACCOUNT_ID`; user added `CLOUDFLARE_API_TOKEN` directly in GitHub Secrets and both names were verified. A manual `portal_only` input permits testing/deploying the portal without firmware publication. First CI deployment verification is pending. No firmware source changes or USB installation in this change. Validation: frozen-dependency deployment dry run, 185 Python + 79 JavaScript portal tests, 11 release-tool tests, YAML/source-pinning checks and whitespace checks pass.
+
 ## Video notes and alarm songs — deployed and USB flashed, 22 November 2026
 
 Feature commit `a7c05b8` pushed to main. The admin dashboard sections collapse individually; video notes use the full-screen mood player, and alarm songs upload through the portal to the SD card. Portal Worker version `8abbfc03-53ba-4a39-9158-15f9a0b369d5` deployed from the committed snapshot. Firmware **0.12.5** USB-flashed with hash verification; build **3,210,030 bytes (51% of 6 MB), globals 85,864 bytes**. Serial showed SD mounted, Wi-Fi online and portal polling after boot; physical screen and end-to-end playback still need user confirmation. Portal tests: 178 Python and 78 JS passed. Other pre-existing workspace edits were preserved.

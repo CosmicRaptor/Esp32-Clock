@@ -14,9 +14,10 @@ binding = "ASSETS"
 run_worker_first = true
 
 # All clock data: the state document, the photo, and the clock's last check-in.
-# No id: `wrangler deploy` creates the namespace on the first deploy and fills it in.
+# Pin the existing production namespace so clean CI checkouts use the same data.
 [[kv_namespaces]]
 binding = "CLOCK"
+id = "3de27a66d4964e5f87417ec89f62907a"
 
 # Secrets (not in this file):
 #   ADMIN_PASSWORD  password for the admin page

@@ -31,10 +31,16 @@ Local KV data lives in `.wrangler/` and is wiped if you delete that folder.
 
 ```bash
 npx wrangler login
-npm run deploy                            # first deploy also creates the KV namespace
+npm run deploy                            # deploys using the configured CLOCK namespace
 npx wrangler secret put ADMIN_PASSWORD    # a long one: it's the only thing guarding the page
 npx wrangler secret put DEVICE_TOKEN      # e.g. python3 -c 'import secrets;print(secrets.token_urlsafe(24))'
 ```
+
+### Scheduled deployment
+
+The repository's `.github/workflows/ota.yml` tests and deploys changed portal code before signed firmware publication, on the same Monday/Wednesday/Friday schedule or a manual run. It uses `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` Actions secrets; create an account-scoped Edit Cloudflare Workers token for CI. Wrangler uses the pinned production `CLOCK` KV namespace ID. Existing Worker runtime secrets remain on Cloudflare; CI does not overwrite them. A successful deploy records `clock-portal/<source-SHA>` independently of firmware release tags. Unchanged runtime inputs skip deployment; deployment failures leave the previous tag and prevent the firmware job from running. See the main README's scheduled releases section for details.
+
+Select **portal_only** on a manual workflow run to deploy changed portal code without queuing firmware. The normal schedule checks both components.
 
 ### HTTPS only, behind Cloudflare Access
 
