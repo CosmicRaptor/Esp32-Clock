@@ -41,17 +41,39 @@ jobs:
           node-version: '22'
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         if: steps.release.outputs.changed == 'true'
+        with:
+          enable-cache: true
+          cache-dependency-glob: portal/uv.lock
       - uses: arduino/setup-arduino-cli@b3cda96fddef6af6c56b4c5efb5c47e2357935db # v2
         if: steps.release.outputs.changed == 'true'
         with:
           version: '1.5.1'
-      - name: Install pinned firmware and portal test dependencies
+      - name: Restore pinned firmware dependencies
+        id: firmware-deps
         if: steps.release.outputs.changed == 'true'
-        run: |
-          bash tools/ci_dependencies.sh
-          uv sync --frozen --no-dev --project portal
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          # Installed packages and indexes only; omit downloaded archives,
+          # compiler caches and credential-bearing application objects/binaries.
+          path: |
+            ~/.arduino15/packages
+            ~/.arduino15/*index.json
+            ~/.arduino15/*index.json.sig
+            ~/Arduino/libraries
+          # No fallback keys: skip installation only for this exact toolchain.
+          key: firmware-deps-v1-${{ runner.os }}-${{ runner.arch }}-cli-1.5.1-${{ hashFiles('tools/ci_dependencies.sh') }}
+      - name: Set up pinned firmware dependencies
+        if: steps.release.outputs.changed == 'true'
+        env:
+          CI_DEPENDENCIES_CACHE_HIT: ${{ steps.firmware-deps.outputs.cache-hit }}
+        run: bash tools/ci_dependencies.sh
+      - name: Install portal test dependencies
+        if: steps.release.outputs.changed == 'true'
+        run: uv sync --frozen --no-dev --project portal
       - name: Run portal, signing and firmware host checks
         if: steps.release.outputs.changed == 'true'
+        env:
+          UV_FROZEN: 'true'
         run: |
           python3 -m unittest discover -s tools/tests
           cd portal
