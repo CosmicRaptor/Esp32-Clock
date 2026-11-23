@@ -536,7 +536,7 @@ void updateNote() {
 // ---------- now playing: a tiny strip, your song on the left and hers on the right ----------
 // One strip that lives on whichever face is showing: between the time and the footer on the plain
 // clock, a dark pill at the top over the photo. A side with nothing playing is left out (the other
-// stays where it is); with neither playing the strip is hidden and the face is just the clock.
+// stays where it is). Laundry Day can fill the strip when neither listener is playing.
 constexpr int NP_ART = 38;                       // cover thumbnail, px (the JPEG is 64x64, scaled down)
 constexpr int NP_GAP = 6;
 constexpr uint32_t NP_PAUSED_HIDE_MS = 5 * 60 * 1000;  // a song paused this long is no longer "what you're playing"
@@ -553,7 +553,7 @@ struct NpSide {
   uint32_t pausedSince = 0;
 };
 NpSide np[2];
-lv_obj_t *npStrip;
+lv_obj_t *npStrip, *npLaundry;
 uint32_t seenNpRev = 0;
 
 void buildStrip() {
@@ -603,6 +603,10 @@ void buildStrip() {
     lv_label_set_long_mode(n.artist, LV_LABEL_LONG_SCROLL_CIRCULAR);
     lv_obj_add_flag(n.half, LV_OBJ_FLAG_HIDDEN);
   }
+  npLaundry = label(npStrip, &lv_font_montserrat_14, INK);
+  lv_label_set_text_static(npLaundry, "Laundry Day");
+  lv_obj_center(npLaundry);
+  show(npLaundry, false);
   lv_obj_add_flag(npStrip, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -638,6 +642,7 @@ void placeStrip() {
   }
   lv_obj_set_size(npStrip, w, NP_H);
   lv_obj_set_style_pad_hor(npStrip, padH, 0);
+  lv_obj_set_style_text_color(npLaundry, titleCol, 0);
   // Leave breathing room between the two listeners' text columns at the centre.
   int colW = (w - 2 * padH) / 2 - NP_ART - NP_GAP - 4;
   for (NpSide &n : np) {
@@ -719,11 +724,23 @@ void applyNowPlaying() {
   }
 }
 
-// Shows or hides each side and the strip itself. Cheap; runs with the clock's 250 ms tick.
+bool laundryDay() {
+  if (!timeValid()) return false;
+  time_t now = time(nullptr);
+  struct tm local;
+  return localtime_r(&now, &local) && (local.tm_wday == 1 || local.tm_wday == 4);
+}
+
+// Shows or hides each side, the reminder, and the strip itself. Runs with the clock's 250 ms tick.
 void updateNowPlaying() {
   if (!homeLoaded) return;
-  bool fresh = portal::nowPlayingFresh();  // not heard from the portal in a while: better nothing than stale
+  bool fresh = portal::nowPlayingFresh();
   const portal::NowPlaying &now = portal::nowPlaying();
+  const auto *slot = current == View::Face ? faceview::nowPlayingSlot() : nullptr;
+  bool stripEnabled = inClock() && mode == Mode::Clock && !focusTimer.quiet() && !(slot && !slot->show);
+  bool playing = fresh && (now.left.status == bhoomi_clock_v1_Listener_Status_PLAYING ||
+                           now.right.status == bhoomi_clock_v1_Listener_Status_PLAYING);
+  bool laundry = stripEnabled && !playing && laundryDay();
   bool any = false;
   for (int i = 0; i < 2; i++) {
     NpSide &n = np[i];
@@ -734,7 +751,7 @@ void updateNowPlaying() {
     } else {
       n.pausedSince = 0;
     }
-    bool on = st != bhoomi_clock_v1_Listener_Status_OFF;
+    bool on = !laundry && st != bhoomi_clock_v1_Listener_Status_OFF;
     any = any || on;
     if (on == !lv_obj_has_flag(n.half, LV_OBJ_FLAG_HIDDEN) &&
         (st == bhoomi_clock_v1_Listener_Status_PAUSED) == (lv_obj_get_style_opa(n.half, 0) < LV_OPA_COVER))
@@ -744,8 +761,8 @@ void updateNowPlaying() {
     debuglog::printf("[ui] now playing %s side: %s\n", i ? "right" : "left",
                   !on ? "hidden" : st == bhoomi_clock_v1_Listener_Status_PAUSED ? "paused (dimmed)" : "playing");
   }
-  const auto *slot = current == View::Face ? faceview::nowPlayingSlot() : nullptr;
-  bool want = any && inClock() && mode == Mode::Clock && !focusTimer.quiet() && !(slot && !slot->show);  // a face can switch the strip off
+  if (laundry == lv_obj_has_flag(npLaundry, LV_OBJ_FLAG_HIDDEN)) show(npLaundry, laundry);
+  bool want = stripEnabled && (any || laundry);
   if (want != npVisible) {
     npVisible = want;
     show(npStrip, want);
@@ -1019,7 +1036,7 @@ void showMsg(bool busy, const char *title, const String &body) {
 void unloadHome() {
   if (!homeLoaded) return;
   closeInbox(nullptr); show(noteButton, false);
-  lv_obj_delete(npStrip); npStrip = nullptr; npVisible = false;
+  lv_obj_delete(npStrip); npStrip = npLaundry = nullptr; npVisible = false;
   for (auto &n : np) { free(n.px); n = NpSide{}; }
   faceview::clear(); faceShown = false;
   removePhoto();
