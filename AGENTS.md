@@ -58,7 +58,8 @@ cd portal && npm test         # portal unit tests (Python + JS)
 
 ## Working with the user
 
-- **Ask before flashing the board, deploying the portal (`npm run deploy`), changing secrets, or pushing.** The deployed portal and the flashed clock are live in someone's home.
+- **Push completed project changes directly to `main` by default.** This is a one-person project. Use a different branch when the user asks for one.
+- **Ask before flashing the board, deploying the portal (`npm run deploy`), or changing secrets.** The deployed portal and the flashed clock are live in someone's home.
 - **Never commit secrets:** `firmware/BhoomiClock/portal_config.h`, `portal/.dev.vars`, tokens, or the deployed Access credentials. Don't print them in chat either.
 - **The setup hotspot:** joining `Bhoomi-Clock` takes the user's Mac offline. If they must join it, say so, then end your turn and wait for them to come back. Prefer verifying over USB serial or `http://bhoomi-clock.local`.
 - You can't see the screen. After a flash, read the serial log and ask the user what the screen shows.
