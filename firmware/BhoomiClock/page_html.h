@@ -67,6 +67,13 @@ summary{cursor:pointer;color:var(--accent);font-size:15px}
 #volumeCard output{color:var(--mute);font-weight:400}
 #volumeCard input[type=range]{padding:0;accent-color:var(--accent)}
 #volumeCard .btn{width:100%;margin-top:12px;padding:12px;border:0;border-radius:12px;background:var(--accent);color:white;font:inherit;font-weight:600}
+#alarmEditor label{display:block;margin-top:12px}
+#alarmEditor fieldset{margin:12px 0 0;padding:6px 10px 10px;border:1px solid var(--line);border-radius:10px}
+#alarmDays{display:flex;flex-wrap:wrap;gap:4px 12px}
+#alarmEditor input[type=checkbox]{width:auto;margin:0 4px 0 0;accent-color:var(--accent)}
+#alarmEditor .go{margin:14px 0 6px}
+#alarmList .note{display:block;margin:2px 0 0}
+#alarmList .link{flex:none}
 [hidden]{display:none!important}
 </style></head><body><main>
 <h1 id="title">Hello! &#x1F570;</h1>
@@ -95,6 +102,27 @@ summary{cursor:pointer;color:var(--accent);font-size:15px}
 <button class="go" id="go">Connect</button>
 <div id="msg"></div>
 </form>
+
+<div class="card" id="alarmCard" hidden>
+  <div class="row"><h2>Alarms</h2><span id="alarmZone" class="meta"></span></div>
+  <ul id="alarmList"></ul>
+  <p id="alarmStatus" class="note" role="status"></p>
+  <button id="alarmAdd" type="button" class="go">Add alarm</button>
+  <form id="alarmEditor" hidden>
+    <label for="alarmTime">Time</label><input id="alarmTime" type="time" required>
+    <fieldset><legend>Repeat on</legend><div id="alarmDays"></div></fieldset>
+    <label id="alarmDateRow" for="alarmDate">Date <input id="alarmDate" type="date"></label>
+    <label for="alarmLabel">Label</label><input id="alarmLabel" autocomplete="off">
+    <label for="alarmSound">Sound</label><select id="alarmSound"></select>
+    <label><input id="alarmEnabled" type="checkbox">Enabled</label>
+    <button class="go" id="alarmSave">Save alarm</button>
+    <div class="row">
+      <button type="button" class="link" id="alarmCancel">Cancel</button>
+      <button type="button" class="link err" id="alarmDelete">Delete</button>
+    </div>
+    <p class="err note" id="alarmError" role="alert"></p>
+  </form>
+</div>
 
 <div class="card" id="weatherCard" hidden>
   <h2>Weather</h2>
@@ -138,16 +166,6 @@ summary{cursor:pointer;color:var(--accent);font-size:15px}
   <button class="btn primary" id="volumeSave" type="button">Save volume</button>
   <p class="hint" id="volumeStatus" role="status"></p>
 </div>
-<div class="card" id="moodVideoCard" hidden>
-  <div class="lbl">A little moment</div><h2 style="margin:4px 0 6px;font-size:20px">A video for each mood</h2>
-  <p class="note">Choose a mood and a video with sound. The clock plays it after that response.</p>
-  <label class="lbl" for="moodVideoMood">Mood</label>
-  <select id="moodVideoMood"><option value="1">Very low</option><option value="2">Low</option><option value="3">Okay</option><option value="4">Good</option><option value="5">Great</option></select>
-  <label class="lbl" for="moodVideoFile">Video with audio</label><input id="moodVideoFile" type="file" accept="video/*">
-  <button class="go" id="moodVideoUpload">Prepare and upload</button>
-  <p class="note">Choose a video up to 2 minutes. The first 20 seconds are prepared in your browser and saved to the clock’s SD card.</p>
-  <p id="moodVideoStatus" role="status"></p>
-</div>
 <div class="card" id="cloud" hidden>
   <div class="row"><span class="lbl">Cloud connection</span><span class="meta" id="cloudAgo"></span></div>
   <div style="margin-top:8px"><span class="dot" id="cloudDot"></span><span id="cloudState">Checking…</span></div>
@@ -171,7 +189,7 @@ summary{cursor:pointer;color:var(--accent);font-size:15px}
   </details>
 </div>
 </main>
-<script src="/mood-video.js"></script>
+<script src="/alarm-settings.js"></script>
 <script>
 const $=id=>document.getElementById(id);
 const el=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e;};
@@ -243,6 +261,7 @@ $('f').onsubmit=async e=>{
       const r=await fetch('/tz',{method:'POST',body:new URLSearchParams({tz:$('tz').value})});
       if(!r.ok)throw 0;
       const i=await (await fetch('/info')).json();
+      $('alarmZone').textContent=i.tz||'';
       say('Saved! ✨'+(i.clock?' The clock now reads '+i.clock+'.':''),'ok');$('tzNote').textContent='';
     }catch(e){say('Could not save. Please try again.','err');}
     $('go').disabled=false;return;
@@ -356,17 +375,6 @@ function send(blob,folder,name,onp){
   });
 }
 
-$('moodVideoUpload').onclick=async()=>{
-  const btn=$('moodVideoUpload'), status=$('moodVideoStatus'); btn.disabled=true;
-  try {
-    const clip=await MoodVideo.prepare($('moodVideoFile').files[0], t=>{status.textContent=t;});
-    status.textContent='Uploading prepared video…';
-    await send(clip,'mood-staging','mood-'+$('moodVideoMood').value+'.bcv',()=>{});
-    status.textContent='Saved on the clock. This mood will play the new video.';
-  }catch(e){status.textContent=e.message;}
-  finally{btn.disabled=false;}
-};
-
 const jobs=[];let busy=false;
 function enqueue(files){
   for(const f of files){
@@ -469,8 +477,9 @@ document.querySelectorAll('[data-show]').forEach(b=>b.onclick=()=>{const p=$(b.d
     $('title').textContent='Clock settings';
     $('sub').textContent=info.clock?'The clock currently reads '+info.clock+'.':'Adjust how your clock shows the time.';
     $('wifiList').hidden=true;$('wifiCreds').hidden=true;$('go').textContent='Save time zone';
+    if (window.initAlarmSettings) window.initAlarmSettings(info.tz);
     $('weatherCard').hidden=false;$('volumeCard').hidden=false;
-    $('files').hidden=false;$('moodVideoCard').hidden=false;refreshFiles();
+    $('files').hidden=false;refreshFiles();
     $('cloud').hidden=false;loadCloud(false);
   }else{
     loadNets(false);

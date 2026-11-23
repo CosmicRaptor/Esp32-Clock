@@ -70,6 +70,7 @@ typedef struct _bhoomi_clock_v1_Date {
     uint32_t day; /* 1-31 */
 } bhoomi_clock_v1_Date;
 
+/* Also the body of PUT /api/device/alarms/<id>. */
 typedef struct _bhoomi_clock_v1_Alarm {
     char id[13]; /* 12 hex chars, stable across edits */
     uint32_t hour; /* 0-23, in the clock's own time zone */
@@ -79,6 +80,7 @@ typedef struct _bhoomi_clock_v1_Alarm {
     bhoomi_clock_v1_Date date; /* set only when days == 0 */
     char label[161]; /* up to 40 characters; may be empty */
     char sound[65]; /* file name in /sounds on the card; empty = built-in beep */
+    bool disabled; /* default false for older clients and cached state */
 } bhoomi_clock_v1_Alarm;
 
 /* PUT /api/device/sounds  (body: SoundList) — at boot and whenever /sounds on the card changes.
@@ -121,7 +123,7 @@ typedef struct _bhoomi_clock_v1_DeviceState {
     bool has_photo;
     bhoomi_clock_v1_Photo photo; /* unset: no photo */
     pb_size_t alarms_count;
-    bhoomi_clock_v1_Alarm alarms[20]; /* enabled alarms only, sorted by time */
+    bhoomi_clock_v1_Alarm alarms[20]; /* sorted by time; enabled only unless all_alarms is true */
     bool has_nowplaying;
     bhoomi_clock_v1_NowPlaying nowplaying; /* what the two people are playing on Spotify; always set. It changes on its own */
     /* (not with `version`), but it is part of the ETag, so a new song is a new 200. */
@@ -130,6 +132,7 @@ typedef struct _bhoomi_clock_v1_DeviceState {
     /* face with GET /api/device/face/<id> when its `rev` is new or changed. */
     char pinned_face[13]; /* face id the portal forces right now; empty = choose by the faces' `when` rules */
     char default_face[13]; /* face id shown when no face's `when` matches; empty = the clock's built-in face */
+    bool all_alarms; /* response to ?alarms=all; includes disabled alarms */
 } bhoomi_clock_v1_DeviceState;
 
 /* A downloadable image file. */
@@ -365,10 +368,10 @@ extern "C" {
 
 
 /* Initializer values for message structs */
-#define bhoomi_clock_v1_DeviceState_init_default {0, false, bhoomi_clock_v1_Note_init_default, false, bhoomi_clock_v1_Photo_init_default, 0, {bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default}, false, bhoomi_clock_v1_NowPlaying_init_default, 0, {bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default}, "", ""}
+#define bhoomi_clock_v1_DeviceState_init_default {0, false, bhoomi_clock_v1_Note_init_default, false, bhoomi_clock_v1_Photo_init_default, 0, {bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default, bhoomi_clock_v1_Alarm_init_default}, false, bhoomi_clock_v1_NowPlaying_init_default, 0, {bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default, bhoomi_clock_v1_FaceRef_init_default}, "", "", 0}
 #define bhoomi_clock_v1_Note_init_default        {"", 0}
 #define bhoomi_clock_v1_Photo_init_default       {"", 0, 0}
-#define bhoomi_clock_v1_Alarm_init_default       {"", 0, 0, 0, false, bhoomi_clock_v1_Date_init_default, "", ""}
+#define bhoomi_clock_v1_Alarm_init_default       {"", 0, 0, 0, false, bhoomi_clock_v1_Date_init_default, "", "", 0}
 #define bhoomi_clock_v1_Date_init_default        {0, 0, 0}
 #define bhoomi_clock_v1_SoundList_init_default   {0, {"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""}}
 #define bhoomi_clock_v1_NowPlaying_init_default  {false, bhoomi_clock_v1_Listener_init_default, false, bhoomi_clock_v1_Listener_init_default}
@@ -388,10 +391,10 @@ extern "C" {
 #define bhoomi_clock_v1_Face_init_default        {"", "", false, bhoomi_clock_v1_SpriteRef_init_default, false, bhoomi_clock_v1_TextSlot_init_default, false, bhoomi_clock_v1_TextSlot_init_default, false, bhoomi_clock_v1_Layer_init_default, 0, {bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default, bhoomi_clock_v1_Layer_init_default}, 0, {bhoomi_clock_v1_Emitter_init_default, bhoomi_clock_v1_Emitter_init_default, bhoomi_clock_v1_Emitter_init_default}, false, bhoomi_clock_v1_When_init_default, false, bhoomi_clock_v1_NowPlayingSlot_init_default, false, bhoomi_clock_v1_FaceWeatherVariant_init_default, false, bhoomi_clock_v1_FaceWeatherVariant_init_default, false, bhoomi_clock_v1_MessageBoxSlot_init_default}
 #define bhoomi_clock_v1_Weather_init_default     {0, 0, 0, 0, 0, ""}
 #define bhoomi_clock_v1_Management_init_default  {0, "", 0}
-#define bhoomi_clock_v1_DeviceState_init_zero    {0, false, bhoomi_clock_v1_Note_init_zero, false, bhoomi_clock_v1_Photo_init_zero, 0, {bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero}, false, bhoomi_clock_v1_NowPlaying_init_zero, 0, {bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero}, "", ""}
+#define bhoomi_clock_v1_DeviceState_init_zero    {0, false, bhoomi_clock_v1_Note_init_zero, false, bhoomi_clock_v1_Photo_init_zero, 0, {bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero, bhoomi_clock_v1_Alarm_init_zero}, false, bhoomi_clock_v1_NowPlaying_init_zero, 0, {bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero, bhoomi_clock_v1_FaceRef_init_zero}, "", "", 0}
 #define bhoomi_clock_v1_Note_init_zero           {"", 0}
 #define bhoomi_clock_v1_Photo_init_zero          {"", 0, 0}
-#define bhoomi_clock_v1_Alarm_init_zero          {"", 0, 0, 0, false, bhoomi_clock_v1_Date_init_zero, "", ""}
+#define bhoomi_clock_v1_Alarm_init_zero          {"", 0, 0, 0, false, bhoomi_clock_v1_Date_init_zero, "", "", 0}
 #define bhoomi_clock_v1_Date_init_zero           {0, 0, 0}
 #define bhoomi_clock_v1_SoundList_init_zero      {0, {"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""}}
 #define bhoomi_clock_v1_NowPlaying_init_zero     {false, bhoomi_clock_v1_Listener_init_zero, false, bhoomi_clock_v1_Listener_init_zero}
@@ -428,6 +431,7 @@ extern "C" {
 #define bhoomi_clock_v1_Alarm_date_tag           5
 #define bhoomi_clock_v1_Alarm_label_tag          6
 #define bhoomi_clock_v1_Alarm_sound_tag          7
+#define bhoomi_clock_v1_Alarm_disabled_tag       8
 #define bhoomi_clock_v1_SoundList_names_tag      1
 #define bhoomi_clock_v1_Listener_status_tag      1
 #define bhoomi_clock_v1_Listener_title_tag       2
@@ -445,6 +449,7 @@ extern "C" {
 #define bhoomi_clock_v1_DeviceState_faces_tag    6
 #define bhoomi_clock_v1_DeviceState_pinned_face_tag 7
 #define bhoomi_clock_v1_DeviceState_default_face_tag 8
+#define bhoomi_clock_v1_DeviceState_all_alarms_tag 9
 #define bhoomi_clock_v1_SpriteRef_hash_tag       1
 #define bhoomi_clock_v1_SpriteRef_w_tag          2
 #define bhoomi_clock_v1_SpriteRef_h_tag          3
@@ -553,7 +558,8 @@ X(a, STATIC,   REPEATED, MESSAGE,  alarms,            4) \
 X(a, STATIC,   OPTIONAL, MESSAGE,  nowplaying,        5) \
 X(a, STATIC,   REPEATED, MESSAGE,  faces,             6) \
 X(a, STATIC,   SINGULAR, STRING,   pinned_face,       7) \
-X(a, STATIC,   SINGULAR, STRING,   default_face,      8)
+X(a, STATIC,   SINGULAR, STRING,   default_face,      8) \
+X(a, STATIC,   SINGULAR, BOOL,     all_alarms,        9)
 #define bhoomi_clock_v1_DeviceState_CALLBACK NULL
 #define bhoomi_clock_v1_DeviceState_DEFAULT NULL
 #define bhoomi_clock_v1_DeviceState_note_MSGTYPE bhoomi_clock_v1_Note
@@ -582,7 +588,8 @@ X(a, STATIC,   SINGULAR, UINT32,   minute,            3) \
 X(a, STATIC,   SINGULAR, UINT32,   days,              4) \
 X(a, STATIC,   OPTIONAL, MESSAGE,  date,              5) \
 X(a, STATIC,   SINGULAR, STRING,   label,             6) \
-X(a, STATIC,   SINGULAR, STRING,   sound,             7)
+X(a, STATIC,   SINGULAR, STRING,   sound,             7) \
+X(a, STATIC,   SINGULAR, BOOL,     disabled,          8)
 #define bhoomi_clock_v1_Alarm_CALLBACK NULL
 #define bhoomi_clock_v1_Alarm_DEFAULT NULL
 #define bhoomi_clock_v1_Alarm_date_MSGTYPE bhoomi_clock_v1_Date
@@ -847,9 +854,9 @@ extern const pb_msgdesc_t bhoomi_clock_v1_Management_msg;
 
 /* Maximum encoded size of messages (where known) */
 #define BHOOMI_CLOCK_V1_CLOCK_PB_H_MAX_SIZE      bhoomi_clock_v1_Face_size
-#define bhoomi_clock_v1_Alarm_size               281
+#define bhoomi_clock_v1_Alarm_size               283
 #define bhoomi_clock_v1_Date_size                18
-#define bhoomi_clock_v1_DeviceState_size         6949
+#define bhoomi_clock_v1_DeviceState_size         6991
 #define bhoomi_clock_v1_Emitter_size             186
 #define bhoomi_clock_v1_FaceRef_size             28
 #define bhoomi_clock_v1_FaceWeatherVariant_size  4525

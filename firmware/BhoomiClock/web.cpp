@@ -9,8 +9,8 @@
 #include <time.h>
 
 #include "app_lock.h"
+#include "alarm_settings_js.h"
 #include "page_html.h"
-#include "mood_video_js.h"
 #include "volume_settings_js.h"
 #include "mood_clip.h"
 #include "portal_client.h"
@@ -76,6 +76,84 @@ void handleInfo() {
 void handleVolumeGet() {
   if (wifisetup::portalActive()) return sendError(409, "Not available during setup");
   app::Lock lock; sendJson(portal::volumeSettingsJson());
+}
+
+void handleAlarmsGet() {
+  if (wifisetup::portalActive()) return sendError(409, "Alarms are unavailable during Wi-Fi setup.");
+  String body;
+  { app::Lock lock; body = portal::alarmSettingsJson(); }
+  sendJson(body);
+}
+
+bool decimal(const String &s) {
+  return s.length() && strspn(s.c_str(), "0123456789") == s.length();
+}
+
+bool alarmDate(const String &date, portal::Alarm &alarm) {
+  if (date.length() != 10 || date[4] != '-' || date[7] != '-') return false;
+  String yyyy = date.substring(0, 4), mm = date.substring(5, 7), dd = date.substring(8);
+  if (!decimal(yyyy) || !decimal(mm) || !decimal(dd)) return false;
+  unsigned year = yyyy.toInt(), month = mm.toInt(), day = dd.toInt();
+  if (!year || month < 1 || month > 12 || !day) return false;
+  static const uint8_t daysInMonth[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  bool leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+  if (day > daysInMonth[month - 1] + (month == 2 && leap)) return false;
+  alarm.has_date = true;
+  alarm.date = {year, month, day};
+  return true;
+}
+
+void handleAlarmsSet() {
+  if (wifisetup::portalActive()) return sendError(409, "Alarms are unavailable during Wi-Fi setup.");
+  if (server.header("X-Clock") != "1") return sendError(403, "missing X-Clock header");
+  String id = server.arg("id");
+  bool deleted = server.method() == HTTP_DELETE;
+  if ((deleted || !id.isEmpty()) &&
+      (id.length() != 12 || strspn(id.c_str(), "0123456789abcdef") != id.length()))
+    return sendError(400, "Invalid alarm ID.");
+
+  portal::Alarm alarm = {};
+  id.toCharArray(alarm.id, sizeof alarm.id);
+  if (!deleted) {
+    String time = server.arg("time"), days = server.arg("days"), enabled = server.arg("enabled");
+    String hh = time.substring(0, 2), mm = time.substring(3);
+    if (time.length() != 5 || time[2] != ':' || !decimal(hh) || !decimal(mm) ||
+        hh.toInt() > 23 || mm.toInt() > 59)
+      return sendError(400, "Pick a time for the alarm.");
+    if (days.length() > 3 || !decimal(days) || days.toInt() > 127 || (enabled != "0" && enabled != "1"))
+      return sendError(400, "Invalid repeat days or enabled setting.");
+    alarm.hour = hh.toInt();
+    alarm.minute = mm.toInt();
+    alarm.days = days.toInt();
+    alarm.disabled = enabled == "0";
+    if (!alarm.days && !alarmDate(server.arg("date"), alarm))
+      return sendError(400, "Pick a date for a one-off alarm.");
+    String label = server.arg("label"), sound = server.arg("sound");
+    label.trim();
+    size_t characters = 0;
+    for (size_t i = 0; i < label.length(); ++i) {
+      uint8_t c = label[i];
+      if ((c & 0xc0) != 0x80) ++characters;
+      if (c < 0x20 || c == 0x7f) return sendError(400, "Use a single line for the alarm label.");
+    }
+    if (characters > 40 || label.length() >= sizeof alarm.label)
+      return sendError(400, "Use up to 40 characters for the alarm label.");
+    if (sound.length() >= sizeof alarm.sound || sound.indexOf('/') >= 0 || sound.indexOf('\\') >= 0)
+      return sendError(400, "Invalid alarm sound.");
+    label.toCharArray(alarm.label, sizeof alarm.label);
+    sound.toCharArray(alarm.sound, sizeof alarm.sound);
+  }
+  int code;
+  String body;
+  {
+    app::Lock lock;
+    code = portal::setLocalAlarm(alarm, deleted);
+    if (code == 202) body = portal::alarmSettingsJson();
+  }
+  if (code == 404) return sendError(404, "This alarm no longer exists.");
+  if (code == 409) return sendError(409, "Alarm limit reached or too many changes are waiting to sync.");
+  if (code != 202) return sendError(500, "Could not save the alarm on the clock.");
+  sendJson(body, code);
 }
 void handleVolumeSet() {
   if (wifisetup::portalActive()) return sendError(409, "Not available during setup");
@@ -396,9 +474,12 @@ void begin() {
   server.on("/", HTTP_GET, handleRoot);
   server.on("/info", HTTP_GET, handleInfo);
   server.on("/volume-settings.js", HTTP_GET, []() { server.send_P(200, "application/javascript", VOLUME_SETTINGS_JS); });
-  server.on("/mood-video.js", HTTP_GET, []() { server.send_P(200, "application/javascript", MOOD_VIDEO_JS); });
+  server.on("/alarm-settings.js", HTTP_GET, []() { server.send_P(200, "application/javascript", ALARM_SETTINGS_JS); });
   server.on("/volume", HTTP_GET, handleVolumeGet);
   server.on("/volume", HTTP_POST, handleVolumeSet);
+  server.on("/alarms", HTTP_GET, handleAlarmsGet);
+  server.on("/alarms", HTTP_POST, handleAlarmsSet);
+  server.on("/alarms", HTTP_DELETE, handleAlarmsSet);
   server.on("/weather", HTTP_GET, handleWeatherGet);
   server.on("/weather", HTTP_POST, handleWeatherSet);
   server.on("/zones", HTTP_GET, handleZones);

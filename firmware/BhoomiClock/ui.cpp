@@ -916,7 +916,7 @@ void updateMood() {
 }
 
 bool alarmMatches(const portal::Alarm &a, const struct tm &t) {
-  if (a.hour != (uint32_t)t.tm_hour || a.minute != (uint32_t)t.tm_min) return false;
+  if (a.disabled || a.hour != (uint32_t)t.tm_hour || a.minute != (uint32_t)t.tm_min) return false;
   if (a.days) return a.days & (1u << t.tm_wday);
   return a.has_date && a.date.year == (uint32_t)t.tm_year + 1900 && a.date.month == (uint32_t)t.tm_mon + 1 &&
          a.date.day == (uint32_t)t.tm_mday;
@@ -924,16 +924,16 @@ bool alarmMatches(const portal::Alarm &a, const struct tm &t) {
 
 void checkAlarms() {
   static time_t lastMinute = 0;
-  if (!timeValid() || !portal::haveState()) return;
+  if (!timeValid() || !portal::alarmCount()) return;
   time_t now = time(nullptr);
   if (now / 60 == lastMinute) return;  // alarms are checked once per minute, so one can't fire twice
   lastMinute = now / 60;
   struct tm t;
   localtime_r(&now, &t);
-  const portal::State &s = portal::state();
-  for (pb_size_t i = 0; i < s.alarms_count; i++) {
-    if (!alarmMatches(s.alarms[i], t)) continue;
-    startRing(s.alarms[i].hour, s.alarms[i].minute, s.alarms[i].label, s.alarms[i].sound);
+  for (size_t i = 0; i < portal::alarmCount(); i++) {
+    const portal::Alarm &alarm = portal::alarmAt(i);
+    if (!alarmMatches(alarm, t)) continue;
+    startRing(alarm.hour, alarm.minute, alarm.label, alarm.sound);
     break;
   }
 }

@@ -8,7 +8,7 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class DeviceState(_message.Message):
-    __slots__ = ("version", "note", "photo", "alarms", "nowplaying", "faces", "pinned_face", "default_face")
+    __slots__ = ("version", "note", "photo", "alarms", "nowplaying", "faces", "pinned_face", "default_face", "all_alarms")
     VERSION_FIELD_NUMBER: _ClassVar[int]
     NOTE_FIELD_NUMBER: _ClassVar[int]
     PHOTO_FIELD_NUMBER: _ClassVar[int]
@@ -17,6 +17,7 @@ class DeviceState(_message.Message):
     FACES_FIELD_NUMBER: _ClassVar[int]
     PINNED_FACE_FIELD_NUMBER: _ClassVar[int]
     DEFAULT_FACE_FIELD_NUMBER: _ClassVar[int]
+    ALL_ALARMS_FIELD_NUMBER: _ClassVar[int]
     version: int
     note: Note
     photo: Photo
@@ -25,7 +26,8 @@ class DeviceState(_message.Message):
     faces: _containers.RepeatedCompositeFieldContainer[FaceRef]
     pinned_face: str
     default_face: str
-    def __init__(self, version: _Optional[int] = ..., note: _Optional[_Union[Note, _Mapping]] = ..., photo: _Optional[_Union[Photo, _Mapping]] = ..., alarms: _Optional[_Iterable[_Union[Alarm, _Mapping]]] = ..., nowplaying: _Optional[_Union[NowPlaying, _Mapping]] = ..., faces: _Optional[_Iterable[_Union[FaceRef, _Mapping]]] = ..., pinned_face: _Optional[str] = ..., default_face: _Optional[str] = ...) -> None: ...
+    all_alarms: bool
+    def __init__(self, version: _Optional[int] = ..., note: _Optional[_Union[Note, _Mapping]] = ..., photo: _Optional[_Union[Photo, _Mapping]] = ..., alarms: _Optional[_Iterable[_Union[Alarm, _Mapping]]] = ..., nowplaying: _Optional[_Union[NowPlaying, _Mapping]] = ..., faces: _Optional[_Iterable[_Union[FaceRef, _Mapping]]] = ..., pinned_face: _Optional[str] = ..., default_face: _Optional[str] = ..., all_alarms: _Optional[bool] = ...) -> None: ...
 
 class Note(_message.Message):
     __slots__ = ("text", "sent_at")
@@ -46,7 +48,7 @@ class Photo(_message.Message):
     def __init__(self, id: _Optional[str] = ..., sent_at: _Optional[int] = ..., size: _Optional[int] = ...) -> None: ...
 
 class Alarm(_message.Message):
-    __slots__ = ("id", "hour", "minute", "days", "date", "label", "sound")
+    __slots__ = ("id", "hour", "minute", "days", "date", "label", "sound", "disabled")
     ID_FIELD_NUMBER: _ClassVar[int]
     HOUR_FIELD_NUMBER: _ClassVar[int]
     MINUTE_FIELD_NUMBER: _ClassVar[int]
@@ -54,6 +56,7 @@ class Alarm(_message.Message):
     DATE_FIELD_NUMBER: _ClassVar[int]
     LABEL_FIELD_NUMBER: _ClassVar[int]
     SOUND_FIELD_NUMBER: _ClassVar[int]
+    DISABLED_FIELD_NUMBER: _ClassVar[int]
     id: str
     hour: int
     minute: int
@@ -61,7 +64,8 @@ class Alarm(_message.Message):
     date: Date
     label: str
     sound: str
-    def __init__(self, id: _Optional[str] = ..., hour: _Optional[int] = ..., minute: _Optional[int] = ..., days: _Optional[int] = ..., date: _Optional[_Union[Date, _Mapping]] = ..., label: _Optional[str] = ..., sound: _Optional[str] = ...) -> None: ...
+    disabled: bool
+    def __init__(self, id: _Optional[str] = ..., hour: _Optional[int] = ..., minute: _Optional[int] = ..., days: _Optional[int] = ..., date: _Optional[_Union[Date, _Mapping]] = ..., label: _Optional[str] = ..., sound: _Optional[str] = ..., disabled: _Optional[bool] = ...) -> None: ...
 
 class Date(_message.Message):
     __slots__ = ("year", "month", "day")

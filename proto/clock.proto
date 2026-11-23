@@ -16,13 +16,14 @@ message DeviceState {
   uint32 version = 1;            // bumped on every change in the portal
   Note note = 2;                 // unset: no message to show
   Photo photo = 3;               // unset: no photo
-  repeated Alarm alarms = 4;     // enabled alarms only, sorted by time
+  repeated Alarm alarms = 4;     // sorted by time; enabled only unless all_alarms is true
   NowPlaying nowplaying = 5;     // what the two people are playing on Spotify; always set. It changes on its own
                                  // (not with `version`), but it is part of the ETag, so a new song is a new 200.
   repeated FaceRef faces = 6;    // the clock faces, in priority order (earlier wins). Only ids and revisions: fetch a
                                  // face with GET /api/device/face/<id> when its `rev` is new or changed.
   string pinned_face = 7;        // face id the portal forces right now; empty = choose by the faces' `when` rules
   string default_face = 8;       // face id shown when no face's `when` matches; empty = the clock's built-in face
+  bool all_alarms = 9;           // response to ?alarms=all; includes disabled alarms
 }
 
 // The message shown on the clock face.
@@ -38,6 +39,7 @@ message Photo {
   uint32 size = 3;               // JPEG size in bytes, to allocate before downloading
 }
 
+// Also the body of PUT /api/device/alarms/<id>.
 message Alarm {
   string id = 1;                 // 12 hex chars, stable across edits
   uint32 hour = 2;               // 0-23, in the clock's own time zone
@@ -46,6 +48,7 @@ message Alarm {
   Date date = 5;                 // set only when days == 0
   string label = 6;              // up to 40 characters; may be empty
   string sound = 7;              // file name in /sounds on the card; empty = built-in beep
+  bool disabled = 8;             // default false for older clients and cached state
 }
 
 message Date {

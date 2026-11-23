@@ -101,6 +101,79 @@ bool saveVolume(const VolumeState &v) {
   Preferences p; if (!p.begin("volume", false)) return false;
   bool ok = p.putBytes("state", &v, sizeof(v)) == sizeof(v); p.end(); return ok;
 }
+constexpr size_t MAX_ALARMS = sizeof(cur.alarms) / sizeof(Alarm);
+struct AlarmEdit {
+  Alarm alarm;
+  bool deleted;
+};
+struct PendingAlarm {
+  AlarmEdit edit;
+  uint32_t serial;
+  int64_t acceptedVersion;   // -1 until the cloud acknowledges this edit
+  int code;
+};
+PendingAlarm *pendingAlarms = nullptr; // PSRAM; protected by app::Lock
+uint32_t alarmEditSerial = 0;
+const Alarm *effectiveAlarms[2 * MAX_ALARMS];
+size_t effectiveAlarmCount = 0;
+
+void rebuildAlarms() {
+  effectiveAlarmCount = 0;
+  for (size_t i = 0; i < cur.alarms_count; ++i) {
+    const Alarm &alarm = cur.alarms[i];
+    bool edited = pendingAlarms && std::any_of(pendingAlarms, pendingAlarms + MAX_ALARMS,
+      [&](const PendingAlarm &p) { return !strcmp(p.edit.alarm.id, alarm.id); });
+    if (!edited) effectiveAlarms[effectiveAlarmCount++] = &alarm;
+  }
+  if (pendingAlarms) for (size_t i = 0; i < MAX_ALARMS; ++i) {
+    const AlarmEdit &edit = pendingAlarms[i].edit;
+    if (edit.alarm.id[0] && !edit.deleted) effectiveAlarms[effectiveAlarmCount++] = &edit.alarm;
+  }
+  std::sort(effectiveAlarms, effectiveAlarms + effectiveAlarmCount, [](const Alarm *a, const Alarm *b) {
+    if (a->hour != b->hour) return a->hour < b->hour;
+    if (a->minute != b->minute) return a->minute < b->minute;
+    if (a->has_date != b->has_date) return !a->has_date;
+    if (a->date.year != b->date.year) return a->date.year < b->date.year;
+    if (a->date.month != b->date.month) return a->date.month < b->date.month;
+    if (a->date.day != b->date.day) return a->date.day < b->date.day;
+    return strcmp(a->id, b->id) < 0;
+  });
+}
+
+void alarmSlotKey(char (&key)[8], size_t slot) {
+  snprintf(key, sizeof key, "e%u", (unsigned)slot);
+}
+
+void loadAlarmEdits() {
+  pendingAlarms = static_cast<PendingAlarm *>(
+    heap_caps_calloc(MAX_ALARMS, sizeof(PendingAlarm), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  Preferences prefs;
+  if (pendingAlarms && prefs.begin("alarm-edits", false)) {
+    for (size_t i = 0; i < MAX_ALARMS; ++i) {
+      char key[8]; alarmSlotKey(key, i);
+      if (prefs.isKey(key) && prefs.getBytesLength(key) == sizeof(AlarmEdit) &&
+          prefs.getBytes(key, &pendingAlarms[i].edit, sizeof(AlarmEdit)) == sizeof(AlarmEdit))
+        pendingAlarms[i].acceptedVersion = -1;
+    }
+    prefs.end();
+  }
+  rebuildAlarms();
+}
+
+// Called only after the corresponding cloud state has been cached for the next boot.
+bool confirmAlarmEdits(uint32_t version) {
+  bool cleared = true;
+  for (size_t i = 0; i < MAX_ALARMS; ++i) {
+    PendingAlarm &p = pendingAlarms[i];
+    if (!p.edit.alarm.id[0] || p.acceptedVersion < 0 || version < p.acceptedVersion) continue;
+    char key[8]; alarmSlotKey(key, i);
+    Preferences prefs;
+    if (prefs.begin("alarm-edits", false) && prefs.remove(key)) p = {};
+    else cleared = false;
+  }
+  return cleared;
+}
+
 String moodNotes[5];
 String etag;
 bool gotTimeWarn = false;
@@ -269,6 +342,8 @@ const char *statusName(int s) {
 // to the SD card in /portal (kept apart from the user's /photos). Files are written to a temp name
 // and renamed, so a cut mid-write leaves the previous copy intact.
 constexpr const char *STATE_FILE = "/state.pb";
+// Older firmware ignores Alarm.disabled. Keep its cache free of disabled alarms across OTA rollback.
+constexpr const char *FULL_STATE_FILE = "/state-alarms.pb";
 constexpr const char *SD_DIR = "/portal";
 constexpr const char *PHOTO_FILE = "/portal/photo.jpg";
 constexpr const char *PHOTO_ID_FILE = "/portal/photo.id";  // written last: marks photo.jpg as complete
@@ -309,8 +384,10 @@ uint8_t *readAll(FS_ &fs, const char *path, size_t maxLen, size_t &len) {
   return buf;
 }
 
-void saveState(const uint8_t *body, size_t len) {
-  if (flashBegin() && !writeAtomic(FFat, STATE_FILE, body, len)) debuglog::println("[portal] could not save state to flash");
+bool saveState(const uint8_t *body, size_t len, bool allAlarms) {
+  if (flashBegin() && writeAtomic(FFat, allAlarms ? FULL_STATE_FILE : STATE_FILE, body, len)) return true;
+  debuglog::println("[portal] could not save state to flash");
+  return false;
 }
 
 void forgetPhoto() {
@@ -334,7 +411,12 @@ void savePhoto(const uint8_t *jpg, size_t len, const char *id) {
 // If-None-Match), so a portal that was reset can't be masked by a stale copy.
 void loadSaved() {
   size_t len = 0;
-  uint8_t *body = flashBegin() ? readAll(FFat, STATE_FILE, bhoomi_clock_v1_DeviceState_size + 64, len) : nullptr;
+  uint8_t *body = nullptr;
+  if (flashBegin()) {
+    constexpr size_t cap = bhoomi_clock_v1_DeviceState_size + 64;
+    body = readAll(FFat, FULL_STATE_FILE, cap, len);
+    if (!body) body = readAll(FFat, STATE_FILE, cap, len);
+  }
   if (!body) {
     debuglog::println("[portal] no saved state");
     return;
@@ -402,7 +484,7 @@ void logState(const State &st, const String &tag, size_t bytes) {
 enum class Poll { Changed, Unchanged, Failed };
 
 Poll fetchState(Conn &c) {
-  String q = "/api/device/state?fw=" + String(FW_VERSION) + "&rssi=" + String(WiFi.RSSI());
+  String q = "/api/device/state?alarms=all&fw=" + String(FW_VERSION) + "&rssi=" + String(WiFi.RSSI());
   {
     app::Lock lock;
     if (const tz::Zone *z = settings::timezone()) q += "&tz=" + urlEncode(z->id);
@@ -466,12 +548,24 @@ Poll fetchState(Conn &c) {
       etag = newTag;
       // A 200 is either the portal's own things changing (version), or a new song. Only the former
       // is worth a flash write and a redraw of the note/photo; the latter just moves the strip.
-      bool portalChanged = !have || next->version != cur.version;
+      bool portalChanged = !have || next->version != cur.version || next->all_alarms != cur.all_alarms ||
+        next->alarms_count != cur.alarms_count || memcmp(next->alarms, cur.alarms, sizeof cur.alarms) != 0;
       bool playingChanged = !have || memcmp(&next->nowplaying, &cur.nowplaying, sizeof next->nowplaying) != 0;
-      if (portalChanged) saveState(body, sink.len);
+      bool confirming;
       {
         app::Lock lock;
+        confirming = next->all_alarms && pendingAlarms &&
+          std::any_of(pendingAlarms, pendingAlarms + MAX_ALARMS, [&](const PendingAlarm &p) {
+            return p.edit.alarm.id[0] && p.acceptedVersion >= 0 && next->version >= p.acceptedVersion;
+          });
+      }
+      bool saved = (portalChanged || confirming) && saveState(body, sink.len, next->all_alarms);
+      if (confirming && !saved) etag = "";
+      {
+        app::Lock lock;
+        if (confirming && saved && !confirmAlarmEdits(next->version)) etag = "";
         memcpy(&cur, next, sizeof(State));
+        rebuildAlarms();
         have = true;
         okAt = millis() | 1;
         if (portalChanged) bump();
@@ -1505,6 +1599,57 @@ void manage(Conn &c) {
   delay(200); ESP.restart();
 }
 
+bool syncAlarmEdits(Conn &c) {
+  static size_t cursor = 0;
+  PendingAlarm local = {};
+  size_t slot = 0;
+  {
+    app::Lock lock;
+    if (!pendingAlarms || !cur.all_alarms) return false;
+    for (size_t i = 0; i < MAX_ALARMS; ++i) {
+      slot = cursor++ % MAX_ALARMS;
+      const PendingAlarm &p = pendingAlarms[slot];
+      if (!p.edit.alarm.id[0] || p.acceptedVersion >= 0) continue;
+      local = p;
+      break;
+    }
+  }
+  if (!local.edit.alarm.id[0]) return false;
+
+  uint8_t body[bhoomi_clock_v1_Alarm_size];
+  pb_ostream_t stream = pb_ostream_from_buffer(body, sizeof body);
+  if (!local.edit.deleted && !pb_encode(&stream, &bhoomi_clock_v1_Alarm_msg, &local.edit.alarm)) return false;
+  String path = String("/api/device/alarms/") + local.edit.alarm.id;
+  int code = -1;
+  int64_t version = -1;
+  if (c.open(path)) {
+    c.http.addHeader("Content-Type", "application/x-protobuf");
+    code = local.edit.deleted ? c.http.sendRequest("DELETE") : c.http.PUT(body, stream.bytes_written);
+    if (code == 200) {
+      uint8_t reply[12] = {};
+      BufSink sink(reply, sizeof reply - 1);
+      int got = writeResponse(c, sink);
+      if (got >= 0 && !sink.overflow && sink.len &&
+          strspn((char *)reply, "0123456789") == sink.len) {
+        uint64_t parsed = strtoull((char *)reply, nullptr, 10);
+        if (parsed <= UINT32_MAX) version = parsed;
+      }
+    }
+    if (version >= 0) c.finish();
+    else c.close();
+  }
+  {
+    app::Lock lock;
+    PendingAlarm &p = pendingAlarms[slot];
+    if (p.serial == local.serial && !strcmp(p.edit.alarm.id, local.edit.alarm.id)) {
+      p.acceptedVersion = version;
+      p.code = code;
+    }
+  }
+  if (version >= 0) etag = ""; // fetch a complete authoritative snapshot to persist before clearing the edit
+  return version >= 0;
+}
+
 void syncVolume(Conn &c) {
   VolumeState local;
   { app::Lock lock; local = volumeState; }
@@ -1723,6 +1868,7 @@ void task(void *) {
       backoff = std::min<uint32_t>(backoff * 2, FAIL_MAX_MS);
     } else {
       backoff = BACKOFF_MIN_MS;
+      if (syncAlarmEdits(c)) wait = 3000;
       if (!photoRetryAt || (int32_t)(millis() - photoRetryAt) >= 0) {
         Photo ph = syncPhoto(c);
         if (ph == Photo::Ok) {
@@ -1890,6 +2036,66 @@ bool setLocalVolume(int alarm, int video) {
   volumeState = next; sound::setLevels(next.alarm, next.video); return true;
 }
 
+size_t alarmCount() { return effectiveAlarmCount; }
+const Alarm &alarmAt(size_t index) { return *effectiveAlarms[index]; }
+
+int setLocalAlarm(const Alarm &alarm, bool deleted) {
+  if (!pendingAlarms) return 500;
+  bool exists = std::any_of(effectiveAlarms, effectiveAlarms + effectiveAlarmCount,
+    [&](const Alarm *a) { return !strcmp(a->id, alarm.id); });
+  AlarmEdit edit = {alarm, deleted};
+  if (!alarm.id[0]) {
+    if (effectiveAlarmCount >= MAX_ALARMS) return 409;
+    do {
+      snprintf(edit.alarm.id, sizeof edit.alarm.id, "%08x%04x",
+        (unsigned)esp_random(), (unsigned)(esp_random() & 0xffff));
+    } while (std::any_of(effectiveAlarms, effectiveAlarms + effectiveAlarmCount,
+      [&](const Alarm *a) { return !strcmp(a->id, edit.alarm.id); }));
+  } else if (!exists) {
+    return 404;
+  }
+  size_t slot = MAX_ALARMS;
+  for (size_t i = 0; i < MAX_ALARMS; ++i) {
+    const char *id = pendingAlarms[i].edit.alarm.id;
+    if (!strcmp(id, edit.alarm.id)) { slot = i; break; }
+    if (!id[0] && slot == MAX_ALARMS) slot = i;
+  }
+  if (slot == MAX_ALARMS) return 409;
+  char key[8]; alarmSlotKey(key, slot);
+  Preferences prefs;
+  if (!prefs.begin("alarm-edits", false) || prefs.putBytes(key, &edit, sizeof edit) != sizeof edit)
+    return 500;
+  pendingAlarms[slot] = {edit, ++alarmEditSerial, -1, 0};
+  rebuildAlarms();
+  return 202;
+}
+
+String alarmSettingsJson() {
+  size_t pending = 0;
+  bool cloudFull = false, rejected = false;
+  if (pendingAlarms) for (size_t i = 0; i < MAX_ALARMS; ++i) {
+    const PendingAlarm &p = pendingAlarms[i];
+    if (!p.edit.alarm.id[0]) continue;
+    ++pending;
+    cloudFull |= p.code == 409;
+    rejected |= p.code == 400;
+  }
+  String out = "{\"pending\":" + String(pending) + ",\"cloudFull\":" + (cloudFull ? "true" : "false") +
+    ",\"rejected\":" + (rejected ? "true" : "false") + ",\"alarms\":[";
+  for (size_t i = 0; i < alarmCount(); ++i) {
+    const Alarm &a = alarmAt(i);
+    char clock[6], date[11] = "";
+    snprintf(clock, sizeof clock, "%02u:%02u", (unsigned)(a.hour % 24), (unsigned)(a.minute % 60));
+    if (a.has_date) snprintf(date, sizeof date, "%04u-%02u-%02u", (unsigned)(a.date.year % 10000),
+      (unsigned)(a.date.month % 100), (unsigned)(a.date.day % 100));
+    if (i) out += ',';
+    out += String("{\"id\":\"") + a.id + "\",\"time\":\"" + clock + "\",\"date\":\"" + date +
+      "\",\"days\":" + a.days + ",\"enabled\":" + (a.disabled ? "false" : "true") + ",\"label\":\"" +
+      wifisetup::jsonEscape(a.label) + "\",\"sound\":\"" + wifisetup::jsonEscape(a.sound) + "\"}";
+  }
+  return out + "]}";
+}
+
 String weatherSettingsJson() {
   return "{\"city\":\"" + wifisetup::jsonEscape(weatherState.city) + "\",\"pending\":" +
     (weatherPending.length() ? "true" : "false") + ",\"pendingCity\":\"" + wifisetup::jsonEscape(weatherPendingName) +
@@ -1908,6 +2114,7 @@ bool setWeatherLocation(const String &name, double lat, double lon) {
 
 void begin() {
   loadSaved();  // before anything else, so the face has content even if the portal is unreachable
+  loadAlarmEdits();
   loadKeys();
   Preferences savedVolume;
   if (savedVolume.begin("volume", false)) {
