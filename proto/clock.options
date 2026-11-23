@@ -11,6 +11,8 @@ bhoomi.clock.v1.SoundList.names    max_count:100 max_size:65
 bhoomi.clock.v1.Listener.title     max_size:61
 bhoomi.clock.v1.Listener.artist    max_size:61
 bhoomi.clock.v1.Listener.art_id    max_size:41
+bhoomi.clock.v1.Listener.collection max_size:61
+bhoomi.clock.v1.Listener.detail_art_id max_size:41
 bhoomi.clock.v1.DeviceState.faces        max_count:12
 bhoomi.clock.v1.DeviceState.pinned_face  max_size:13
 bhoomi.clock.v1.DeviceState.default_face max_size:13

@@ -92,7 +92,7 @@ class NowPlaying(_message.Message):
     def __init__(self, left: _Optional[_Union[Listener, _Mapping]] = ..., right: _Optional[_Union[Listener, _Mapping]] = ...) -> None: ...
 
 class Listener(_message.Message):
-    __slots__ = ("status", "title", "artist", "art_id")
+    __slots__ = ("status", "title", "artist", "art_id", "collection", "duration_ms", "position", "detail_art_id")
     class Status(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         OFF: _ClassVar[Listener.Status]
@@ -105,11 +105,27 @@ class Listener(_message.Message):
     TITLE_FIELD_NUMBER: _ClassVar[int]
     ARTIST_FIELD_NUMBER: _ClassVar[int]
     ART_ID_FIELD_NUMBER: _ClassVar[int]
+    COLLECTION_FIELD_NUMBER: _ClassVar[int]
+    DURATION_MS_FIELD_NUMBER: _ClassVar[int]
+    POSITION_FIELD_NUMBER: _ClassVar[int]
+    DETAIL_ART_ID_FIELD_NUMBER: _ClassVar[int]
     status: Listener.Status
     title: str
     artist: str
     art_id: str
-    def __init__(self, status: _Optional[_Union[Listener.Status, str]] = ..., title: _Optional[str] = ..., artist: _Optional[str] = ..., art_id: _Optional[str] = ...) -> None: ...
+    collection: str
+    duration_ms: int
+    position: PlaybackPosition
+    detail_art_id: str
+    def __init__(self, status: _Optional[_Union[Listener.Status, str]] = ..., title: _Optional[str] = ..., artist: _Optional[str] = ..., art_id: _Optional[str] = ..., collection: _Optional[str] = ..., duration_ms: _Optional[int] = ..., position: _Optional[_Union[PlaybackPosition, _Mapping]] = ..., detail_art_id: _Optional[str] = ...) -> None: ...
+
+class PlaybackPosition(_message.Message):
+    __slots__ = ("elapsed_ms", "sampled_at_ms")
+    ELAPSED_MS_FIELD_NUMBER: _ClassVar[int]
+    SAMPLED_AT_MS_FIELD_NUMBER: _ClassVar[int]
+    elapsed_ms: int
+    sampled_at_ms: int
+    def __init__(self, elapsed_ms: _Optional[int] = ..., sampled_at_ms: _Optional[int] = ...) -> None: ...
 
 class FaceRef(_message.Message):
     __slots__ = ("id", "rev")

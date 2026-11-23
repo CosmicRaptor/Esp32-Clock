@@ -783,7 +783,8 @@ class Default(WorkerEntrypoint):
             q = {k: v[0] for k, v in parse_qs(url.query).items()}
             await self.note_check_in(q)
             state, listening = await asyncio.gather(self.load_state(), self.listening_both())
-            msg = wire.device_state(state, listening, all_alarms=q.get("alarms") == "all")
+            msg = wire.device_state(state, listening, all_alarms=q.get("alarms") == "all",
+                                    player_details=q.get("player") == "details")
             body = msg.SerializeToString()
             etag = '"' + hashlib.sha256(body).hexdigest()[:24] + '"'
             if request.headers.get("if-none-match") == etag:
@@ -837,7 +838,8 @@ class Default(WorkerEntrypoint):
             return Response(body, headers={"content-type": wire.CONTENT_TYPE, "etag": etag, "cache-control": "no-store"})
 
         if path.startswith("/api/device/art/") and method == "GET":
-            return await self.cover(path.removeprefix("/api/device/art/"))
+            return await self.cover(path.removeprefix("/api/device/art/"),
+                                    detail=parse_qs(url.query).get("size") == ["detail"])
 
         if path == "/api/device/sounds" and method == "PUT":
             sounds = wire.parse_sound_list(await request.bytes())
@@ -952,7 +954,7 @@ class Default(WorkerEntrypoint):
         except Exception as e:
             print(f"[spotify] playback side={side} outcome=error error={type(e).__name__} duration_ms={int((time.perf_counter() - started) * 1000)}")
             raise
-        result = spotify.parse_playing(status, data)
+        result = spotify.parse_playing(status, data, sampled_at_ms=time.time_ns() // 1_000_000)
         _last_listening[side] = result
         print(f"[spotify] playback side={side} outcome=ok http_status={status} playback={result['status']} duration_ms={int((time.perf_counter() - started) * 1000)}")
         return result
@@ -1001,9 +1003,8 @@ class Default(WorkerEntrypoint):
         _last_listening.pop(side, None)
         return back("ok")
 
-    async def cover(self, art_id: str):
-        """GET /api/device/art/<id>: the 64x64 cover from Spotify's CDN. The id is checked to be 40 hex
-        chars first, so this can only ever fetch images from the CDN, never an arbitrary address."""
+    async def cover(self, art_id: str, *, detail: bool = False):
+        """Fetch a size-limited cover from Spotify's CDN using its validated art ID."""
         if not spotify.valid_art_id(art_id):
             raise HttpError(404, "No such cover.")
         base = self.secret("SPOTIFY_ART_URL") or "https://i.scdn.co"
@@ -1012,10 +1013,11 @@ class Default(WorkerEntrypoint):
             if resp.status != 200:
                 raise HttpError(404, "No such cover.")
             data = bytes(await resp.bytes())
-            _, _, progressive = model.jpeg_info(data)  # raises Invalid: not a JPEG
+            width, height, progressive = model.jpeg_info(data)  # raises Invalid: not a JPEG
         except (Upstream, Invalid):
             raise HttpError(502, "Couldn't get that cover.") from None
-        if progressive or len(data) > 20_000:  # the clock's decoder is baseline-only, and its buffer small
+        max_bytes = 80_000 if detail else 20_000
+        if progressive or len(data) > max_bytes or (detail and max(width, height) > spotify.DETAIL_ART_MAX_PX):
             raise HttpError(502, "That cover isn't something the clock can show.")
         return jpeg_response(data)
 

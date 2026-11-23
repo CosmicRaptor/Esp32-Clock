@@ -23,10 +23,11 @@ def days_mask(days: list) -> int:
     return mask
 
 
-def device_state(state: dict, listening: tuple | None = None, *, all_alarms: bool = False) -> pb.DeviceState:
+def device_state(state: dict, listening: tuple | None = None, *, all_alarms: bool = False,
+                 player_details: bool = False) -> pb.DeviceState:
     """`listening`: the (left, right) "listening" dicts from spotify.py; None = nobody connected."""
     out = pb.DeviceState(version=state["version"], all_alarms=all_alarms)
-    out.nowplaying.CopyFrom(now_playing(*(listening or (spotify.OFF, spotify.OFF))))
+    out.nowplaying.CopyFrom(now_playing(*(listening or (spotify.OFF, spotify.OFF)), details=player_details))
     if state.get("message"):
         out.note.text = state["message"]["text"]
         out.note.sent_at = state["message"]["at"]
@@ -187,7 +188,7 @@ def face_message(face: dict) -> pb.Face:
 _STATUS = {"playing": pb.Listener.PLAYING, "paused": pb.Listener.PAUSED}
 
 
-def now_playing(left: dict, right: dict) -> pb.NowPlaying:
+def now_playing(left: dict, right: dict, *, details: bool = False) -> pb.NowPlaying:
     """Two "listening" dicts (see spotify.py) -> the clock's NowPlaying message."""
     out = pb.NowPlaying()
     for field, listening in ((out.left, left), (out.right, right)):
@@ -195,6 +196,13 @@ def now_playing(left: dict, right: dict) -> pb.NowPlaying:
         field.status = _STATUS.get(listening["status"], pb.Listener.OFF)
         if field.status != pb.Listener.OFF:
             field.title, field.artist, field.art_id = listening["title"], listening["artist"], listening["art"]
+            if details:
+                field.collection = listening.get("collection", "")
+                field.detail_art_id = listening.get("detail_art", "")
+                field.duration_ms = listening.get("duration_ms", 0)
+                if "elapsed_ms" in listening:
+                    field.position.elapsed_ms = listening["elapsed_ms"]
+                    field.position.sampled_at_ms = listening.get("sampled_at_ms", 0)
     return out
 
 

@@ -16,14 +16,17 @@ import re
 import unicodedata
 from urllib.parse import urlencode
 
+from model import SPOTIFY_TEXT_MAX
+
 SIDES = ("me", "her")                       # left, right
 SCOPE = "user-read-currently-playing"
 
 ACCOUNTS_URL = "https://accounts.spotify.com"
 API_URL = "https://api.spotify.com"
 
-TEXT_MAX = 60       # characters; keep in step with Listener.title/artist in proto/clock.options
+TEXT_MAX = SPOTIFY_TEXT_MAX
 ART_PX = 64         # the clock wants the smallest cover: ~3 KB, and plenty for a ~40 px thumbnail
+DETAIL_ART_MIN_PX, DETAIL_ART_MAX_PX = 224, 320  # half-size decode still covers the 112 px player tile
 EXPIRY_MARGIN = 60  # refresh an access token this many seconds before it runs out
 
 _ART_URL = re.compile(r"^https://i\.scdn\.co/image/([0-9a-f]{40})$")
@@ -92,24 +95,27 @@ def valid_art_id(art_id) -> bool:
     return isinstance(art_id, str) and bool(_ART_ID.match(art_id))
 
 
-def pick_art(images) -> str:
-    """The id of the smallest cover that is at least ART_PX wide, or "" (not a Spotify CDN image, ...)."""
+def pick_art(images, min_width: int = ART_PX, max_width: int | None = None) -> str:
+    """The id of the smallest cover in the requested size range, or an empty string."""
     best = None
     for img in images if isinstance(images, list) else []:
         if not isinstance(img, dict) or not isinstance(img.get("url"), str):
             continue
         m = _ART_URL.match(img["url"])
         w = img.get("width")
-        if not m or not isinstance(w, int) or w < ART_PX:
+        if not m or not isinstance(w, int) or w < min_width or (max_width is not None and w > max_width):
             continue
         if best is None or w < best[0]:
             best = (w, m.group(1))
     return best[1] if best else ""
 
 
-def parse_playing(status: int, data) -> dict:
+def parse_playing(status: int, data, *, sampled_at_ms: int = 0) -> dict:
     """Spotify's GET /v1/me/player/currently-playing answer -> a "listening" dict."""
     if status != 200 or not isinstance(data, dict):  # 204: nothing is playing anywhere
+        return dict(OFF)
+    device = data.get("device")
+    if isinstance(device, dict) and device.get("is_private_session") is True:
         return dict(OFF)
     item = data.get("item")
     if not isinstance(item, dict):  # an ad, or a private session: nothing worth showing
@@ -118,13 +124,29 @@ def parse_playing(status: int, data) -> dict:
     if item.get("type") == "episode":
         show = item.get("show") if isinstance(item.get("show"), dict) else {}
         artist = show.get("publisher") or show.get("name") or ""
+        collection = show.get("name")
         images = item.get("images") or show.get("images")
     else:
         artists = item.get("artists") if isinstance(item.get("artists"), list) else []
         artist = ", ".join(a["name"] for a in artists if isinstance(a, dict) and isinstance(a.get("name"), str))
         album = item.get("album") if isinstance(item.get("album"), dict) else {}
+        collection = album.get("name")
         images = album.get("images")
 
-    return {"status": "playing" if data.get("is_playing") is True else "paused",
-            "title": ascii_text(item.get("name")) or "?", "artist": ascii_text(artist),
-            "art": pick_art(images)}
+    playing = data.get("is_playing") is True
+    result = {"status": "playing" if playing else "paused",
+              "title": ascii_text(item.get("name")) or "?", "artist": ascii_text(artist),
+              "art": pick_art(images)}
+    if name := ascii_text(collection):
+        result["collection"] = name
+    if art := pick_art(images, DETAIL_ART_MIN_PX, DETAIL_ART_MAX_PX):
+        result["detail_art"] = art
+    duration = item.get("duration_ms")
+    if type(duration) is int and 0 < duration <= 0xFFFFFFFF:
+        result["duration_ms"] = duration
+        progress = data.get("progress_ms")
+        if type(progress) is int and progress >= 0:
+            result["elapsed_ms"] = min(progress, duration)
+            if playing:
+                result["sampled_at_ms"] = sampled_at_ms
+    return result

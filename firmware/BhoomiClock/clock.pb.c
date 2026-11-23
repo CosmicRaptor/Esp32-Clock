@@ -27,7 +27,10 @@ PB_BIND(bhoomi_clock_v1_SoundList, bhoomi_clock_v1_SoundList, 4)
 PB_BIND(bhoomi_clock_v1_NowPlaying, bhoomi_clock_v1_NowPlaying, 2)
 
 
-PB_BIND(bhoomi_clock_v1_Listener, bhoomi_clock_v1_Listener, AUTO)
+PB_BIND(bhoomi_clock_v1_Listener, bhoomi_clock_v1_Listener, 2)
+
+
+PB_BIND(bhoomi_clock_v1_PlaybackPosition, bhoomi_clock_v1_PlaybackPosition, AUTO)
 
 
 PB_BIND(bhoomi_clock_v1_FaceRef, bhoomi_clock_v1_FaceRef, AUTO)

@@ -30,7 +30,8 @@ def track(**over):
 class ParsePlayingTests(unittest.TestCase):
     def test_track(self):
         self.assertEqual(spotify.parse_playing(200, track()),
-                         {"status": "playing", "title": "Blinding Lights", "artist": "The Weeknd", "art": H64})
+                         {"status": "playing", "title": "Blinding Lights", "artist": "The Weeknd", "art": H64,
+                          "detail_art": H300})
 
     def test_paused(self):
         d = track()
@@ -42,6 +43,7 @@ class ParsePlayingTests(unittest.TestCase):
 
     def test_ad_or_private_session_has_no_item(self):
         self.assertEqual(spotify.parse_playing(200, {"is_playing": True, "item": None})["status"], "off")
+        self.assertEqual(spotify.parse_playing(200, {**track(), "device": {"is_private_session": True}}), spotify.OFF)
 
     def test_several_artists(self):
         d = track(artists=[{"name": "A"}, {"name": "B"}, {"name": "C"}])
@@ -51,7 +53,25 @@ class ParsePlayingTests(unittest.TestCase):
         d = {"is_playing": True, "item": {"type": "episode", "name": "Ep 12", "images": images(),
                                           "show": {"name": "The Show", "publisher": "Some Network"}}}
         out = spotify.parse_playing(200, d)
-        self.assertEqual((out["title"], out["artist"], out["art"]), ("Ep 12", "Some Network", H64))
+        self.assertEqual((out["title"], out["artist"], out["art"], out["collection"]),
+                         ("Ep 12", "Some Network", H64, "The Show"))
+
+    def test_playback_details_include_album_and_true_zero_progress(self):
+        data = track(album={"name": "Café Lights", "images": images()}, duration_ms=200_000)
+        data["progress_ms"] = 0
+        out = spotify.parse_playing(200, data, sampled_at_ms=1_700_000_000_123)
+        self.assertEqual((out["collection"], out["duration_ms"], out["elapsed_ms"], out["sampled_at_ms"]),
+                         ("Cafe Lights", 200_000, 0, 1_700_000_000_123))
+
+    def test_progress_can_be_missing_or_paused(self):
+        data = track(duration_ms=1000)
+        for invalid in (None, -1, True, "0"):
+            data["progress_ms"] = invalid
+            self.assertNotIn("elapsed_ms", spotify.parse_playing(200, data))
+        data.update(progress_ms=1200, is_playing=False)
+        paused = spotify.parse_playing(200, data, sampled_at_ms=1_700_000_000_123)
+        self.assertEqual(paused["elapsed_ms"], 1000)
+        self.assertNotIn("sampled_at_ms", paused)
 
     def test_garbage_is_off_not_a_crash(self):
         for status, data in ((200, []), (200, {"item": 5}), (500, {}), (200, {"item": {"name": None}})):
@@ -67,6 +87,10 @@ class PickArtTests(unittest.TestCase):
     def test_smallest_that_is_big_enough(self):
         self.assertEqual(spotify.pick_art(images()), H64)
         self.assertEqual(spotify.pick_art(images()[:2]), H300)
+
+    def test_detail_cover_prefers_300_and_skips_oversized_art(self):
+        self.assertEqual(spotify.pick_art(images(), 224, 320), H300)
+        self.assertEqual(spotify.pick_art(images()[::2], 224, 320), "")
 
     def test_only_spotify_cdn_ids_are_accepted(self):
         evil = [{"url": "https://evil.example/image/" + H64, "width": 64},
@@ -185,13 +209,18 @@ class NowPlayingWireTests(unittest.TestCase):
 
     def test_worst_case_fits_nanopb_buffers(self):
         worst = {"status": "playing", "title": "x" * 100, "artist": "y" * 100, "art": H64}
-        clean = spotify.parse_playing(200, track(name=worst["title"], artists=[{"name": worst["artist"]}]))
-        msg = wire.now_playing(clean, clean)
+        data = track(name=worst["title"], artists=[{"name": worst["artist"]}],
+                     album={"images": images(), "name": "z" * 100}, duration_ms=0xFFFFFFFF)
+        data["progress_ms"] = 0xFFFFFFFF
+        clean = spotify.parse_playing(200, data, sampled_at_ms=1_700_000_000_123)
+        msg = wire.now_playing(clean, clean, details=True)
         for side in (msg.left, msg.right):
             self.assertLessEqual(len(side.title.encode()), 60)    # Listener.title max_size:61
             self.assertLessEqual(len(side.artist.encode()), 60)
+            self.assertLessEqual(len(side.collection.encode()), 60)
             self.assertLessEqual(len(side.art_id), 40)
-        self.assertLessEqual(len(msg.SerializeToString()), 2 * (2 + 2 + 63 + 63 + 42) + 4)
+            self.assertLessEqual(len(side.detail_art_id), 40)
+        self.assertLessEqual(len(msg.SerializeToString()), 600)  # nanopb NowPlaying_size
 
 
 if __name__ == "__main__":

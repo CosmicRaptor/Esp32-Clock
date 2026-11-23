@@ -29,6 +29,7 @@
 #include <mbedtls/platform.h>
 #include <pb_decode.h>
 #include <pb_encode.h>
+#include <sys/time.h>
 #include <time.h>
 
 #include <algorithm>
@@ -53,7 +54,7 @@
 namespace portal {
 namespace {
 
-constexpr uint32_t POLL_MS = 30 * 1000;         // the one heartbeat: state + now playing. Mostly a bare 304
+constexpr uint32_t POLL_MS = 30 * 1000;         // one heartbeat for state and now playing
 constexpr uint32_t BACKOFF_MIN_MS = 10 * 1000;  // after a failed poll: 10 s, doubling up to FAIL_MAX_MS
 constexpr uint32_t FAIL_MAX_MS = 60 * 1000;
 constexpr int PHOTO_TRIES_FAST = 6;             // photo pending (404 while KV propagates, or a bad download): every poll...
@@ -89,9 +90,14 @@ char photoIdStr[13] = "";
 uint32_t rev = 0;       // the portal's own things changed (note, photo, alarms)
 uint32_t okAt = 0;      // millis() of the last answer from the portal (200 or 304); 0 = none yet
 uint32_t npRev = 0;     // what is playing, or a cover, changed
+uint32_t positionAt[2] = {};  // local monotonic time of each playback sample
 uint8_t *coverBuf[2] = {nullptr, nullptr};  // 64x64 JPEGs for the left / right side of the strip
 size_t coverLen[2] = {0, 0};
 char coverIdStr[2][41] = {"", ""};
+char requestedPlayerArt[41] = "";
+char playerArtId[41] = "";
+uint8_t *playerArt = nullptr;
+size_t playerArtSize = 0;
 
 // ---- task-private ----
 // Volume is guarded by app::Lock. Pending local edits survive reboot and beat cloud values
@@ -484,7 +490,7 @@ void logState(const State &st, const String &tag, size_t bytes) {
 enum class Poll { Changed, Unchanged, Failed };
 
 Poll fetchState(Conn &c) {
-  String q = "/api/device/state?alarms=all&fw=" + String(FW_VERSION) + "&rssi=" + String(WiFi.RSSI());
+  String q = "/api/device/state?alarms=all&player=details&fw=" + String(FW_VERSION) + "&rssi=" + String(WiFi.RSSI());
   {
     app::Lock lock;
     if (const tz::Zone *z = settings::timezone()) q += "&tz=" + urlEncode(z->id);
@@ -546,11 +552,17 @@ Poll fetchState(Conn &c) {
       debuglog::printf("[portal] state: decode failed: %s\n", PB_GET_ERROR(&in));
     } else {
       etag = newTag;
-      // A 200 is either the portal's own things changing (version), or a new song. Only the former
-      // is worth a flash write and a redraw of the note/photo; the latter just moves the strip.
+      // Playback updates, including progress samples, don't need a state save or note/photo redraw.
       bool portalChanged = !have || next->version != cur.version || next->all_alarms != cur.all_alarms ||
         next->alarms_count != cur.alarms_count || memcmp(next->alarms, cur.alarms, sizeof cur.alarms) != 0;
       bool playingChanged = !have || memcmp(&next->nowplaying, &cur.nowplaying, sizeof next->nowplaying) != 0;
+      const Listener *before[] = {&cur.nowplaying.left, &cur.nowplaying.right};
+      const Listener *after[] = {&next->nowplaying.left, &next->nowplaying.right};
+      bool trackChanged = false;
+      for (int i = 0; i < 2; ++i) {
+        trackChanged |= before[i]->status != after[i]->status || strcmp(before[i]->title, after[i]->title) != 0 ||
+                        strcmp(before[i]->artist, after[i]->artist) != 0;
+      }
       bool confirming;
       {
         app::Lock lock;
@@ -564,6 +576,19 @@ Poll fetchState(Conn &c) {
       {
         app::Lock lock;
         if (confirming && saved && !confirmAlarmEdits(next->version)) etag = "";
+        for (int i = 0; i < 2; ++i) {
+          const uint64_t sample = after[i]->position.sampled_at_ms;
+          if (sample && sample != before[i]->position.sampled_at_ms) {
+            // The Worker can return its last good answer after an upstream error.
+            // When wall time is available, preserve the age of that sample on receipt.
+            timeval wall = {};
+            gettimeofday(&wall, nullptr);
+            const uint64_t wallMs = uint64_t(wall.tv_sec) * 1000 + wall.tv_usec / 1000;
+            const uint32_t age = wall.tv_sec > 1700000000 && wallMs > sample
+              ? std::min<uint64_t>(wallMs - sample, 120000) : 0;
+            positionAt[i] = millis() - age;
+          }
+        }
         memcpy(&cur, next, sizeof(State));
         rebuildAlarms();
         have = true;
@@ -572,7 +597,7 @@ Poll fetchState(Conn &c) {
         if (playingChanged) npRev++;
       }
       const auto &np = next->nowplaying;
-      if (playingChanged)
+      if (trackChanged)
         debuglog::printf("[portal] now playing: L=%s \"%s\" - %s | R=%s \"%s\" - %s\n", statusName(np.left.status), np.left.title,
                       np.left.artist, statusName(np.right.status), np.right.title, np.right.artist);
       if (portalChanged) logState(*next, newTag, sink.len);
@@ -752,6 +777,7 @@ void syncSounds(Conn &c) {
 
 constexpr uint32_t COVER_RETRY_MS = 15 * 1000;
 constexpr size_t MAX_COVER_BYTES = 24 * 1024;
+constexpr size_t MAX_PLAYER_COVER_BYTES = 80000;
 constexpr size_t ART_ID_LEN = 40;
 
 uint32_t coverTriedAt[2] = {0, 0};  // task-private
@@ -761,6 +787,25 @@ bool validArtId(const char *id) {
   for (size_t i = 0; i < ART_ID_LEN; i++)
     if (!isxdigit((unsigned char)id[i])) return false;
   return true;
+}
+
+uint8_t *downloadCover(Conn &c, const String &path, size_t cap, size_t &size) {
+  auto *buf = static_cast<uint8_t *>(heap_caps_malloc(cap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!buf) return nullptr;
+  int code = c.get(path);
+  if (code == HTTP_CODE_OK) {
+    BufSink sink(buf, cap);
+    int got = writeResponse(c, sink);
+    if (got >= 0 && !sink.overflow && sink.len > 4 && buf[0] == 0xFF && buf[1] == 0xD8) {
+      c.finish();
+      size = sink.len;
+      return buf;
+    }
+  }
+  c.close();
+  free(buf);
+  debuglog::printf("[portal] cover download failed (HTTP %d), will retry\n", code);
+  return nullptr;
 }
 
 // Makes each side's downloaded cover match the art_id in the latest state.
@@ -786,33 +831,47 @@ void syncCovers(Conn &c) {
     if (coverTriedAt[side] && millis() - coverTriedAt[side] < COVER_RETRY_MS) continue;
     coverTriedAt[side] = millis() | 1;
 
-    uint8_t *buf = bigAlloc(MAX_COVER_BYTES);
+    size_t size = 0;
+    uint8_t *buf = downloadCover(c, String("/api/device/art/") + want, MAX_COVER_BYTES, size);
     if (!buf) continue;
-    int code = c.get(String("/api/device/art/") + want);
-    bool ok = false;
-    if (code == HTTP_CODE_OK) {
-      BufSink sink(buf, MAX_COVER_BYTES);
-      int got = writeResponse(c, sink);
-      if (got >= 0 && !sink.overflow && sink.len > 4 && buf[0] == 0xFF && buf[1] == 0xD8) {
-        c.finish();
-        app::Lock lock;
-        free(coverBuf[side]);
-        coverBuf[side] = buf;
-        coverLen[side] = sink.len;
-        strlcpy(coverIdStr[side], want, sizeof coverIdStr[side]);
-        npRev++;
-        buf = nullptr;  // owned by the state now
-        ok = true;
-        coverTriedAt[side] = 0;
-        debuglog::printf("[portal] cover %.8s: %u bytes (side %d)\n", want, (unsigned)sink.len, side);
-      }
-    }
-    if (!ok) {
-      debuglog::printf("[portal] cover %.8s: failed (HTTP %d), will retry\n", want, code);
-      c.close();
-    }
-    free(buf);
+    app::Lock lock;
+    free(coverBuf[side]);
+    coverBuf[side] = buf;
+    coverLen[side] = size;
+    strlcpy(coverIdStr[side], want, sizeof coverIdStr[side]);
+    npRev++;
+    coverTriedAt[side] = 0;
+    debuglog::printf("[portal] cover %.8s: %u bytes (side %d)\n", want, (unsigned)size, side);
   }
+}
+
+void syncPlayerCover(Conn &c) {
+  static char lastTried[ART_ID_LEN + 1] = "";
+  static uint32_t triedAt = 0;
+  char want[ART_ID_LEN + 1];
+  {
+    app::Lock lock;
+    if (!requestedPlayerArt[0] || strcmp(playerArtId, requestedPlayerArt) == 0) return;
+    strlcpy(want, requestedPlayerArt, sizeof want);
+  }
+  if (strcmp(lastTried, want) == 0 && millis() - triedAt < COVER_RETRY_MS) return;
+  strlcpy(lastTried, want, sizeof lastTried);
+  triedAt = millis();
+
+  size_t size = 0;
+  uint8_t *buf = downloadCover(c, String("/api/device/art/") + want + "?size=detail", MAX_PLAYER_COVER_BYTES, size);
+  if (!buf) return;
+  app::Lock lock;
+  if (strcmp(requestedPlayerArt, want) != 0) {
+    free(buf);
+    lastTried[0] = 0;
+    return;
+  }
+  free(playerArt);
+  playerArt = buf;
+  playerArtSize = size;
+  strlcpy(playerArtId, want, sizeof playerArtId);
+  npRev++;
 }
 
 // ---------- clock faces ----------
@@ -1850,6 +1909,7 @@ void task(void *) {
     if (nextAt && (int32_t)(millis() - nextAt) < 0) {
       // Between polls, still pick up a changed /sounds folder promptly.
       if (soundsDue()) syncSounds(c);
+      if (reachable) syncPlayerCover(c);
       continue;
     }
 
@@ -1880,6 +1940,7 @@ void task(void *) {
       }
       syncWeather(c);
       syncCovers(c);
+      syncPlayerCover(c);
       if (syncFaces(c)) wait = FACES_MORE_MS;  // more faces or images to fetch: don't wait out the whole interval
       syncSounds(c);
       syncAlarmUploads(c);
@@ -1922,6 +1983,15 @@ uint32_t revision() { return rev; }
 
 bool nowPlayingFresh() { return have && okAt && millis() - okAt < NP_STALE_MS; }
 const NowPlaying &nowPlaying() { return cur.nowplaying; }
+uint32_t playbackSampleAge(int side) { return millis() - positionAt[side]; }
+void requestPlayerCover(const char *id) {
+  strlcpy(requestedPlayerArt, id && validArtId(id) ? id : "", sizeof requestedPlayerArt);
+}
+const uint8_t *playerCover(const char *id, size_t &size) {
+  if (!id[0] || strcmp(id, playerArtId) != 0) return nullptr;
+  size = playerArtSize;
+  return playerArt;
+}
 const uint8_t *cover(int side, size_t *size) {
   side = side ? 1 : 0;
   if (size) *size = coverLen[side];

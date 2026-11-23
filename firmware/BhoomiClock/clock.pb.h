@@ -90,11 +90,21 @@ typedef struct _bhoomi_clock_v1_SoundList {
     char names[100][65]; /* file names only, no folder */
 } bhoomi_clock_v1_SoundList;
 
+typedef struct _bhoomi_clock_v1_PlaybackPosition {
+    uint32_t elapsed_ms;
+    uint64_t sampled_at_ms; /* Worker sampling time, 0 for paused playback */
+} bhoomi_clock_v1_PlaybackPosition;
+
 typedef struct _bhoomi_clock_v1_Listener {
     bhoomi_clock_v1_Listener_Status status;
     char title[61]; /* up to 60 characters */
     char artist[61]; /* up to 60 characters */
     char art_id[41]; /* 40 hex chars; GET /api/device/art/<art_id> is a 64x64 baseline JPEG. Empty: no cover */
+    char collection[61]; /* album or podcast show name, up to 60 characters */
+    uint32_t duration_ms; /* 0 when unknown */
+    bool has_position;
+    bhoomi_clock_v1_PlaybackPosition position; /* absent when Spotify didn't report a position */
+    char detail_art_id[41]; /* optional larger cover, fetched only in the expanded player */
 } bhoomi_clock_v1_Listener;
 
 /* What each of the two people is listening to on Spotify, for the little strip on the clock face.
@@ -114,7 +124,7 @@ typedef struct _bhoomi_clock_v1_FaceRef {
 } bhoomi_clock_v1_FaceRef;
 
 /* GET /api/device/state  (Content-Type: application/x-protobuf)
- Polled every ~10 s. Sent whenever the ETag changes (the portal version, or a new song); otherwise the clock
+ Polled every ~30 s. Sent whenever the ETag changes (the portal version or playback data); otherwise the clock
  gets an empty 304. */
 typedef struct _bhoomi_clock_v1_DeviceState {
     uint32_t version; /* bumped on every change in the portal */
@@ -126,7 +136,7 @@ typedef struct _bhoomi_clock_v1_DeviceState {
     bhoomi_clock_v1_Alarm alarms[20]; /* sorted by time; enabled only unless all_alarms is true */
     bool has_nowplaying;
     bhoomi_clock_v1_NowPlaying nowplaying; /* what the two people are playing on Spotify; always set. It changes on its own */
-    /* (not with `version`), but it is part of the ETag, so a new song is a new 200. */
+    /* independently of `version` and is part of the ETag. */
     pb_size_t faces_count;
     bhoomi_clock_v1_FaceRef faces[12]; /* the clock faces, in priority order (earlier wins). Only ids and revisions: fetch a */
     /* face with GET /api/device/face/<id> when its `rev` is new or changed. */
@@ -349,6 +359,7 @@ extern "C" {
 
 
 
+
 #define bhoomi_clock_v1_TextSlot_align_ENUMTYPE bhoomi_clock_v1_TextSlot_Align
 #define bhoomi_clock_v1_TextSlot_format_ENUMTYPE bhoomi_clock_v1_TextSlot_DateFormat
 
@@ -375,7 +386,8 @@ extern "C" {
 #define bhoomi_clock_v1_Date_init_default        {0, 0, 0}
 #define bhoomi_clock_v1_SoundList_init_default   {0, {"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""}}
 #define bhoomi_clock_v1_NowPlaying_init_default  {false, bhoomi_clock_v1_Listener_init_default, false, bhoomi_clock_v1_Listener_init_default}
-#define bhoomi_clock_v1_Listener_init_default    {_bhoomi_clock_v1_Listener_Status_MIN, "", "", ""}
+#define bhoomi_clock_v1_Listener_init_default    {_bhoomi_clock_v1_Listener_Status_MIN, "", "", "", "", 0, false, bhoomi_clock_v1_PlaybackPosition_init_default, ""}
+#define bhoomi_clock_v1_PlaybackPosition_init_default {0, 0}
 #define bhoomi_clock_v1_FaceRef_init_default     {"", ""}
 #define bhoomi_clock_v1_SpriteRef_init_default   {"", 0, 0, 0}
 #define bhoomi_clock_v1_TextSlot_init_default    {0, 0, 0, 0, 0, 0, _bhoomi_clock_v1_TextSlot_Align_MIN, _bhoomi_clock_v1_TextSlot_DateFormat_MIN}
@@ -398,7 +410,8 @@ extern "C" {
 #define bhoomi_clock_v1_Date_init_zero           {0, 0, 0}
 #define bhoomi_clock_v1_SoundList_init_zero      {0, {"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""}}
 #define bhoomi_clock_v1_NowPlaying_init_zero     {false, bhoomi_clock_v1_Listener_init_zero, false, bhoomi_clock_v1_Listener_init_zero}
-#define bhoomi_clock_v1_Listener_init_zero       {_bhoomi_clock_v1_Listener_Status_MIN, "", "", ""}
+#define bhoomi_clock_v1_Listener_init_zero       {_bhoomi_clock_v1_Listener_Status_MIN, "", "", "", "", 0, false, bhoomi_clock_v1_PlaybackPosition_init_zero, ""}
+#define bhoomi_clock_v1_PlaybackPosition_init_zero {0, 0}
 #define bhoomi_clock_v1_FaceRef_init_zero        {"", ""}
 #define bhoomi_clock_v1_SpriteRef_init_zero      {"", 0, 0, 0}
 #define bhoomi_clock_v1_TextSlot_init_zero       {0, 0, 0, 0, 0, 0, _bhoomi_clock_v1_TextSlot_Align_MIN, _bhoomi_clock_v1_TextSlot_DateFormat_MIN}
@@ -433,10 +446,16 @@ extern "C" {
 #define bhoomi_clock_v1_Alarm_sound_tag          7
 #define bhoomi_clock_v1_Alarm_disabled_tag       8
 #define bhoomi_clock_v1_SoundList_names_tag      1
+#define bhoomi_clock_v1_PlaybackPosition_elapsed_ms_tag 1
+#define bhoomi_clock_v1_PlaybackPosition_sampled_at_ms_tag 2
 #define bhoomi_clock_v1_Listener_status_tag      1
 #define bhoomi_clock_v1_Listener_title_tag       2
 #define bhoomi_clock_v1_Listener_artist_tag      3
 #define bhoomi_clock_v1_Listener_art_id_tag      4
+#define bhoomi_clock_v1_Listener_collection_tag  5
+#define bhoomi_clock_v1_Listener_duration_ms_tag 6
+#define bhoomi_clock_v1_Listener_position_tag    7
+#define bhoomi_clock_v1_Listener_detail_art_id_tag 8
 #define bhoomi_clock_v1_NowPlaying_left_tag      1
 #define bhoomi_clock_v1_NowPlaying_right_tag     2
 #define bhoomi_clock_v1_FaceRef_id_tag           1
@@ -618,9 +637,20 @@ X(a, STATIC,   OPTIONAL, MESSAGE,  right,             2)
 X(a, STATIC,   SINGULAR, UENUM,    status,            1) \
 X(a, STATIC,   SINGULAR, STRING,   title,             2) \
 X(a, STATIC,   SINGULAR, STRING,   artist,            3) \
-X(a, STATIC,   SINGULAR, STRING,   art_id,            4)
+X(a, STATIC,   SINGULAR, STRING,   art_id,            4) \
+X(a, STATIC,   SINGULAR, STRING,   collection,        5) \
+X(a, STATIC,   SINGULAR, UINT32,   duration_ms,       6) \
+X(a, STATIC,   OPTIONAL, MESSAGE,  position,          7) \
+X(a, STATIC,   SINGULAR, STRING,   detail_art_id,     8)
 #define bhoomi_clock_v1_Listener_CALLBACK NULL
 #define bhoomi_clock_v1_Listener_DEFAULT NULL
+#define bhoomi_clock_v1_Listener_position_MSGTYPE bhoomi_clock_v1_PlaybackPosition
+
+#define bhoomi_clock_v1_PlaybackPosition_FIELDLIST(X, a) \
+X(a, STATIC,   SINGULAR, UINT32,   elapsed_ms,        1) \
+X(a, STATIC,   SINGULAR, UINT64,   sampled_at_ms,     2)
+#define bhoomi_clock_v1_PlaybackPosition_CALLBACK NULL
+#define bhoomi_clock_v1_PlaybackPosition_DEFAULT NULL
 
 #define bhoomi_clock_v1_FaceRef_FIELDLIST(X, a) \
 X(a, STATIC,   SINGULAR, STRING,   id,                1) \
@@ -811,6 +841,7 @@ extern const pb_msgdesc_t bhoomi_clock_v1_Date_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_SoundList_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_NowPlaying_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_Listener_msg;
+extern const pb_msgdesc_t bhoomi_clock_v1_PlaybackPosition_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_FaceRef_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_SpriteRef_msg;
 extern const pb_msgdesc_t bhoomi_clock_v1_TextSlot_msg;
@@ -836,6 +867,7 @@ extern const pb_msgdesc_t bhoomi_clock_v1_Management_msg;
 #define bhoomi_clock_v1_SoundList_fields &bhoomi_clock_v1_SoundList_msg
 #define bhoomi_clock_v1_NowPlaying_fields &bhoomi_clock_v1_NowPlaying_msg
 #define bhoomi_clock_v1_Listener_fields &bhoomi_clock_v1_Listener_msg
+#define bhoomi_clock_v1_PlaybackPosition_fields &bhoomi_clock_v1_PlaybackPosition_msg
 #define bhoomi_clock_v1_FaceRef_fields &bhoomi_clock_v1_FaceRef_msg
 #define bhoomi_clock_v1_SpriteRef_fields &bhoomi_clock_v1_SpriteRef_msg
 #define bhoomi_clock_v1_TextSlot_fields &bhoomi_clock_v1_TextSlot_msg
@@ -856,21 +888,22 @@ extern const pb_msgdesc_t bhoomi_clock_v1_Management_msg;
 #define BHOOMI_CLOCK_V1_CLOCK_PB_H_MAX_SIZE      bhoomi_clock_v1_Face_size
 #define bhoomi_clock_v1_Alarm_size               283
 #define bhoomi_clock_v1_Date_size                18
-#define bhoomi_clock_v1_DeviceState_size         6991
+#define bhoomi_clock_v1_DeviceState_size         7249
 #define bhoomi_clock_v1_Emitter_size             186
 #define bhoomi_clock_v1_FaceRef_size             28
 #define bhoomi_clock_v1_FaceWeatherVariant_size  4525
 #define bhoomi_clock_v1_Face_size                14415
 #define bhoomi_clock_v1_Keyframe_size            12
 #define bhoomi_clock_v1_Layer_size               486
-#define bhoomi_clock_v1_Listener_size            168
+#define bhoomi_clock_v1_Listener_size            297
 #define bhoomi_clock_v1_Management_size          78
 #define bhoomi_clock_v1_MessageBoxSlot_size      12
 #define bhoomi_clock_v1_Motion_size              120
 #define bhoomi_clock_v1_Note_size                494
 #define bhoomi_clock_v1_NowPlayingSlot_size      46
-#define bhoomi_clock_v1_NowPlaying_size          342
+#define bhoomi_clock_v1_NowPlaying_size          600
 #define bhoomi_clock_v1_Photo_size               31
+#define bhoomi_clock_v1_PlaybackPosition_size    17
 #define bhoomi_clock_v1_Rect_size                24
 #define bhoomi_clock_v1_SoundList_size           6600
 #define bhoomi_clock_v1_SpriteRef_size           36

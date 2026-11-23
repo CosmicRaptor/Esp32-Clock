@@ -11,6 +11,8 @@
 #include "mindfulness.h"
 #include "focus_timer.h"
 #include "focus_view.h"
+#include "music_player.h"
+#include "music_view.h"
 #include "video_player.h"
 
 #include "display.h"
@@ -559,11 +561,16 @@ constexpr uint32_t NP_PAUSED_HIDE_MS = 5 * 60 * 1000;  // a song paused this lon
 const lv_color_t NP_TITLE_PHOTO = lv_color_white();
 const lv_color_t NP_ARTIST_PHOTO = lv_color_hex(0xFFB3C0);
 
+struct NpCover {
+  lv_image_dsc_t dsc = {};
+  uint8_t *px = nullptr;        // decoded RGB565 in PSRAM
+  uint32_t accent = music::DEFAULT_ACCENT;
+  char id[41] = "";
+};
+
 struct NpSide {
   lv_obj_t *half, *artBox, *artImg, *note, *col, *title, *artist;
-  lv_image_dsc_t dsc;
-  uint8_t *px = nullptr;        // decoded cover: 64x64 RGB565 in PSRAM
-  char coverId[41] = "";        // id of the cover decoded into px ("" = none)
+  NpCover art;
   char titleShown[61] = "";
   char artistShown[61] = "";
   uint32_t pausedSince = 0;
@@ -571,6 +578,19 @@ struct NpSide {
 NpSide np[2];
 lv_obj_t *npStrip, *npLaundry;
 uint32_t seenNpRev = 0;
+int musicSide = 0;
+NpCover playerArt;
+char playerArtTried[41] = "";
+
+void updateNowPlaying();
+
+void selectMusic(int side) {
+  if (pagerMoving || !inClock() || mode != Mode::Clock || focusTimer.quiet()) return;
+  closeInbox(nullptr);
+  musicSide = side;
+  musicview::open(scr, side, selectMusic);
+  updateNowPlaying();
+}
 
 void buildStrip() {
   npStrip = lv_obj_create(clockView);
@@ -583,6 +603,10 @@ void buildStrip() {
     n.half = lv_obj_create(npStrip);
     lv_obj_remove_style_all(n.half);
     lv_obj_remove_flag(n.half, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(n.half, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(n.half, [](lv_event_t *event) {
+      selectMusic(static_cast<int>(reinterpret_cast<uintptr_t>(lv_event_get_user_data(event))));
+    }, LV_EVENT_SHORT_CLICKED, reinterpret_cast<void *>(static_cast<uintptr_t>(i)));
     lv_obj_set_size(n.half, lv_pct(50), lv_pct(100));
     lv_obj_align(n.half, i ? LV_ALIGN_TOP_RIGHT : LV_ALIGN_TOP_LEFT, 0, 0);
     // the right side is the left one mirrored: cover on the outside, text on the inside, right-aligned
@@ -593,6 +617,7 @@ void buildStrip() {
     n.artBox = lv_obj_create(n.half);
     lv_obj_remove_style_all(n.artBox);
     lv_obj_remove_flag(n.artBox, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(n.artBox, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_size(n.artBox, NP_ART, NP_ART);
     lv_obj_set_style_radius(n.artBox, 7, 0);
     lv_obj_set_style_clip_corner(n.artBox, true, 0);
@@ -604,12 +629,14 @@ void buildStrip() {
     lv_label_set_text(n.note, LV_SYMBOL_AUDIO);
     lv_obj_center(n.note);
     n.artImg = lv_image_create(n.artBox);
+    lv_obj_remove_flag(n.artImg, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_size(n.artImg, NP_ART, NP_ART);
     lv_image_set_inner_align(n.artImg, LV_IMAGE_ALIGN_STRETCH);  // 64x64 -> 38x38
     lv_obj_align(n.artImg, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_add_flag(n.artImg, LV_OBJ_FLAG_HIDDEN);
 
     n.col = box(n.half, LV_FLEX_FLOW_COLUMN);
+    lv_obj_remove_flag(n.col, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_size(n.col, 100, LV_SIZE_CONTENT);
     lv_text_align_t al = i ? LV_TEXT_ALIGN_RIGHT : LV_TEXT_ALIGN_LEFT;
     n.title = label(n.col, &lv_font_montserrat_14, INK, al);
@@ -670,13 +697,26 @@ void placeStrip() {
   }
 }
 
-// Decodes a side's 64x64 cover into its own PSRAM buffer. Called with app::Lock held.
-bool decodeCover(NpSide &n, const uint8_t *jpg, size_t len, const char *id) {
+void releaseCover(NpCover &art, lv_obj_t *thumbnail = nullptr) {
+  if (!art.px) return;
+  musicview::detachCover(&art.dsc);
+  if (thumbnail) {
+    lv_image_set_src(thumbnail, nullptr);
+    show(thumbnail, false);
+  }
+  lv_image_cache_drop(&art.dsc);
+  free(art.px);
+  art.px = nullptr;
+  art.id[0] = 0;
+}
+
+// The large Spotify cover is decoded at half size (typically 150x150 for a 112px tile).
+bool decodeCover(NpCover &art, const uint8_t *jpg, size_t len, const char *id, lv_obj_t *thumbnail = nullptr) {
   esp_jpeg_image_cfg_t cfg = {};
   cfg.indata = (uint8_t *)jpg;
   cfg.indata_size = len;
   cfg.out_format = JPEG_IMAGE_FORMAT_RGB565;
-  cfg.out_scale = JPEG_IMAGE_SCALE_0;
+  cfg.out_scale = thumbnail ? JPEG_IMAGE_SCALE_0 : JPEG_IMAGE_SCALE_1_2;
   esp_jpeg_image_output_t info = {};
   if (esp_jpeg_get_image_info(&cfg, &info) != ESP_OK || !info.width || !info.height || info.output_len > 64 * 1024) {
     debuglog::printf("[ui] cover %.8s: not a decodable JPEG\n", id);
@@ -691,17 +731,22 @@ bool decodeCover(NpSide &n, const uint8_t *jpg, size_t len, const char *id) {
     free(px);
     return false;
   }
-  memset(&n.dsc, 0, sizeof n.dsc);
-  n.dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
-  n.dsc.header.cf = LV_COLOR_FORMAT_RGB565;
-  n.dsc.header.w = info.width;
-  n.dsc.header.h = info.height;
-  n.dsc.header.stride = info.width * 2;
-  n.dsc.data_size = info.output_len;
-  n.dsc.data = px;
-  lv_image_set_src(n.artImg, &n.dsc);
-  free(n.px);
-  n.px = px;
+  releaseCover(art, thumbnail);
+  art.dsc = {};
+  art.dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+  art.dsc.header.cf = LV_COLOR_FORMAT_RGB565;
+  art.dsc.header.w = info.width;
+  art.dsc.header.h = info.height;
+  art.dsc.header.stride = info.width * 2;
+  art.dsc.data_size = info.output_len;
+  art.dsc.data = px;
+  art.px = px;
+  strlcpy(art.id, id, sizeof art.id);
+  art.accent = music::coverAccent(reinterpret_cast<const uint16_t *>(px), size_t(info.width) * info.height);
+  if (thumbnail) {
+    lv_image_set_src(thumbnail, &art.dsc);
+    show(thumbnail, true);
+  }
   return true;
 }
 
@@ -724,18 +769,9 @@ void applyNowPlaying() {
     const uint8_t *jpg = portal::cover(i, &len);
     const char *id = portal::coverId(i);
     if (!jpg || !len) {  // no cover (yet): the pink note stays
-      if (n.coverId[0]) {
-        lv_image_set_src(n.artImg, nullptr);
-        free(n.px);
-        n.px = nullptr;
-        n.coverId[0] = 0;
-        lv_obj_add_flag(n.artImg, LV_OBJ_FLAG_HIDDEN);
-      }
-    } else if (strcmp(n.coverId, id) != 0) {
-      if (decodeCover(n, jpg, len, id)) {
-        strlcpy(n.coverId, id, sizeof n.coverId);
-        lv_obj_remove_flag(n.artImg, LV_OBJ_FLAG_HIDDEN);
-      }
+      releaseCover(n.art, n.artImg);
+    } else if (strcmp(n.art.id, id) != 0) {
+      decodeCover(n.art, jpg, len, id, n.artImg);
     }
   }
 }
@@ -745,6 +781,31 @@ bool laundryDay() {
   time_t now = time(nullptr);
   struct tm local;
   return localtime_r(&now, &local) && (local.tm_wday == 1 || local.tm_wday == 4);
+}
+
+void requestPlayerArt(const char *id) {
+  portal::requestPlayerCover(id);
+  if (!id) {
+    releaseCover(playerArt);
+    playerArtTried[0] = 0;
+  }
+}
+
+void updateMusicPlayer(const portal::Listener *track) {
+  const char *want = track && track->detail_art_id[0] ? track->detail_art_id : nullptr;
+  requestPlayerArt(want);
+  if (want && strcmp(playerArtTried, want) != 0) {
+    size_t len = 0;
+    if (const uint8_t *jpg = portal::playerCover(want, len)) {
+      strlcpy(playerArtTried, want, sizeof playerArtTried);
+      decodeCover(playerArt, jpg, len, want);
+    }
+  }
+  const auto &thumbnail = np[musicSide].art;
+  const NpCover *art = track && thumbnail.px && strcmp(thumbnail.id, track->art_id) == 0 ? &thumbnail : nullptr;
+  if (want && playerArt.px && strcmp(playerArt.id, want) == 0) art = &playerArt;
+  musicview::update(track, art ? &art->dsc : nullptr, art ? art->accent : music::DEFAULT_ACCENT,
+                    portal::playbackSampleAge(musicSide));
 }
 
 // Shows or hides each side, the reminder, and the strip itself. Runs with the clock's 250 ms tick.
@@ -758,6 +819,7 @@ void updateNowPlaying() {
                            now.right.status == bhoomi_clock_v1_Listener_Status_PLAYING);
   bool laundry = stripEnabled && !playing && laundryDay();
   bool any = false;
+  bool musicAvailable = false;
   for (int i = 0; i < 2; i++) {
     NpSide &n = np[i];
     int st = fresh ? (int)(i ? now.right.status : now.left.status) : bhoomi_clock_v1_Listener_Status_OFF;
@@ -768,6 +830,7 @@ void updateNowPlaying() {
       n.pausedSince = 0;
     }
     bool on = !laundry && st != bhoomi_clock_v1_Listener_Status_OFF;
+    if (i == musicSide) musicAvailable = st != bhoomi_clock_v1_Listener_Status_OFF;
     any = any || on;
     if (on == !lv_obj_has_flag(n.half, LV_OBJ_FLAG_HIDDEN) &&
         (st == bhoomi_clock_v1_Listener_Status_PAUSED) == (lv_obj_get_style_opa(n.half, 0) < LV_OPA_COVER))
@@ -784,6 +847,9 @@ void updateNowPlaying() {
     show(npStrip, want);
     debuglog::printf("[ui] now playing strip %s\n", want ? "shown" : "hidden");
   }
+  if (!stripEnabled) musicview::close();
+  if (musicview::active()) updateMusicPlayer(musicAvailable ? (musicSide ? &now.right : &now.left) : nullptr);
+  else requestPlayerArt(nullptr);
 }
 
 // ---------- alarm: full-screen overlay + sound until touched ----------
@@ -1051,9 +1117,11 @@ void showMsg(bool busy, const char *title, const String &body) {
 // available so returning to the clock never needs a network round trip.
 void unloadHome() {
   if (!homeLoaded) return;
+  musicview::close();
+  requestPlayerArt(nullptr);
   closeInbox(nullptr); show(noteButton, false);
+  for (auto &n : np) { releaseCover(n.art, n.artImg); n = NpSide{}; }
   lv_obj_delete(npStrip); npStrip = npLaundry = nullptr; npVisible = false;
-  for (auto &n : np) { free(n.px); n = NpSide{}; }
   faceview::clear(); faceShown = false;
   removePhoto();
   lv_obj_delete(clockView); lv_obj_delete(photoView);
@@ -1407,7 +1475,8 @@ void loop() {
     localtime_r(&now, &t);
     if (timeValid() && t.tm_min != faceCheckedMin) refreshFace();
   }
-  if (!pagerMoving && homeLoaded && mode == Mode::Clock && current == View::Face && millis() - lastFaceTick >= FACE_TICK_MS) {  // the face's own, faster animation tick
+  if (!pagerMoving && homeLoaded && mode == Mode::Clock && current == View::Face && !musicview::active() &&
+      millis() - lastFaceTick >= FACE_TICK_MS) {  // the face's own, faster animation tick
     lastFaceTick = millis();
     time_t now = time(nullptr);
     struct tm t;

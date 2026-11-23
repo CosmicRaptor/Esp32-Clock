@@ -63,8 +63,11 @@ uint32_t revision();
 // Side 0 is the left of the strip (the first person), side 1 the right.
 bool nowPlayingFresh();                      // the portal answered in the last 2 minutes (else: show nothing)
 const NowPlaying &nowPlaying();              // all zero (= both sides OFF) until the first poll
+uint32_t playbackSampleAge(int side);        // elapsed since the listener's nonzero position.sampled_at_ms
 const uint8_t *cover(int side, size_t *size);  // that side's 64x64 baseline JPEG, or nullptr (none / not downloaded yet)
 const char *coverId(int side);               // art_id of the JPEG cover() returns, "" when none
+void requestPlayerCover(const char *id);     // nullptr cancels demand from the expanded player
+const uint8_t *playerCover(const char *id, size_t &size);  // larger JPEG only if its ID matches
 uint32_t nowPlayingRevision();               // changes when the answer or a cover changes
 
 // ---- clock faces (same locking rule as above) ----

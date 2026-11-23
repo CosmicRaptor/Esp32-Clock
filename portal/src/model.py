@@ -44,6 +44,7 @@ LABEL_MAX = 40         # characters (<= 160 UTF-8 bytes)
 SOUND_MAX = 64         # UTF-8 bytes
 MAX_ALARMS = 20
 MAX_SOUNDS = 100
+SPOTIFY_TEXT_MAX = 60   # ASCII bytes in Listener.title, artist and collection
 
 IMAGE_W, IMAGE_H = 320, 240      # the clock's screen, landscape
 IMAGE_MAX_BYTES = 200_000        # a 320x240 JPEG at q≈0.85 is ~20-45 KB
