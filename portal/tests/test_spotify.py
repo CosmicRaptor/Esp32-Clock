@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import auth  # noqa: E402
 import clock_pb2 as pb  # noqa: E402
+import model  # noqa: E402
 import spotify  # noqa: E402
 import wire  # noqa: E402
 
@@ -37,6 +38,17 @@ class ParsePlayingTests(unittest.TestCase):
         d = track()
         d["is_playing"] = False
         self.assertEqual(spotify.parse_playing(200, d)["status"], "paused")
+
+    def test_share_url_is_canonical_and_limited_to_spotify_tracks_and_episodes(self):
+        for kind in ("track", "episode"):
+            url = f"https://open.spotify.com/{kind}/{'a' * 22}"
+            data = track(type=kind, external_urls={"spotify": url + "?si=tracking"})
+            self.assertEqual(spotify.parse_playing(200, data)["spotify_url"], url)
+        for url in (None, "http://open.spotify.com/track/" + "a" * 22,
+                    "https://open.spotify.com.evil.test/track/" + "a" * 22,
+                    "https://open.spotify.com/album/" + "a" * 22,
+                    "https://open.spotify.com/track/" + "a" * 23):
+            self.assertNotIn("spotify_url", spotify.parse_playing(200, track(external_urls={"spotify": url})))
 
     def test_nothing_playing(self):
         self.assertEqual(spotify.parse_playing(204, None)["status"], "off")
@@ -210,7 +222,8 @@ class NowPlayingWireTests(unittest.TestCase):
     def test_worst_case_fits_nanopb_buffers(self):
         worst = {"status": "playing", "title": "x" * 100, "artist": "y" * 100, "art": H64}
         data = track(name=worst["title"], artists=[{"name": worst["artist"]}],
-                     album={"images": images(), "name": "z" * 100}, duration_ms=0xFFFFFFFF)
+                     album={"images": images(), "name": "z" * 100}, duration_ms=0xFFFFFFFF,
+                     external_urls={"spotify": "https://open.spotify.com/episode/" + "a" * 22})
         data["progress_ms"] = 0xFFFFFFFF
         clean = spotify.parse_playing(200, data, sampled_at_ms=1_700_000_000_123)
         msg = wire.now_playing(clean, clean, details=True)
@@ -220,7 +233,8 @@ class NowPlayingWireTests(unittest.TestCase):
             self.assertLessEqual(len(side.collection.encode()), 60)
             self.assertLessEqual(len(side.art_id), 40)
             self.assertLessEqual(len(side.detail_art_id), 40)
-        self.assertLessEqual(len(msg.SerializeToString()), 600)  # nanopb NowPlaying_size
+            self.assertEqual(len(side.spotify_url), model.SPOTIFY_URL_MAX)
+        self.assertLessEqual(len(msg.SerializeToString()), 714)  # nanopb NowPlaying_size
 
 
 if __name__ == "__main__":

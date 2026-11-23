@@ -45,6 +45,7 @@ SOUND_MAX = 64         # UTF-8 bytes
 MAX_ALARMS = 20
 MAX_SOUNDS = 100
 SPOTIFY_TEXT_MAX = 60   # ASCII bytes in Listener.title, artist and collection
+SPOTIFY_URL_MAX = 55    # canonical open.spotify.com episode URL in Listener.spotify_url
 
 IMAGE_W, IMAGE_H = 320, 240      # the clock's screen, landscape
 IMAGE_MAX_BYTES = 200_000        # a 320x240 JPEG at q≈0.85 is ~20-45 KB

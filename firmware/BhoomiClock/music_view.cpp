@@ -18,7 +18,9 @@ constexpr int PROGRESS_WIDTH = 288;
 lv_obj_t *root;
 lv_obj_t *tabs[2];
 lv_obj_t *coverBox, *cover, *status, *title, *artist, *collection;
+lv_obj_t *qrBadge, *qrOverlay;
 lv_obj_t *trackLine, *fill, *elapsed, *duration;
+char spotifyUrl[sizeof(bhoomi_clock_v1_Listener::spotify_url)] = "";
 uint32_t shownAccent;
 int selected;
 Select chooseSide;
@@ -70,6 +72,37 @@ void show(lv_obj_t *obj, bool visible) {
   else lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
 }
 
+void showTrackQr(lv_event_t *) {
+  if (!spotifyUrl[0] || qrOverlay) return;
+  qrOverlay = panel(root, 0, 0, display::WIDTH, display::HEIGHT, 0);
+  lv_obj_set_style_bg_color(qrOverlay, BASE, 0);
+  lv_obj_add_flag(qrOverlay, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(qrOverlay, [](lv_event_t *) {
+    lv_obj_delete(qrOverlay);
+    qrOverlay = nullptr;
+  }, LV_EVENT_SHORT_CLICKED, nullptr);
+
+  auto *paper = panel(qrOverlay, 64, 24, 192, 192, 0);
+  lv_obj_set_style_bg_color(paper, lv_color_white(), 0);
+  auto *qr = lv_qrcode_create(paper);
+  lv_obj_remove_flag(qr, LV_OBJ_FLAG_CLICKABLE);
+  lv_qrcode_set_size(qr, 148);
+  lv_qrcode_set_dark_color(qr, lv_color_black());
+  lv_qrcode_set_light_color(qr, lv_color_white());
+  lv_obj_center(qr);
+  if (lv_qrcode_update(qr, spotifyUrl, strlen(spotifyUrl)) != LV_RESULT_OK) {
+    lv_obj_delete(qrOverlay);
+    qrOverlay = nullptr;
+    return;
+  }
+  auto *heading = text(qrOverlay, 0, 3, display::WIDTH, &lv_font_montserrat_16, INK);
+  auto *hint = text(qrOverlay, 0, 220, display::WIDTH, &lv_font_montserrat_14, MUTED);
+  lv_obj_set_style_text_align(heading, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
+  lv_label_set_text_static(heading, "Scan to open in Spotify");
+  lv_label_set_text_static(hint, "Tap to go back");
+}
+
 void setTime(lv_obj_t *label, uint32_t ms) {
   const unsigned seconds = ms / 1000;
   char value[16];
@@ -119,14 +152,23 @@ void open(lv_obj_t *parent, int side, Select select) {
 
   coverBox = panel(root, 16, 68, 112, 112, 13);
   lv_obj_set_style_clip_corner(coverBox, true, 0);
+  lv_obj_add_event_cb(coverBox, showTrackQr, LV_EVENT_SHORT_CLICKED, nullptr);
   auto *placeholder = text(coverBox, 0, 0, 112, &lv_font_montserrat_28, INK);
   lv_obj_set_style_text_align(placeholder, LV_TEXT_ALIGN_CENTER, 0);
   lv_label_set_text_static(placeholder, LV_SYMBOL_AUDIO);
   lv_obj_center(placeholder);
   cover = lv_image_create(coverBox);
+  lv_obj_remove_flag(cover, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_size(cover, 112, 112);
   lv_image_set_inner_align(cover, LV_IMAGE_ALIGN_STRETCH);
   show(cover, false);
+  qrBadge = panel(coverBox, 73, 82, 32, 22, 6);
+  lv_obj_set_style_bg_color(qrBadge, BASE, 0);
+  auto *badgeText = text(qrBadge, 0, 0, 32, &lv_font_montserrat_14, INK);
+  lv_obj_set_style_text_align(badgeText, LV_TEXT_ALIGN_CENTER, 0);
+  lv_label_set_text_static(badgeText, "QR");
+  lv_obj_center(badgeText);
+  show(qrBadge, false);
 
   status = text(root, 145, 80, 159, &lv_font_montserrat_14, MUTED);
   title = text(root, 145, 104, 159, &lv_font_montserrat_20, INK);
@@ -148,6 +190,7 @@ void close() {
   if (!root) return;
   lv_obj_delete(root);
   root = nullptr;
+  qrOverlay = nullptr;
 }
 
 void detachCover(const lv_image_dsc_t *art) {
@@ -158,6 +201,10 @@ void detachCover(const lv_image_dsc_t *art) {
 
 void update(const bhoomi_clock_v1_Listener *track, const lv_image_dsc_t *art, uint32_t accent, uint32_t sampleAge) {
   if (!root) return;
+  strlcpy(spotifyUrl, track ? track->spotify_url : "", sizeof spotifyUrl);
+  const bool hasLink = spotifyUrl[0];
+  lv_obj_update_flag(coverBox, LV_OBJ_FLAG_CLICKABLE, hasLink);
+  show(qrBadge, hasLink);
   if (!art) accent = music::DEFAULT_ACCENT;
   if (shownAccent != accent) paintAccent(accent);
   if (lv_image_get_src(cover) != art) {

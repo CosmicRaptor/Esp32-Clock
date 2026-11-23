@@ -199,6 +199,7 @@ def now_playing(left: dict, right: dict, *, details: bool = False) -> pb.NowPlay
             if details:
                 field.collection = listening.get("collection", "")
                 field.detail_art_id = listening.get("detail_art", "")
+                field.spotify_url = listening.get("spotify_url", "")
                 field.duration_ms = listening.get("duration_ms", 0)
                 if "elapsed_ms" in listening:
                     field.position.elapsed_ms = listening["elapsed_ms"]

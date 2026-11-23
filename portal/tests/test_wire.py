@@ -266,7 +266,8 @@ class NowPlayingInStateTests(unittest.TestCase):
     def test_details_opt_in_keeps_old_device_bytes_stable(self):
         left = {"status": "playing", "title": "T", "artist": "A", "art": ""}
         detailed = {**left, "collection": "The album", "duration_ms": 60_000, "elapsed_ms": 0,
-                    "sampled_at_ms": 1_700_000_000_000, "detail_art": "b" * 40}
+                    "sampled_at_ms": 1_700_000_000_000, "detail_art": "b" * 40,
+                    "spotify_url": "https://open.spotify.com/track/" + "a" * 22}
         state = model.empty_state()
         old = wire.device_state(state, (left, left)).SerializeToString()
         self.assertEqual(old, wire.device_state(state, (detailed, detailed)).SerializeToString())
@@ -275,6 +276,7 @@ class NowPlayingInStateTests(unittest.TestCase):
         self.assertTrue(msg.nowplaying.left.HasField("position"))
         self.assertEqual(msg.nowplaying.left.position.elapsed_ms, 0)
         self.assertEqual(msg.nowplaying.left.detail_art_id, "b" * 40)
+        self.assertEqual(msg.nowplaying.left.spotify_url, detailed["spotify_url"])
         self.assertFalse(msg.nowplaying.right.HasField("position"))
 
 

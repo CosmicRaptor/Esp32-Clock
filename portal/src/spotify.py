@@ -31,6 +31,7 @@ EXPIRY_MARGIN = 60  # refresh an access token this many seconds before it runs o
 
 _ART_URL = re.compile(r"^https://i\.scdn\.co/image/([0-9a-f]{40})$")
 _ART_ID = re.compile(r"^[0-9a-f]{40}$")
+_ITEM_URL = re.compile(r"(https://open\.spotify\.com/(?:track|episode)/[A-Za-z0-9]{22})(?:[?#].*)?")
 
 OFF = {"status": "off", "title": "", "artist": "", "art": ""}
 
@@ -141,6 +142,10 @@ def parse_playing(status: int, data, *, sampled_at_ms: int = 0) -> dict:
         result["collection"] = name
     if art := pick_art(images, DETAIL_ART_MIN_PX, DETAIL_ART_MAX_PX):
         result["detail_art"] = art
+    urls = item.get("external_urls")
+    url = urls.get("spotify") if isinstance(urls, dict) else None
+    if isinstance(url, str) and (match := _ITEM_URL.fullmatch(url)):
+        result["spotify_url"] = match[1]
     duration = item.get("duration_ms")
     if type(duration) is int and 0 < duration <= 0xFFFFFFFF:
         result["duration_ms"] = duration

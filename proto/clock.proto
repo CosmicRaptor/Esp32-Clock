@@ -85,6 +85,7 @@ message Listener {
   uint32 duration_ms = 6;        // 0 when unknown
   PlaybackPosition position = 7; // absent when Spotify didn't report a position
   string detail_art_id = 8;      // optional larger cover, fetched only in the expanded player
+  string spotify_url = 9;       // optional canonical HTTPS link to the current track or episode
 }
 
 message PlaybackPosition {

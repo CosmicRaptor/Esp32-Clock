@@ -105,6 +105,7 @@ typedef struct _bhoomi_clock_v1_Listener {
     bool has_position;
     bhoomi_clock_v1_PlaybackPosition position; /* absent when Spotify didn't report a position */
     char detail_art_id[41]; /* optional larger cover, fetched only in the expanded player */
+    char spotify_url[56]; /* optional canonical HTTPS link to the current track or episode */
 } bhoomi_clock_v1_Listener;
 
 /* What each of the two people is listening to on Spotify, for the little strip on the clock face.
@@ -386,7 +387,7 @@ extern "C" {
 #define bhoomi_clock_v1_Date_init_default        {0, 0, 0}
 #define bhoomi_clock_v1_SoundList_init_default   {0, {"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""}}
 #define bhoomi_clock_v1_NowPlaying_init_default  {false, bhoomi_clock_v1_Listener_init_default, false, bhoomi_clock_v1_Listener_init_default}
-#define bhoomi_clock_v1_Listener_init_default    {_bhoomi_clock_v1_Listener_Status_MIN, "", "", "", "", 0, false, bhoomi_clock_v1_PlaybackPosition_init_default, ""}
+#define bhoomi_clock_v1_Listener_init_default    {_bhoomi_clock_v1_Listener_Status_MIN, "", "", "", "", 0, false, bhoomi_clock_v1_PlaybackPosition_init_default, "", ""}
 #define bhoomi_clock_v1_PlaybackPosition_init_default {0, 0}
 #define bhoomi_clock_v1_FaceRef_init_default     {"", ""}
 #define bhoomi_clock_v1_SpriteRef_init_default   {"", 0, 0, 0}
@@ -410,7 +411,7 @@ extern "C" {
 #define bhoomi_clock_v1_Date_init_zero           {0, 0, 0}
 #define bhoomi_clock_v1_SoundList_init_zero      {0, {"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""}}
 #define bhoomi_clock_v1_NowPlaying_init_zero     {false, bhoomi_clock_v1_Listener_init_zero, false, bhoomi_clock_v1_Listener_init_zero}
-#define bhoomi_clock_v1_Listener_init_zero       {_bhoomi_clock_v1_Listener_Status_MIN, "", "", "", "", 0, false, bhoomi_clock_v1_PlaybackPosition_init_zero, ""}
+#define bhoomi_clock_v1_Listener_init_zero       {_bhoomi_clock_v1_Listener_Status_MIN, "", "", "", "", 0, false, bhoomi_clock_v1_PlaybackPosition_init_zero, "", ""}
 #define bhoomi_clock_v1_PlaybackPosition_init_zero {0, 0}
 #define bhoomi_clock_v1_FaceRef_init_zero        {"", ""}
 #define bhoomi_clock_v1_SpriteRef_init_zero      {"", 0, 0, 0}
@@ -456,6 +457,7 @@ extern "C" {
 #define bhoomi_clock_v1_Listener_duration_ms_tag 6
 #define bhoomi_clock_v1_Listener_position_tag    7
 #define bhoomi_clock_v1_Listener_detail_art_id_tag 8
+#define bhoomi_clock_v1_Listener_spotify_url_tag 9
 #define bhoomi_clock_v1_NowPlaying_left_tag      1
 #define bhoomi_clock_v1_NowPlaying_right_tag     2
 #define bhoomi_clock_v1_FaceRef_id_tag           1
@@ -641,7 +643,8 @@ X(a, STATIC,   SINGULAR, STRING,   art_id,            4) \
 X(a, STATIC,   SINGULAR, STRING,   collection,        5) \
 X(a, STATIC,   SINGULAR, UINT32,   duration_ms,       6) \
 X(a, STATIC,   OPTIONAL, MESSAGE,  position,          7) \
-X(a, STATIC,   SINGULAR, STRING,   detail_art_id,     8)
+X(a, STATIC,   SINGULAR, STRING,   detail_art_id,     8) \
+X(a, STATIC,   SINGULAR, STRING,   spotify_url,       9)
 #define bhoomi_clock_v1_Listener_CALLBACK NULL
 #define bhoomi_clock_v1_Listener_DEFAULT NULL
 #define bhoomi_clock_v1_Listener_position_MSGTYPE bhoomi_clock_v1_PlaybackPosition
@@ -888,20 +891,20 @@ extern const pb_msgdesc_t bhoomi_clock_v1_Management_msg;
 #define BHOOMI_CLOCK_V1_CLOCK_PB_H_MAX_SIZE      bhoomi_clock_v1_Face_size
 #define bhoomi_clock_v1_Alarm_size               283
 #define bhoomi_clock_v1_Date_size                18
-#define bhoomi_clock_v1_DeviceState_size         7249
+#define bhoomi_clock_v1_DeviceState_size         7363
 #define bhoomi_clock_v1_Emitter_size             186
 #define bhoomi_clock_v1_FaceRef_size             28
 #define bhoomi_clock_v1_FaceWeatherVariant_size  4525
 #define bhoomi_clock_v1_Face_size                14415
 #define bhoomi_clock_v1_Keyframe_size            12
 #define bhoomi_clock_v1_Layer_size               486
-#define bhoomi_clock_v1_Listener_size            297
+#define bhoomi_clock_v1_Listener_size            354
 #define bhoomi_clock_v1_Management_size          78
 #define bhoomi_clock_v1_MessageBoxSlot_size      12
 #define bhoomi_clock_v1_Motion_size              120
 #define bhoomi_clock_v1_Note_size                494
 #define bhoomi_clock_v1_NowPlayingSlot_size      46
-#define bhoomi_clock_v1_NowPlaying_size          600
+#define bhoomi_clock_v1_NowPlaying_size          714
 #define bhoomi_clock_v1_Photo_size               31
 #define bhoomi_clock_v1_PlaybackPosition_size    17
 #define bhoomi_clock_v1_Rect_size                24
