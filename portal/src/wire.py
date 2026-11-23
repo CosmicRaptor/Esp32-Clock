@@ -23,9 +23,9 @@ def days_mask(days: list) -> int:
     return mask
 
 
-def device_state(state: dict, listening: tuple | None = None) -> pb.DeviceState:
+def device_state(state: dict, listening: tuple | None = None, *, all_alarms: bool = False) -> pb.DeviceState:
     """`listening`: the (left, right) "listening" dicts from spotify.py; None = nobody connected."""
-    out = pb.DeviceState(version=state["version"])
+    out = pb.DeviceState(version=state["version"], all_alarms=all_alarms)
     out.nowplaying.CopyFrom(now_playing(*(listening or (spotify.OFF, spotify.OFF))))
     if state.get("message"):
         out.note.text = state["message"]["text"]
@@ -40,15 +40,36 @@ def device_state(state: dict, listening: tuple | None = None) -> pb.DeviceState:
     out.pinned_face = faces.get("pinned", "")
     out.default_face = faces.get("default", "")
     for a in state["alarms"]:
-        if not a.get("enabled"):
+        if not all_alarms and not a.get("enabled"):
             continue
         hour, minute = (int(x) for x in a["time"].split(":"))
         alarm = out.alarms.add(id=a["id"], hour=hour, minute=minute, days=days_mask(a["days"]),
-                               label=a["label"], sound=a["sound"])
+                               label=a["label"], sound=a["sound"], disabled=not a.get("enabled"))
         if not a["days"]:
             d = datetime.date.fromisoformat(a["date"])
             alarm.date.year, alarm.date.month, alarm.date.day = d.year, d.month, d.day
     return out
+
+
+def decode_alarm(data: bytes, alarm_id: str) -> dict:
+    try:
+        alarm = pb.Alarm.FromString(data)
+        if alarm.HasField("date"):
+            date = datetime.date(alarm.date.year, alarm.date.month, alarm.date.day).isoformat()
+        else:
+            date = ""
+    except (DecodeError, ValueError, OverflowError):
+        raise Invalid("Invalid alarm data.") from None
+    if alarm.id != alarm_id or alarm.days > 127:
+        raise Invalid("Invalid alarm data.")
+    return model.clean_alarm({
+        "time": f"{alarm.hour:02d}:{alarm.minute:02d}",
+        "days": [day for day in range(7) if alarm.days & (1 << day)],
+        "date": date,
+        "label": alarm.label,
+        "sound": alarm.sound,
+        "enabled": not alarm.disabled,
+    }, alarm_id)
 
 
 _ALIGN = {"left": pb.TextSlot.LEFT, "center": pb.TextSlot.CENTER, "right": pb.TextSlot.RIGHT}

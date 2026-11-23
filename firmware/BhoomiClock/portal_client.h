@@ -40,6 +40,12 @@ bool setLocalVolume(int alarm, int video); // persists pending local change; cal
 String weatherSettingsJson();
 bool setWeatherLocation(const String &name, double latitude, double longitude);
 
+// Alarm schedule with pending LAN changes applied. Caller holds the app lock.
+size_t alarmCount();
+const Alarm &alarmAt(size_t index);
+String alarmSettingsJson();
+int setLocalAlarm(const Alarm &alarm, bool deleted); // returns an HTTP status
+
 void begin();  // start the task; call after Wi-Fi is initialised. No-op if not configured.
 
 bool configured();

@@ -61,6 +61,25 @@ class DeviceStateTests(unittest.TestCase):
         self.assertFalse(msg.HasField("photo"))
         self.assertEqual(len(msg.alarms), 0)
 
+    def test_lan_alarm_editor_round_trips_enabled_and_disabled_alarms(self):
+        state = self.state()
+        msg = pb.DeviceState.FromString(wire.device_state(state, all_alarms=True).SerializeToString())
+        self.assertTrue(msg.all_alarms)
+        self.assertEqual([alarm.disabled for alarm in msg.alarms], [False, False, True])
+        for alarm, expected in zip(msg.alarms, state["alarms"], strict=True):
+            self.assertEqual(wire.decode_alarm(alarm.SerializeToString(), alarm.id), expected)
+        self.assertFalse(wire.device_state(state).all_alarms)
+
+    def test_lan_alarm_editor_rejects_bad_protobuf_and_values(self):
+        alarm_id = "a12345678901"
+        for data in (b"\xff", pb.Alarm(id="other", days=1).SerializeToString(),
+                     pb.Alarm(id=alarm_id, days=128).SerializeToString(),
+                     pb.Alarm(id=alarm_id, hour=24, days=1).SerializeToString(),
+                     pb.Alarm(id=alarm_id).SerializeToString(),
+                     pb.Alarm(id=alarm_id, date=pb.Date(year=2026, month=2, day=29)).SerializeToString()):
+            with self.subTest(data=data), self.assertRaises(Invalid):
+                wire.decode_alarm(data, alarm_id)
+
     def test_fits_nanopb_buffers(self):
         """Worst case the portal allows must fit the fixed sizes in proto/clock.options."""
         s = model.empty_state()
