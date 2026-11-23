@@ -778,6 +778,8 @@ class Default(WorkerEntrypoint):
             return Response(msg.SerializeToString(), headers={"content-type": wire.CONTENT_TYPE, "cache-control": "no-store"})
 
         if path == "/api/device/state" and method == "GET":
+            poll_started = time.perf_counter()
+            print("[spotify] clock_poll start path=state")
             q = {k: v[0] for k, v in parse_qs(url.query).items()}
             await self.note_check_in(q)
             state, listening = await asyncio.gather(self.load_state(), self.listening_both())
@@ -785,7 +787,9 @@ class Default(WorkerEntrypoint):
             body = msg.SerializeToString()
             etag = '"' + hashlib.sha256(body).hexdigest()[:24] + '"'
             if request.headers.get("if-none-match") == etag:
+                print(f"[spotify] clock_poll path=state response=304 duration_ms={int((time.perf_counter() - poll_started) * 1000)}")
                 return Response(None, status=304, headers={"etag": etag, "cache-control": "no-store"})
+            print(f"[spotify] clock_poll path=state response=200 duration_ms={int((time.perf_counter() - poll_started) * 1000)}")
             if q.get("format") == "json":  # for humans with curl
                 return json_response(json_format.MessageToDict(msg), headers={"etag": etag})
             return Response(body, headers={
@@ -818,11 +822,15 @@ class Default(WorkerEntrypoint):
             return binary_response(data, "image/jpeg" if data[:2] == b"\xff\xd8" else "application/octet-stream")
 
         if path == "/api/device/nowplaying" and method == "GET":
+            poll_started = time.perf_counter()
+            print("[spotify] clock_poll start path=nowplaying")
             left, right = await asyncio.gather(*(self.listening(side) for side in spotify.SIDES))
             body = wire.now_playing(left, right).SerializeToString()
             etag = '"' + hashlib.sha1(body).hexdigest()[:12] + '"'
             if request.headers.get("if-none-match") == etag:
+                print(f"[spotify] clock_poll path=nowplaying response=304 duration_ms={int((time.perf_counter() - poll_started) * 1000)}")
                 return Response(None, status=304, headers={"etag": etag, "cache-control": "no-store"})
+            print(f"[spotify] clock_poll path=nowplaying response=200 duration_ms={int((time.perf_counter() - poll_started) * 1000)}")
             if url.query and "format=json" in url.query:  # for humans with curl
                 return json_response(json_format.MessageToDict(wire.pb.NowPlaying.FromString(body)),
                                      headers={"etag": etag})
@@ -915,29 +923,38 @@ class Default(WorkerEntrypoint):
 
     async def listening(self, side: str, rec: dict | None = None) -> dict:
         """What `side` is listening to right now, as a spotify.parse_playing() dict. Never raises."""
+        started = time.perf_counter()
         if rec is None:  # (False = "already looked: not connected")
             rec = (await self.kv_json(SPOTIFY_KEY) or {}).get(side)
         if not isinstance(rec, dict) or not rec.get("refresh"):
+            print(f"[spotify] playback side={side} outcome=skipped reason=not_connected duration_ms={int((time.perf_counter() - started) * 1000)}")
             return dict(spotify.OFF)
         try:
             if not spotify.token_fresh(rec, time.time()):
                 rec = await self.refresh(side, rec)
                 if rec is None:
                     _last_listening.pop(side, None)
+                    print(f"[spotify] playback side={side} outcome=disconnected reason=invalid_grant duration_ms={int((time.perf_counter() - started) * 1000)}")
                     return dict(spotify.OFF)
             status, data = await self.playing_call(rec["access"])
             if status == 401:  # revoked or expired early: one fresh token, one more try
                 rec = await self.refresh(side, rec)
                 if rec is None:
                     _last_listening.pop(side, None)
+                    print(f"[spotify] playback side={side} outcome=disconnected reason=invalid_grant duration_ms={int((time.perf_counter() - started) * 1000)}")
                     return dict(spotify.OFF)
                 status, data = await self.playing_call(rec["access"])
             if status not in (200, 204):  # 429 rate limit, 5xx, ...: keep what we showed
                 raise Upstream(f"currently-playing answered {status}")
-        except Upstream:
+        except Upstream as e:
+            print(f"[spotify] playback side={side} outcome=fallback reason={str(e)[:80]} duration_ms={int((time.perf_counter() - started) * 1000)}")
             return _last_listening.get(side) or dict(spotify.OFF)
+        except Exception as e:
+            print(f"[spotify] playback side={side} outcome=error error={type(e).__name__} duration_ms={int((time.perf_counter() - started) * 1000)}")
+            raise
         result = spotify.parse_playing(status, data)
         _last_listening[side] = result
+        print(f"[spotify] playback side={side} outcome=ok http_status={status} playback={result['status']} duration_ms={int((time.perf_counter() - started) * 1000)}")
         return result
 
     async def listening_both(self) -> tuple:
