@@ -8,7 +8,7 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class DeviceState(_message.Message):
-    __slots__ = ("version", "note", "photo", "alarms", "nowplaying", "faces", "pinned_face", "default_face", "all_alarms")
+    __slots__ = ("version", "note", "photo", "alarms", "nowplaying", "faces", "pinned_face", "default_face", "all_alarms", "daily_restart")
     VERSION_FIELD_NUMBER: _ClassVar[int]
     NOTE_FIELD_NUMBER: _ClassVar[int]
     PHOTO_FIELD_NUMBER: _ClassVar[int]
@@ -18,6 +18,7 @@ class DeviceState(_message.Message):
     PINNED_FACE_FIELD_NUMBER: _ClassVar[int]
     DEFAULT_FACE_FIELD_NUMBER: _ClassVar[int]
     ALL_ALARMS_FIELD_NUMBER: _ClassVar[int]
+    DAILY_RESTART_FIELD_NUMBER: _ClassVar[int]
     version: int
     note: Note
     photo: Photo
@@ -27,7 +28,14 @@ class DeviceState(_message.Message):
     pinned_face: str
     default_face: str
     all_alarms: bool
-    def __init__(self, version: _Optional[int] = ..., note: _Optional[_Union[Note, _Mapping]] = ..., photo: _Optional[_Union[Photo, _Mapping]] = ..., alarms: _Optional[_Iterable[_Union[Alarm, _Mapping]]] = ..., nowplaying: _Optional[_Union[NowPlaying, _Mapping]] = ..., faces: _Optional[_Iterable[_Union[FaceRef, _Mapping]]] = ..., pinned_face: _Optional[str] = ..., default_face: _Optional[str] = ..., all_alarms: _Optional[bool] = ...) -> None: ...
+    daily_restart: DailyRestart
+    def __init__(self, version: _Optional[int] = ..., note: _Optional[_Union[Note, _Mapping]] = ..., photo: _Optional[_Union[Photo, _Mapping]] = ..., alarms: _Optional[_Iterable[_Union[Alarm, _Mapping]]] = ..., nowplaying: _Optional[_Union[NowPlaying, _Mapping]] = ..., faces: _Optional[_Iterable[_Union[FaceRef, _Mapping]]] = ..., pinned_face: _Optional[str] = ..., default_face: _Optional[str] = ..., all_alarms: _Optional[bool] = ..., daily_restart: _Optional[_Union[DailyRestart, _Mapping]] = ...) -> None: ...
+
+class DailyRestart(_message.Message):
+    __slots__ = ("minute_of_day",)
+    MINUTE_OF_DAY_FIELD_NUMBER: _ClassVar[int]
+    minute_of_day: int
+    def __init__(self, minute_of_day: _Optional[int] = ...) -> None: ...
 
 class Note(_message.Message):
     __slots__ = ("text", "sent_at")

@@ -176,6 +176,8 @@ The admin page accepts the same `.bin` and `.json` pair. Retries reuse the same 
 
 The inbox also supports one video note, downloaded to the SD card and played full screen when tapped. A red dot on the inbox button indicates an unread text note. A blue dot indicates an unplayed video note once it has downloaded. If both are new, the dot is red and switches to blue when the inbox is opened. The dot clears once the remaining note is opened or playback starts, and that status survives restarts.
 
+The portal can schedule text and video inbox notes. The clock receives due notes through the usual state and video polls. The portal can also set an optional daily restart time. The clock uses its local time and stores the date of the restart before rebooting, so it cannot repeat that day. Alarms, active study and video playback take priority. The [portal guide](portal/README.md#scheduled-notes-and-daily-restart) describes the controls and timing.
+
 The clock firmware also contains a local five-point mindfulness check-in, an offline response queue and a JPEG-frame video player with audio. The portal retains responses for 30 days. The admin portal prepares videos in the browser, and the clock downloads uploads to its SD card. Type `checkin` in the serial monitor to show the prompt. See the portal README for limits and details.
 
 Alarm and mood-video speaker levels can be set independently from the admin or LAN settings pages. Local edits take effect immediately and take priority while syncing back to the portal. See the portal README for synchronization details.

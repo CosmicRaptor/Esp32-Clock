@@ -83,6 +83,14 @@
   <div class="card-heading"><div><span class="eyebrow">CLOCK SETTINGS</span><h2>Health &amp; firmware</h2></div></div>
   <p id="clockHealthSummary" class="health-summary">Waiting for a report…</p>
   <div class="health-row"><div><label class="lbl" for="diagnosticInterval">Diagnostic reports</label><select id="diagnosticInterval"><option value="0">Off</option><option value="300">Every 5 minutes</option><option value="900">Every 15 minutes</option><option value="1800">Every 30 minutes</option><option value="3600" selected>Hourly</option><option value="21600">Every 6 hours</option></select></div><button class="btn ghost" id="saveDiagnostics">Save interval</button></div>
+  <form id="restartForm" class="health-row">
+    <div><label class="lbl" for="restartTime">Daily restart</label><input type="time" id="restartTime" required>
+      <span id="restartStatus" class="hint" role="status"></span></div>
+    <div class="actions">
+      <button class="btn ghost" id="restartOff" type="button" hidden>Turn off</button>
+      <button class="btn ghost" id="restartSave" type="submit">Save time</button>
+    </div>
+  </form>
   <details class="panel"><summary>Diagnostic details</summary><pre id="clockDiagnostics" class="diagnostic-output">Waiting for a report…</pre></details>
   <details class="panel"><summary>Firmware updates</summary>
     <label class="lbl" for="firmwareFile">Application firmware (.bin)</label><input type="file" id="firmwareFile" accept=".bin">
@@ -161,6 +169,8 @@
         <span class="hint" id="msgWarn"></span>
         <span class="hint" id="msgCount">0/120</span>
       </div>
+      <label class="lbl" for="msgSchedule">Send later (optional)</label>
+      <input type="datetime-local" id="msgSchedule" aria-describedby="noteScheduleZone">
       <div class="actions">
         <button type="button" class="btn ghost" id="msgClear" hidden>Clear</button>
         <button class="btn primary" id="msgSend">Send message</button>
@@ -172,8 +182,17 @@
     <h2>Video note</h2>
     <p class="hint">Send a video with sound to her inbox. The first 20 seconds will play full screen.</p>
     <input id="videoNoteFile" type="file" accept="video/*" aria-label="Choose a video note">
+    <label class="lbl" for="videoNoteSchedule">Send later (optional)</label>
+    <input type="datetime-local" id="videoNoteSchedule" aria-describedby="noteScheduleZone">
     <button class="btn primary" id="videoNoteSend" type="button">Prepare and send video</button>
     <p class="hint" id="videoNoteStatus" role="status"></p>
+  </div>
+
+  <div class="card" id="scheduledNotesCard">
+    <h2>Scheduled notes</h2>
+    <p class="hint" id="noteScheduleZone"></p>
+    <p class="hint" id="scheduledNotesEmpty">No upcoming notes.</p>
+    <ul id="scheduledNotes"></ul>
   </div>
 
   <!-- music -->

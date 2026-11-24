@@ -91,6 +91,29 @@ function prettyDate(iso) {
   return new Date(iso + 'T12:00:00Z').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
 }
 
+function noteSendTime(value) {
+  const wallTime = Date.parse(value + 'Z');
+  if (!Number.isFinite(wallTime)) throw new Error('Choose a date and time.');
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: clockTz(), year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  });
+  const wallAt = instant => {
+    const parts = Object.fromEntries(formatter.formatToParts(instant).map(p => [p.type, p.value]));
+    return Date.parse(`${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}Z`);
+  };
+  const candidates = new Set();
+  for (const days of [-1, 0, 1]) {
+    const sample = wallTime + days * 86400000;
+    const instant = wallTime - (wallAt(sample) - sample);
+    if (wallAt(instant) === wallTime) candidates.add(instant);
+  }
+  if (candidates.size !== 1) throw new Error('Choose a time outside the clock’s daylight-saving change.');
+  const at = candidates.values().next().value / 1000;
+  if (at <= nowSec()) throw new Error('Choose a send time in the future.');
+  return at;
+}
+
 // ---------------------------------------------------------------- boot / login
 
 function showLogin() {
@@ -140,6 +163,8 @@ function setState(s) {
   renderPreview();
   renderPhoto();
   renderMessage();
+  renderScheduledNotes();
+  renderRestart();
   renderAlarms();
 }
 
@@ -165,7 +190,7 @@ function renderPreview() {
   const img = $('pvImg');
   if (state.image) { img.src = `/api/image/${state.image.id}`; img.hidden = false; }
   else { img.hidden = true; img.removeAttribute('src'); }
-  const text = $('msgText').value.trim() || (state.message ? state.message.text : '');
+  const text = $('msgText').value.trim() || (visibleMessage()?.text || '');
   $('pvMsg').textContent = text;
   $('pvMsg').hidden = !text;
   tickPreview();
@@ -174,7 +199,14 @@ function tickPreview() {
   if (!state) return;
   $('pvTime').textContent = clockNow().time;
 }
-setInterval(() => { tickPreview(); if (state) renderStatus(); }, 15000);
+setInterval(() => {
+  tickPreview();
+  if (state) {
+    renderStatus();
+    renderScheduledNotes();
+    if (visibleMessage() !== renderedMessage) renderMessage(true);
+  }
+}, 15000);
 
 // ---------------------------------------------------------------- photo
 
@@ -394,11 +426,27 @@ $('cropSend').onclick = () => busy($('cropSend'), async () => {
 
 // ---------------------------------------------------------------- message
 
-function renderMessage() {
-  const m = state.message;
+function visibleMessage() {
+  let message = state.message;
+  let at = Math.max(state.message_at || 0, message?.at || 0);
+  const now = nowSec();
+  for (const note of state.scheduled_notes || []) {
+    if (note.kind === 'text' && note.at > at && note.at <= now) {
+      message = note;
+      at = note.at;
+    }
+  }
+  return message;
+}
+
+let renderedMessage = null;
+function renderMessage(preserveDraft = false) {
+  const m = visibleMessage();
+  const draft = preserveDraft && $('msgText').value !== (renderedMessage?.text || '');
+  renderedMessage = m;
   $('msgMeta').textContent = m ? `Sent ${ago(m.at)}` : '';
   $('msgClear').hidden = !m;
-  if (document.activeElement !== $('msgText')) $('msgText').value = m ? m.text : '';
+  if (!draft && !$('msgSchedule').value && document.activeElement !== $('msgText')) $('msgText').value = m ? m.text : '';
   msgInput();
 }
 
@@ -406,22 +454,29 @@ function msgInput() {
   const t = $('msgText').value;
   $('msgCount').textContent = `${t.length}/${MSG_MAX}`;
   $('msgWarn').textContent = /\p{Extended_Pictographic}/u.test(t) ? "Emoji may not show up on the clock yet." : '';
-  const sent = state && state.message ? state.message.text : '';
-  $('msgSend').disabled = t.trim() === sent;
+  const sent = state ? visibleMessage()?.text || '' : '';
+  const scheduled = Boolean($('msgSchedule').value);
+  $('msgSend').textContent = scheduled ? 'Schedule message' : 'Send message';
+  $('msgSend').disabled = scheduled ? !t.trim() : t.trim() === sent;
   const preview = t.trim() || sent;
   $('pvMsg').textContent = preview;
   $('pvMsg').hidden = !preview;
 }
 $('msgText').oninput = msgInput;
+$('msgSchedule').oninput = msgInput;
 
 $('msgForm').onsubmit = e => {
   e.preventDefault();
   busy($('msgSend'), async () => {
     const text = $('msgText').value;
-    const j = await sendJson('/api/message', 'PUT', { text });
+    const when = $('msgSchedule').value;
+    const j = when
+      ? await sendJson('/api/scheduled-notes/text', 'POST', { text, at: noteSendTime(when) })
+      : await sendJson('/api/message', 'PUT', { text });
+    $('msgSchedule').value = '';
     $('msgText').blur();
     setState(j.state);
-    toast(text.trim() ? 'Message sent ✨' : 'Message cleared');
+    toast(when ? 'Message scheduled' : text.trim() ? 'Message sent ✨' : 'Message cleared');
   });
 };
 $('msgClear').onclick = () => busy($('msgClear'), async () => {
@@ -430,6 +485,51 @@ $('msgClear').onclick = () => busy($('msgClear'), async () => {
   setState(j.state);
   toast('Message cleared');
 });
+
+let scheduleKey = '';
+function renderScheduledNotes() {
+  const zone = clockTz();
+  $('noteScheduleZone').textContent = `Send times use the clock’s time zone (${zone}).`;
+  const pending = (state.scheduled_notes || []).filter(note => note.at > nowSec());
+  const key = JSON.stringify([zone, pending]);
+  if (key === scheduleKey) return;
+  scheduleKey = key;
+  const formatter = new Intl.DateTimeFormat(undefined, { timeZone: zone, dateStyle: 'medium', timeStyle: 'short' });
+  $('scheduledNotesEmpty').hidden = pending.length > 0;
+  $('scheduledNotes').replaceChildren(...pending.map(note => {
+    const item = el('li');
+    const label = note.kind === 'text' ? note.text : 'Video note';
+    item.append(el('span', '', `${formatter.format(note.at * 1000)} — ${label}`));
+    const cancel = el('button', 'btn ghost', 'Cancel');
+    cancel.type = 'button';
+    cancel.setAttribute('aria-label', `Cancel ${label}`);
+    cancel.onclick = () => busy(cancel, async () => {
+      const j = await api('/api/scheduled-notes/' + note.id, { method: 'DELETE' });
+      setState(j.state);
+      toast('Scheduled note cancelled');
+    });
+    item.append(cancel);
+    return item;
+  }));
+}
+
+function renderRestart() {
+  const when = state.daily_restart || '';
+  if (document.activeElement !== $('restartTime')) $('restartTime').value = when;
+  $('restartOff').hidden = !when;
+  $('restartStatus').textContent = when ? `Every day at ${when} (${clockTz()})` : 'Off';
+}
+
+async function saveRestart(time) {
+  const j = await sendJson('/api/daily-restart', 'PUT', { time });
+  setState(j.state);
+  toast(time ? 'Daily restart saved' : 'Daily restart turned off');
+}
+$('restartForm').onsubmit = e => {
+  e.preventDefault();
+  busy($('restartSave'), () => saveRestart($('restartTime').value));
+};
+$('restartOff').onclick = () => busy($('restartOff'), () => saveRestart(null));
 
 // ---------------------------------------------------------------- alarms
 
@@ -715,12 +815,24 @@ if (preview) {
 $('videoNoteSend').onclick = () => busy($('videoNoteSend'), async () => {
   const status = $('videoNoteStatus');
   try {
+    const when = $('videoNoteSchedule').value;
+    const at = when ? noteSendTime(when) : null;
     const clip = await MoodVideo.prepare($('videoNoteFile').files[0], text => { status.textContent = text; });
     status.textContent = 'Uploading prepared video…';
-    await api('/api/mood-video/6', {method:'PUT', headers:{'content-type':'application/octet-stream'}, body:clip});
-    status.textContent = 'Sent! The clock will download it when online.';
+    const j = await api(at ? `/api/scheduled-notes/video?at=${at}` : '/api/mood-video/6', {
+      method: at ? 'POST' : 'PUT', headers: {'content-type': 'application/octet-stream'}, body: clip,
+    });
+    if (at) {
+      $('videoNoteSchedule').value = '';
+      $('videoNoteSend').textContent = 'Prepare and send video';
+      setState(j.state);
+    }
+    status.textContent = at ? 'Video note scheduled.' : 'Sent! The clock will download it when online.';
   } catch (e) { status.textContent = e.message; }
 });
+$('videoNoteSchedule').oninput = () => {
+  $('videoNoteSend').textContent = $('videoNoteSchedule').value ? 'Prepare and schedule video' : 'Prepare and send video';
+};
 
 $('alarmSoundUpload').onclick = () => busy($('alarmSoundUpload'), async () => {
   const file = $('alarmSoundFile').files[0], status = $('alarmSoundStatus');

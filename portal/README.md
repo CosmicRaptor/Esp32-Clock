@@ -298,6 +298,12 @@ The dashboard's Video note card accepts a video with sound and prepares the firs
 
 Dashboard cards and the clock preview can be expanded or collapsed individually.
 
+### Scheduled notes and daily restart
+
+In **Message** or **Video note**, set **Send later** to queue a note in the clock's displayed time zone. Leave it blank for immediate sending. **Scheduled notes** lists up to 20 upcoming notes and lets you cancel them. At delivery, the newest due note of each kind becomes the current inbox item. A later manual message or video takes priority, and clearing the text inbox clears the delivered text. The device picks up a due text note through its normal state poll and a video through its regular video check and download. When the clock reconnects after missing multiple deliveries, it shows the latest one of each kind.
+
+In **Health & firmware**, save a **Daily restart** time in the clock's local time, or turn the setting off. The clock keeps the last synced setting across reboots and checks it locally. It defers for active study, alarms, video and firmware updates, and skips the restart if the one-hour window or local day ends. Turning it off takes effect after the clock syncs.
+
 ### Mindfulness check-ins
 
 The clock quietly asks for a five-point mood response at 00:00, 03:00, 06:00, 09:00, 12:00, 15:00, 18:00 and 21:00 in its local time. The prompt closes after five minutes; no response is recorded when ignored. A tapped response is saved to a bounded persistent queue on the clock and retried through the authenticated device API. The admin portal can also save an optional short note for each mood. The clock caches these notes for offline use, displays the chosen note for five seconds before its video, and lets her tap to continue sooner. The portal's private **Mindfulness check-ins** card shows responses from the past 30 days; each KV record expires 30 days after the response time. A response older than 30 days on delivery is discarded. Clock NVS has space for 256 queued responses; if full or saving fails the prompt asks her to retry instead of claiming success. Alarms take priority.

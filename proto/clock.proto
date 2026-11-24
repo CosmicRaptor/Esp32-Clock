@@ -24,6 +24,11 @@ message DeviceState {
   string pinned_face = 7;        // face id the portal forces right now; empty = choose by the faces' `when` rules
   string default_face = 8;       // face id shown when no face's `when` matches; empty = the clock's built-in face
   bool all_alarms = 9;           // response to ?alarms=all; includes disabled alarms
+  DailyRestart daily_restart = 10; // unset: off
+}
+
+message DailyRestart {
+  uint32 minute_of_day = 1;      // 0–1439, in the clock's local time
 }
 
 // The message shown on the clock face.

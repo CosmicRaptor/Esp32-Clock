@@ -43,6 +43,7 @@ MESSAGE_LINES = 4
 LABEL_MAX = 40         # characters (<= 160 UTF-8 bytes)
 SOUND_MAX = 64         # UTF-8 bytes
 MAX_ALARMS = 20
+MAX_SCHEDULED_NOTES = 20
 MAX_SOUNDS = 100
 SPOTIFY_TEXT_MAX = 60   # ASCII bytes in Listener.title, artist and collection
 SPOTIFY_URL_MAX = 55    # canonical open.spotify.com episode URL in Listener.spotify_url
@@ -62,7 +63,8 @@ def new_id() -> str:
 
 
 def empty_state() -> dict:
-    return {"version": 0, "message": None, "image": None, "alarms": [],
+    return {"version": 0, "message": None, "message_at": 0, "scheduled_notes": [],
+            "daily_restart": None, "image": None, "alarms": [],
             "faces": {"list": [], "default": "", "pinned": ""}}
 
 
@@ -73,6 +75,8 @@ def normalize_state(state) -> dict:
         base.update({k: state[k] for k in base if k in state})
     if not isinstance(base["alarms"], list):
         base["alarms"] = []
+    if not isinstance(base["scheduled_notes"], list):
+        base["scheduled_notes"] = []
     faces = base["faces"] if isinstance(base["faces"], dict) else {}
     base["faces"] = {"list": [f for f in faces.get("list", []) if isinstance(f, dict) and "id" in f and "rev" in f],
                      "default": faces.get("default") or "", "pinned": faces.get("pinned") or ""}
@@ -94,6 +98,48 @@ def clean_message(text) -> str:
     if text.count("\n") >= MESSAGE_LINES:
         raise Invalid(f"The message can have at most {MESSAGE_LINES} lines.")
     return text
+
+
+def clean_restart(value) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.isascii() or not _TIME.fullmatch(value):
+        raise Invalid("Choose a daily restart time (HH:MM), or turn it off.")
+    return value
+
+
+def clean_note_time(value, now: int) -> int:
+    limit = int(datetime.datetime(2101, 1, 1, tzinfo=datetime.timezone.utc).timestamp())
+    if type(value) is not int or not now < value < limit:
+        raise Invalid("Choose a future send time through 2100.")
+    return value
+
+
+def latest_due_note(notes: list, kind: str, now: int, after: int = 0) -> dict | None:
+    return max((note for note in notes if note["kind"] == kind and after < note["at"] <= now),
+               key=lambda note: note["at"], default=None)
+
+
+def effective_message(state: dict, now: int) -> dict | None:
+    immediate = state.get("message")
+    at = max(state.get("message_at", 0), immediate["at"] if immediate else 0)
+    return latest_due_note(state.get("scheduled_notes", []), "text", now, at) or immediate
+
+
+def effective_video(notes: list, immediate: dict | None, now: int) -> dict | None:
+    due = latest_due_note(notes, "video", now, immediate.get("at", 0) if immediate else 0)
+    return due["video"] if due else immediate
+
+
+def add_scheduled_note(notes: list, note: dict, now: int) -> list:
+    pending = [entry for entry in notes if entry["at"] > now]
+    if len(pending) >= MAX_SCHEDULED_NOTES:
+        raise Invalid(f"Schedule up to {MAX_SCHEDULED_NOTES} notes at a time.")
+    if any(entry["at"] == note["at"] and entry["kind"] == note["kind"] for entry in pending):
+        raise Invalid("A note of this type is already scheduled for that time.")
+    # The inbox holds the latest due note of each kind. Retain those on queue edits.
+    previous = (latest_due_note(notes, kind, now) for kind in ("text", "video"))
+    return sorted([entry for entry in previous if entry] + pending + [note], key=lambda entry: entry["at"])
 
 
 # ---------- alarms ----------

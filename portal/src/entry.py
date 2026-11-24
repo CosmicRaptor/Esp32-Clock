@@ -16,6 +16,10 @@ Behind those, static files in public/ are the admin page, and the rest is the JS
     POST   /api/logout
     GET    /api/state            -> {"state": {...}, "device": {...} | null}
     PUT    /api/message          {"text": "..."}     ("" clears it)
+    POST   /api/scheduled-notes/text   {"text": "...", "at": <unix seconds>}
+    POST   /api/scheduled-notes/video?at=<unix seconds>   prepared BCV1 clip
+    DELETE /api/scheduled-notes/<id>    cancels a future note
+    PUT    /api/daily-restart    {"time": "HH:MM" | null}
     PUT    /api/image            raw 320x240 baseline JPEG body
     DELETE /api/image
     GET    /api/image/<id>       the JPEG
@@ -105,6 +109,7 @@ from model import Invalid
 FACE_PREFIX, ASSET_PREFIX, PNG_PREFIX, META_PREFIX = "face:", "asset:", "assetpng:", "assetmeta:"
 STATE_KEY = "state"
 DEVICE_KEY = "device"
+SCHEDULED_VIDEO_PREFIX = "scheduled-video:"
 SPOTIFY_KEY = "spotify"
 SEEN_WRITE_EVERY = 600  # s; KV's free tier allows 1,000 writes/day, so don't write on every poll
 
@@ -184,6 +189,16 @@ class Default(WorkerEntrypoint):
     async def save_state(self, state: dict) -> dict:
         state["version"] = int(state.get("version", 0)) + 1
         await self.env.CLOCK.put(STATE_KEY, json.dumps(state))
+        return state
+
+    async def save_note_schedule(self, state: dict, notes: list) -> dict:
+        def hashes(entries):
+            return {note["video"]["sha256"] for note in entries if note["kind"] == "video"}
+        obsolete = hashes(state["scheduled_notes"]) - hashes(notes)
+        state["scheduled_notes"] = notes
+        await self.save_state(state)
+        await asyncio.gather(*(self.env.CLOCK.delete(SCHEDULED_VIDEO_PREFIX + digest) for digest in obsolete),
+                             return_exceptions=True)
         return state
 
     def secret(self, name: str) -> str:
@@ -305,10 +320,16 @@ class Default(WorkerEntrypoint):
                 raise Invalid("Unknown video slot.")
             key = "mood-video:" + mood
             if method == "GET":
-                return json_response({"video": await self.kv_json(key)})
+                video = await self.kv_json(key)
+                if mood == "6":
+                    state = await self.load_state()
+                    video = model.effective_video(state["scheduled_notes"], video, int(time.time()))
+                return json_response({"video": video})
             data = bytes(await request.bytes())
             meta = mood_video.validate(data)
             old = await self.kv_json(key)
+            if mood == "6":
+                meta["at"] = int(time.time())
             await self.env.CLOCK.put("mood-video-data:" + mood + ":" + meta["sha256"], base64.b64encode(data).decode())
             await self.env.CLOCK.put(key, json.dumps(meta))
             if old and old.get("sha256") != meta["sha256"]:
@@ -409,8 +430,57 @@ class Default(WorkerEntrypoint):
             body = await read_json(request)
             text = model.clean_message(body.get("text") if isinstance(body, dict) else None)
             state = await self.load_state()
-            state["message"] = {"text": text, "at": int(time.time())} if text else None
+            state["message_at"] = int(time.time())
+            state["message"] = {"text": text, "at": state["message_at"]} if text else None
             return json_response({"state": await self.save_state(state)})
+
+        if path == "/api/daily-restart" and method == "PUT":
+            body = await read_json(request)
+            if not isinstance(body, dict) or "time" not in body:
+                raise Invalid("Expected a restart time, or null to turn it off.")
+            when = model.clean_restart(body["time"])
+            state = await self.load_state()
+            if state["daily_restart"] != when:
+                state["daily_restart"] = when
+                await self.save_state(state)
+            return json_response({"state": state})
+
+        if method == "POST" and path in ("/api/scheduled-notes/text", "/api/scheduled-notes/video"):
+            kind = path.rsplit("/", 1)[-1]
+            now = int(time.time())
+            note = {"id": model.new_id(), "kind": kind}
+            if kind == "text":
+                body = await read_json(request)
+                if not isinstance(body, dict):
+                    raise Invalid("Expected a message and send time.")
+                note["at"] = model.clean_note_time(body.get("at"), now)
+                note["text"] = model.clean_message(body.get("text"))
+                if not note["text"]:
+                    raise Invalid("Write a message to schedule.")
+            else:
+                at = parse_qs(url.query).get("at", [""])[0]
+                note["at"] = model.clean_note_time(int(at) if re.fullmatch(r"[0-9]{1,12}", at) else None, now)
+                data = bytes(await request.bytes())
+                note["video"] = mood_video.validate(data)
+            state = await self.load_state()
+            notes = model.add_scheduled_note(state["scheduled_notes"], note, now)
+            if kind == "video":
+                await self.env.CLOCK.put(SCHEDULED_VIDEO_PREFIX + note["video"]["sha256"],
+                                         base64.b64encode(data).decode())
+                # The upload can take time. Preserve other settings saved while it was in flight.
+                state = await self.load_state()
+                notes = model.add_scheduled_note(state["scheduled_notes"], note, now)
+            return json_response({"state": await self.save_note_schedule(state, notes)})
+
+        scheduled_id = re.fullmatch(r"/api/scheduled-notes/([0-9a-f]{12})", path)
+        if method == "DELETE" and scheduled_id:
+            state = await self.load_state()
+            now = int(time.time())
+            notes = state["scheduled_notes"]
+            remaining = [note for note in notes if note["id"] != scheduled_id.group(1) or note["at"] <= now]
+            if len(remaining) == len(notes):
+                raise HttpError(404, "That note is no longer scheduled.")
+            return json_response({"state": await self.save_note_schedule(state, remaining)})
 
         if path == "/api/image" and method == "PUT":
             data = await request.bytes()
@@ -702,7 +772,9 @@ class Default(WorkerEntrypoint):
             return Response(text, headers={"content-type": "text/plain", "cache-control": "no-store"})
 
         if path == "/api/device/mood-videos" and method == "GET":
-            entries = await asyncio.gather(*(self.kv_json("mood-video:" + str(i)) for i in range(1, 7)))
+            entries, state = await asyncio.gather(
+                asyncio.gather(*(self.kv_json("mood-video:" + str(i)) for i in range(1, 7))), self.load_state())
+            entries[5] = model.effective_video(state["scheduled_notes"], entries[5], int(time.time()))
             text = "".join(f"{i} {e['sha256']} {e['size']}\n" for i, e in enumerate(entries, 1) if e)
             return Response(text, headers={"content-type": "text/plain", "cache-control": "no-store"})
         if path.startswith("/api/device/mood-video/") and method == "GET":
@@ -710,6 +782,8 @@ class Default(WorkerEntrypoint):
             if len(parts) != 2 or parts[0] not in ("1", "2", "3", "4", "5", "6") or not re.fullmatch(r"[0-9a-f]{64}", parts[1]):
                 raise HttpError(404, "Unknown video.")
             raw = await self.env.CLOCK.get("mood-video-data:" + parts[0] + ":" + parts[1])
+            if missing(raw) and parts[0] == "6":
+                raw = await self.env.CLOCK.get(SCHEDULED_VIDEO_PREFIX + parts[1])
             if missing(raw):
                 raise HttpError(404, "Video is still propagating; retry later.")
             return binary_response(base64.b64decode(str(raw)), "application/octet-stream")
@@ -783,6 +857,7 @@ class Default(WorkerEntrypoint):
             q = {k: v[0] for k, v in parse_qs(url.query).items()}
             await self.note_check_in(q)
             state, listening = await asyncio.gather(self.load_state(), self.listening_both())
+            state["message"] = model.effective_message(state, int(time.time()))
             msg = wire.device_state(state, listening, all_alarms=q.get("alarms") == "all",
                                     player_details=q.get("player") == "details")
             body = msg.SerializeToString()

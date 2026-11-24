@@ -9,6 +9,9 @@
 PB_BIND(bhoomi_clock_v1_DeviceState, bhoomi_clock_v1_DeviceState, 4)
 
 
+PB_BIND(bhoomi_clock_v1_DailyRestart, bhoomi_clock_v1_DailyRestart, AUTO)
+
+
 PB_BIND(bhoomi_clock_v1_Note, bhoomi_clock_v1_Note, 2)
 
 

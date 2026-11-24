@@ -1388,6 +1388,20 @@ void printStats() {
     (long)lv_obj_get_scroll_x(pager),(unsigned)pagerRecoveries,(unsigned)focusview::artworkBytes(),(unsigned)debuglog::dropped(),(unsigned)debuglog::buffered());
 }
 
+bool restartSafe(time_t now) {
+  if (ringing || focusTimer.running() || video_player::playing()) return false;
+  // Keep the clock up for an alarm that could be missed while Wi-Fi and NTP reconnect.
+  for (int minutes = 0; minutes <= 2; ++minutes) {
+    const time_t stamp = now + 60 * minutes;
+    struct tm local;
+    if (!localtime_r(&stamp, &local)) return false;
+    for (size_t i = 0; i < portal::alarmCount(); ++i) {
+      if (alarmMatches(portal::alarmAt(i), local)) return false;
+    }
+  }
+  return true;
+}
+
 void testMindfulness() { if (timeValid() && mode == Mode::Clock && !focusTimer.quiet()) showMood(); else debuglog::println("[mindfulness] waiting for clock time"); }
 
 void testAlarm(const char *soundFile) {

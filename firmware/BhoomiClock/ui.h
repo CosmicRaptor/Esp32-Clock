@@ -1,4 +1,5 @@
 #pragma once
+#include <time.h>
 #include "wifi_setup.h"
 
 // Screens for the Wi-Fi setup flow (and, for now, a simple "online" time readout).
@@ -13,5 +14,6 @@ void loop();  // refreshes the clock text once a second, rings alarms
 void testAlarm(const char *soundFile);
 void testMindfulness();
 void printStats(); // serial diagnostics; caller holds app lock
+bool restartSafe(time_t now); // caller holds app lock
 
 }  // namespace ui

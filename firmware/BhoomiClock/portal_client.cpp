@@ -2,6 +2,7 @@
 #include "portal_client.h"
 #include "face_weather.h"
 #include "face_cache_checks.h"
+#include "daily_restart.h"
 #include "mindfulness.h"
 #include "volume_sync.h"
 #include "mood_clip.h"
@@ -39,6 +40,7 @@
 #include "face_rules.h"
 #include "settings.h"
 #include "storage.h"
+#include "ui.h"
 #include "wifi_setup.h"
 
 #if __has_include("portal_config.h")
@@ -554,7 +556,10 @@ Poll fetchState(Conn &c) {
       etag = newTag;
       // Playback updates, including progress samples, don't need a state save or note/photo redraw.
       bool portalChanged = !have || next->version != cur.version || next->all_alarms != cur.all_alarms ||
-        next->alarms_count != cur.alarms_count || memcmp(next->alarms, cur.alarms, sizeof cur.alarms) != 0;
+        next->alarms_count != cur.alarms_count || memcmp(next->alarms, cur.alarms, sizeof cur.alarms) != 0 ||
+        next->has_note != cur.has_note || next->note.sent_at != cur.note.sent_at ||
+        strcmp(next->note.text, cur.note.text) != 0 || next->has_daily_restart != cur.has_daily_restart ||
+        next->daily_restart.minute_of_day != cur.daily_restart.minute_of_day;
       bool playingChanged = !have || memcmp(&next->nowplaying, &cur.nowplaying, sizeof next->nowplaying) != 0;
       const Listener *before[] = {&cur.nowplaying.left, &cur.nowplaying.right};
       const Listener *after[] = {&next->nowplaying.left, &next->nowplaying.right};
@@ -571,8 +576,11 @@ Poll fetchState(Conn &c) {
             return p.edit.alarm.id[0] && p.acceptedVersion >= 0 && next->version >= p.acceptedVersion;
           });
       }
-      bool saved = (portalChanged || confirming) && saveState(body, sink.len, next->all_alarms);
-      if (confirming && !saved) etag = "";
+      static bool savePending = false;
+      const bool shouldSave = portalChanged || confirming || savePending;
+      const bool saved = shouldSave && saveState(body, sink.len, next->all_alarms);
+      savePending = shouldSave && !saved;
+      if (savePending) etag = "";
       {
         app::Lock lock;
         if (confirming && saved && !confirmAlarmEdits(next->version)) etag = "";
@@ -1873,6 +1881,36 @@ void syncMood(Conn &c) {
   if (code == 200) { app::Lock lock; mindfulness::acknowledge(r); }
 }
 
+void maybeDailyRestart() {
+  static uint32_t lastDate = 0;
+  static bool loaded = false;
+  static uint32_t retryAt = 0;
+  if (otahealth::pending() || (retryAt && (int32_t)(millis() - retryAt) < 0)) return;
+  time_t now = time(nullptr);
+  struct tm local;
+  if (now <= 1700000000 || !localtime_r(&now, &local)) return;
+
+  app::Lock lock;
+  if (!have || !cur.has_daily_restart ||
+      !dailyrestart::due(cur.daily_restart.minute_of_day, local, lastDate) ||
+      sound::playing() || !ui::restartSafe(now)) return;
+
+  Preferences p;
+  retryAt = (millis() + 5000) | 1;
+  if (!p.begin("daily-restart", false)) return;
+  if (!loaded) {
+    lastDate = p.getUInt("last-date", 0);
+    loaded = true;
+  }
+  const uint32_t date = dailyrestart::dateKey(local);
+  const bool saved = date > lastDate && p.putUInt("last-date", date) == sizeof(date);
+  p.end();
+  if (!saved) return;
+  lastDate = date;
+  debuglog::printf("[portal] scheduled restart on %u\n", (unsigned)date);
+  ESP.restart();
+}
+
 void task(void *) {
   uint32_t nextAt = 0;  // millis() deadline; 0 = as soon as we're ready
   uint32_t backoff = BACKOFF_MIN_MS;
@@ -1902,6 +1940,8 @@ void task(void *) {
         }
       }
     }
+    // Between portal jobs, so a restart cannot cut off an OTA or a portal SD write.
+    maybeDailyRestart();
     if (!ready()) continue;
     // Own deadline, even while the state heartbeat is backing off.
     manage(c);

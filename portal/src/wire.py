@@ -27,6 +27,9 @@ def device_state(state: dict, listening: tuple | None = None, *, all_alarms: boo
                  player_details: bool = False) -> pb.DeviceState:
     """`listening`: the (left, right) "listening" dicts from spotify.py; None = nobody connected."""
     out = pb.DeviceState(version=state["version"], all_alarms=all_alarms)
+    if state.get("daily_restart") is not None:
+        hour, minute = (int(value) for value in state["daily_restart"].split(":"))
+        out.daily_restart.minute_of_day = hour * 60 + minute
     out.nowplaying.CopyFrom(now_playing(*(listening or (spotify.OFF, spotify.OFF)), details=player_details))
     if state.get("message"):
         out.note.text = state["message"]["text"]
